@@ -33,7 +33,13 @@ fn main() -> ExitCode {
         }
         Err(message) => {
             eprintln!("no OpenGL context: {message}");
-            println!("{{\n  \"pass\": false,\n  \"error\": {:?}\n}}", message);
+            let json = format!("{{\n  \"pass\": false,\n  \"error\": {:?}\n}}\n", message);
+            print!("{json}");
+            // The report file is what CI keeps, so a failed context leaves its reason there too.
+            if let Some(path) = out_path {
+                let _ = std::fs::create_dir_all(std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(".")));
+                let _ = std::fs::write(&path, &json);
+            }
             ExitCode::from(2)
         }
     }
