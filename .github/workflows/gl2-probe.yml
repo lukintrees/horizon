@@ -65,9 +65,9 @@ jobs:
               continue
             fi
             echo "::notice title=$name::GL $(jq -r '.gl_version' "$report") | GLSL $(jq -r '.glsl_version' "$report") | $(jq -r '.renderer' "$report")"
-            jq -r '.error // empty' "$report" | while IFS= read -r line; do echo "::error title=$name::$line"; done
-            jq -r '.checks[]? | "\(.name) ok=\(.ok) required=\(.required): \(.detail)"' "$report" \
-              | while IFS= read -r line; do echo "::notice title=$name::$line"; done
+            echo "::notice title=$name::checks: $(jq -r '.checks | length' "$report"), error: $(jq -r '.error // "none"' "$report")"
+            # The whole report, compact, in 2000-character pieces: a report that looks empty must still be readable.
+            jq -c . "$report" | fold -w 2000 | while IFS= read -r line; do echo "::notice title=$name::json $line"; done
             if ! jq -e '.pass == true' "$report" > /dev/null; then
               echo "::error title=$name::did not pass"
               status=1
