@@ -20,6 +20,8 @@ const EGL_NONE: EglInt = 0x3038;
 const EGL_OPENGL_API: u32 = 0x30A2;
 const EGL_RENDERABLE_TYPE: EglInt = 0x3040;
 const EGL_OPENGL_BIT: EglInt = 0x0008;
+const EGL_SURFACE_TYPE: EglInt = 0x3033;
+const EGL_PBUFFER_BIT: EglInt = 0x0001;
 const EGL_PLATFORM_SURFACELESS_MESA: u32 = 0x31DD;
 const EGL_CONTEXT_MAJOR_VERSION: EglInt = 0x3098;
 const EGL_CONTEXT_MINOR_VERSION: EglInt = 0x30FB;
@@ -140,13 +142,26 @@ impl Context {
             if (egl.bind_api)(EGL_OPENGL_API) != EGL_TRUE {
                 return Err(egl.error("eglBindAPI"));
             }
-            let config_attributes = [EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE];
+            // Without EGL_SURFACE_TYPE the default requires EGL_WINDOW_BIT, which the surfaceless
+            // platform does not offer, so no config matches. A zero mask matches every config.
+            let attribute_sets: [&[EglInt]; 3] = [
+                &[EGL_SURFACE_TYPE, 0, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE],
+                &[EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE],
+                &[EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE],
+            ];
             let mut config: EglConfig = ptr::null_mut();
-            let mut count: EglInt = 0;
-            if (egl.choose_config)(display, config_attributes.as_ptr(), &mut config, 1, &mut count) != EGL_TRUE
-                || count < 1
-            {
-                return Err(egl.error("eglChooseConfig"));
+            let mut chosen = false;
+            for attributes in attribute_sets {
+                let mut count: EglInt = 0;
+                if (egl.choose_config)(display, attributes.as_ptr(), &mut config, 1, &mut count) == EGL_TRUE
+                    && count >= 1
+                {
+                    chosen = true;
+                    break;
+                }
+            }
+            if !chosen {
+                return Err(egl.error("eglChooseConfig (no OpenGL config on this display)"));
             }
             let versioned = [
                 EGL_CONTEXT_MAJOR_VERSION,
