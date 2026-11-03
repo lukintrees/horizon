@@ -52,12 +52,24 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "110"
         run: cargo run --quiet -- --out out/gl20.json
 
+      # The reports are also printed as annotations: CI artifacts and logs are the first thing
+      # lost when the run is read from outside, annotations survive the check run.
       - name: Every probe must pass
         run: |
           status=0
           for report in out/native.json out/gl21.json out/gl20.json; do
-            if [ ! -s "$report" ] || ! jq -e '.pass == true' "$report" > /dev/null; then
-              echo "::error::$report did not pass"
+            name=$(basename "$report" .json)
+            if [ ! -s "$report" ]; then
+              echo "::error title=$name::no report written"
+              status=1
+              continue
+            fi
+            echo "::notice title=$name::GL $(jq -r '.gl_version' "$report") | GLSL $(jq -r '.glsl_version' "$report") | $(jq -r '.renderer' "$report")"
+            jq -r '.error // empty' "$report" | while IFS= read -r line; do echo "::error title=$name::$line"; done
+            jq -r '.checks[]? | "\(.name) ok=\(.ok) required=\(.required): \(.detail)"' "$report" \
+              | while IFS= read -r line; do echo "::notice title=$name::$line"; done
+            if ! jq -e '.pass == true' "$report" > /dev/null; then
+              echo "::error title=$name::did not pass"
               status=1
             fi
           done
