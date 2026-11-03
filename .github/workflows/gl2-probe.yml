@@ -42,7 +42,7 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "120"
         run: cargo run --quiet -- --out out/gl21.json
 
-      - name: Probe, the floor: OpenGL 2.0 and GLSL 1.10
+      - name: "Probe, the floor: OpenGL 2.0 and GLSL 1.10"
         env:
           MESA_GL_VERSION_OVERRIDE: "2.0"
           MESA_GLSL_VERSION_OVERRIDE: "110"
