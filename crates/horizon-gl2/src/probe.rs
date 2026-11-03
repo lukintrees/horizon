@@ -71,12 +71,21 @@ pub fn run() -> Result<Report, String> {
     Ok(report)
 }
 
+/// Reads a string state. glow panics when the driver returns NULL (a query its context does not
+/// support), so that becomes a placeholder: the probe still runs the render check and reports it.
+unsafe fn string_parameter(gl: &glow::Context, pname: u32) -> String {
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        gl.get_parameter_string(pname)
+    }));
+    read.unwrap_or_else(|_| "(not reported)".to_string())
+}
+
 unsafe fn gather(gl: &glow::Context, report: &mut Report) {
-    report.gl_version = unsafe { gl.get_parameter_string(glow::VERSION) };
-    report.glsl_version = unsafe { gl.get_parameter_string(glow::SHADING_LANGUAGE_VERSION) };
-    report.renderer = unsafe { gl.get_parameter_string(glow::RENDERER) };
-    report.vendor = unsafe { gl.get_parameter_string(glow::VENDOR) };
-    report.extensions = unsafe { gl.get_parameter_string(glow::EXTENSIONS) }
+    report.gl_version = unsafe { string_parameter(gl, glow::VERSION) };
+    report.glsl_version = unsafe { string_parameter(gl, glow::SHADING_LANGUAGE_VERSION) };
+    report.renderer = unsafe { string_parameter(gl, glow::RENDERER) };
+    report.vendor = unsafe { string_parameter(gl, glow::VENDOR) };
+    report.extensions = unsafe { string_parameter(gl, glow::EXTENSIONS) }
         .split_whitespace()
         .map(str::to_owned)
         .collect();
