@@ -52,8 +52,9 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "110"
         run: cargo run --quiet -- --out out/gl20.json
 
-      # The reports are also printed as annotations: CI artifacts and logs are the first thing
-      # lost when the run is read from outside, annotations survive the check run.
+      # The reports come back to the author as annotations, the only channel that survives the sandbox:
+      # artifacts and logs cannot be downloaded from there. Annotations are capped per step, so each mode
+      # gets one line of checks, and details appear only for the checks that failed.
       - name: Every probe must pass
         run: |
           status=0
@@ -64,10 +65,9 @@ jobs:
               status=1
               continue
             fi
-            echo "::notice title=$name::GL $(jq -r '.gl_version' "$report") | GLSL $(jq -r '.glsl_version' "$report") | $(jq -r '.renderer' "$report")"
-            echo "::notice title=$name::checks: $(jq -r '.checks | length' "$report"), error: $(jq -r '.error // "none"' "$report")"
-            # The whole report, compact, in 2000-character pieces: a report that looks empty must still be readable.
-            jq -c . "$report" | fold -w 2000 | while IFS= read -r line; do echo "::notice title=$name::json $line"; done
+            echo "::notice title=$name::GL $(jq -r '.gl_version // "-"' "$report") | GLSL $(jq -r '.glsl_version // "-"' "$report") | $(jq -r '.renderer // "-"' "$report") | error: $(jq -r '.error // "none"' "$report") | checks: $(jq -r '[(.checks // [])[] | "\(.name)=\(if .ok then "ok" else "FAIL" end)"] | join(" ")' "$report")"
+            jq -r '(.checks // [])[] | select(.ok | not) | "\(.name): \(.detail)"' "$report" \
+              | while IFS= read -r line; do echo "::error title=$name::$line"; done
             if ! jq -e '.pass == true' "$report" > /dev/null; then
               echo "::error title=$name::did not pass"
               status=1
