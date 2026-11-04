@@ -3,7 +3,7 @@
 //! Submissions use the CPU Frame contract; gfx::Frame remains a compatibility export.
 use crate::{Result, frame::Frame, gfx, mesher::SectionMesh};
 use horizon_render_api::{
-    render_contract::{Backend, Capabilities, Feature, FrameOutcome},
+    render_contract::{Backend, Capabilities, Feature, FrameOutcome, ScreenshotRequest},
     scene::SectionKey,
 };
 
@@ -94,6 +94,55 @@ impl<'a> RendererFacade<'a> {
                     FrameOutcome::Offscreen
                 })
             }
+        }
+    }
+    /// Queue a screenshot; the next rendered frame writes it. The legacy
+    /// adapter has no readback yet (U01), so it rejects the request rather
+    /// than silently dropping it.
+    pub fn request_screenshot(&mut self, request: ScreenshotRequest) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => {
+                renderer.screenshot = Some(request);
+                Ok(())
+            }
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => {
+                Err("legacy GL2 screenshot readback is not implemented (U01)".into())
+            }
+        }
+    }
+    /// Whether a screenshot request waits for the next frame.
+    pub fn screenshot_pending(&self) -> bool {
+        match &self.inner {
+            Adapter::Modern(renderer) => renderer.screenshot.is_some(),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => false,
+        }
+    }
+    /// Takes the waiting request without drawing it: a replacement renderer
+    /// (pack reload, device recovery) carries it over to the new one.
+    pub fn take_screenshot_request(&mut self) -> Option<ScreenshotRequest> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => renderer.screenshot.take(),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => None,
+        }
+    }
+    /// Puts back a finished screenshot the old renderer held when it was replaced.
+    pub fn restore_screenshot_result(&mut self, result: std::result::Result<[u32; 2], String>) {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => renderer.screenshot_result = Some(result),
+            // The legacy adapter produces no result, so there is none to carry.
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => {}
+        }
+    }
+    /// A finished screenshot's size, or why it failed; each result is reported once.
+    pub fn take_screenshot_result(&mut self) -> Option<std::result::Result<[u32; 2], String>> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => renderer.screenshot_result.take(),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => None,
         }
     }
     pub fn resize(&mut self, size: [u32; 2]) -> Result<()> {

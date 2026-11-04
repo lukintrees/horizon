@@ -14150,8 +14150,10 @@ impl Game<'_> {
             .renderer
             .take()
             .ok_or("no renderer for graphics recovery")?;
-        let screenshot = old.screenshot.take();
-        let screenshot_result = old.screenshot_result.take();
+        let screenshot = horizon_client::renderer_facade::RendererFacade::modern(&mut old)
+            .take_screenshot_request();
+        let screenshot_result = horizon_client::renderer_facade::RendererFacade::modern(&mut old)
+            .take_screenshot_result();
         drop(old);
         let mut renderer = build_renderer(
             window,
@@ -14164,8 +14166,17 @@ impl Game<'_> {
             self.settings.horizon.translucent_batching,
             shader_packs::picked_pack_draws_flat(&self.settings),
         )?;
-        renderer.screenshot = screenshot;
-        renderer.screenshot_result = screenshot_result;
+        if let Some(request) = screenshot
+            && let Err(error) =
+                horizon_client::renderer_facade::RendererFacade::modern(&mut renderer)
+                    .request_screenshot(request)
+        {
+            log::warn!("Horizon: the rebuilt renderer cannot keep the queued screenshot: {error}");
+        }
+        if let Some(result) = screenshot_result {
+            horizon_client::renderer_facade::RendererFacade::modern(&mut renderer)
+                .restore_screenshot_result(result);
+        }
         self.renderer = Some(renderer);
         self.skin_slots.forget();
         self.maps.slots.forget();
@@ -15389,7 +15400,7 @@ impl Game<'_> {
         if renderer.drawn_sections <= 10 {
             return;
         }
-        if renderer.screenshot.is_some() {
+        if horizon_client::renderer_facade::RendererFacade::modern(renderer).screenshot_pending() {
             // F2's or an agent's screenshot owns the frame this time; ours
             // comes around again with the next attempt.
             return;
@@ -15398,11 +15409,15 @@ impl Game<'_> {
         if let Some(icon) = self.world_icon.as_mut() {
             icon.last_attempt = Some(Instant::now());
         }
-        renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
-            path,
-            size: Some([64, 64]),
-            scaled: false,
-        });
+        if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)
+            .request_screenshot(horizon_client::gfx::ScreenshotRequest {
+                path,
+                size: Some([64, 64]),
+                scaled: false,
+            })
+        {
+            log::warn!("Horizon: cannot queue the world icon screenshot: {error}");
+        }
     }
     fn render(&mut self) -> Result<bool> {
         // The window's GPU holds the atlas: its copy in memory is kept
@@ -18424,10 +18439,10 @@ impl Game<'_> {
                     }
                     self.clock.end_frame(self.pause);
                     let mut consumed = false;
-                    let finished = self
-                        .renderer
-                        .as_mut()
-                        .and_then(|r| r.screenshot_result.take());
+                    let finished = self.renderer.as_mut().and_then(|r| {
+                        horizon_client::renderer_facade::RendererFacade::modern(r)
+                            .take_screenshot_result()
+                    });
                     if let Some(result) = &finished
                         && self.ui.screenshot_message.is_some()
                     {

@@ -1496,11 +1496,16 @@ impl Game<'_> {
             return;
         };
         let path = dir.join(name);
-        renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
-            path: path.clone(),
-            size: None,
-            scaled: true,
-        });
+        if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)
+            .request_screenshot(horizon_client::gfx::ScreenshotRequest {
+                path: path.clone(),
+                size: None,
+                scaled: true,
+            })
+        {
+            log::warn!("Horizon: cannot queue a screenshot: {error}");
+            return;
+        }
         self.ui.screenshot_message = Some(path);
     }
     /// `Minecraft.handleGlobalKeyPress`'s screenshot branch: the
