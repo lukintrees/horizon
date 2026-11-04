@@ -460,7 +460,8 @@ pub fn check(measured: &Measured, stage: Stage, limits: &Limits) -> Result<()> {
             ),
         ));
     }
-    if stage == Stage::Vertex && !measured.vertex_texture_samples.is_empty()
+    if stage == Stage::Vertex
+        && !measured.vertex_texture_samples.is_empty()
         && limits.max_vertex_texture_units == 0
     {
         return Err(Error::budget(

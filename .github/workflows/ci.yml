@@ -279,11 +279,23 @@ jobs:
         working-directory: launcher
         run: |
           # Same reason as the `verify` job's formatting step: a failing step's log is a blob
-          # URL, and `fmt --check` prints a diff, so a red job said only "exit code 101".
+          # URL, so all three commands report through annotations. `fmt --check` prints a diff;
+          # `| sed` alone would keep only its last line (two annotations, same title, and GitHub
+          # drops one), so each line becomes an annotation of its own.
           set -eo pipefail
           cargo +stable fmt --check 2>&1 | sed 's/^/::error::/'
-          cargo +stable clippy --all-targets --locked -- -D warnings
-          cargo +stable test --locked --lib
+          set +e
+          cargo +stable clippy --all-targets --locked -- -D warnings 2>&1 \
+            | grep -E '^(error|warning)' | sort -u | head -20 | sed 's/^/::error::clippy: /'
+          clippy_status=${PIPESTATUS[0]}
+          cargo +stable test --locked --lib > launcher-test.log 2>&1
+          test_status=$?
+          set -e
+          if [ "$clippy_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
+            echo "::error::launcher: clippy $clippy_status, cargo test $test_status"
+            tail -n 40 launcher-test.log | sed 's/^/::error:: '
+            exit 1
+          fi
   # Most pull requests leave the harnesses to parity-main, which runs them on main a batch of merges at a time
   # (.github/workflows/parity-main.yml; releases wait for it). A pull request still runs them itself when it changes
   # a harness, an oracle, a probe or the runner, or carries the run-parity label (run-parity.yml, when it is added).
