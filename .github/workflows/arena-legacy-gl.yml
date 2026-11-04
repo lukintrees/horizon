@@ -1,0 +1,72 @@
+name: Arena legacy-gl checks
+
+# Only this session's branch. Existing CI, PRs and other workflows are not
+# read or modified; the full crates.io-backed checks run here instead of in the
+# sandbox, whose outbound network does not reach crates.io.
+on:
+  push:
+    branches:
+      - 'arena/81644160-horizon'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  legacy-gl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this branch
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.90 (workspace rust-version)
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.90.0
+          rustc --version
+          cargo --version
+
+      - name: Python caps / contract / public-tree checks
+        run: |
+          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract -v
+          python3 tools/gl21_caps.py \
+            --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt \
+            --label ci-gl21 --check --no-write --stdout
+          python3 tools/check_public_tree.py
+          git diff --check
+
+      - name: rustfmt for the additive gfx21 module
+        run: rustfmt --edition 2024 --check crates/horizon-client-render/src/gfx21/*.rs
+
+      - name: Cargo manifest sanity
+        run: cargo metadata --no-deps --format-version 1 > /dev/null
+
+      - name: Standalone gfx21 unit tests and clippy (no external crates)
+        run: |
+          mkdir -p /tmp/gfx21-check/src
+          cat > /tmp/gfx21-check/Cargo.toml <<'EOF'
+          [package]
+          name = "gfx21-check"
+          version = "0.1.0"
+          edition = "2024"
+          [lib]
+          path = "src/lib.rs"
+          EOF
+          cat > /tmp/gfx21-check/src/lib.rs <<EOF
+          #![forbid(unsafe_code)]
+          #[path = "${GITHUB_WORKSPACE}/crates/horizon-client-render/src/gfx21/mod.rs"]
+          pub mod gfx21;
+          EOF
+          cd /tmp/gfx21-check
+          cargo test --offline
+          cargo clippy --offline --all-targets -- -D warnings
+
+      - name: PR 2b gate (full workspace, crates.io available here)
+        run: cargo check -p horizon-client --features legacy-gl --no-default-features
+
+      - name: gfx21 unit tests inside horizon-client-render
+        run: cargo test -p horizon-client-render --lib gfx21 --features legacy-gl
