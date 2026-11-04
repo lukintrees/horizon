@@ -197,8 +197,14 @@ jobs:
           # Formatting is reported, not enforced, until this crate has had one green build: the
           # code was written without rustfmt available, and a formatting diff would hide a
           # real compile error behind a style one.
-          rustfmt +stable --edition 2024 --check crates/horizon-client-gl/src/lib.rs \
-            || echo "::warning::rustfmt would reformat horizon-client-gl (not fatal yet)"
+          # Advisory, and annotated: `--check` prints a diff per file and keeps going, but a
+          # step's output below the reporter's tail is not visible from the API, so each diff
+          # line becomes a warning and all of them are readable at once.
+          set +e
+          rustfmt +stable --edition 2024 --check crates/horizon-client-gl/src/lib.rs 2>&1 \
+            | sed 's/^/::warning::/'
+          set -e
+          echo "::warning::the rustfmt check above is advisory until this crate has had a green build"
       # The calls the crate makes into glow, checked against the sources Cargo actually pinned.
       - name: Check calls against glow's API
         run: |
@@ -211,29 +217,28 @@ jobs:
       # which is why --strict exists), the shader budgets, and the JSON a bug report carries.
       - name: GL 2.1 capability and budget report
         run: |
-          # A failure here used to be "exit code 1" and nothing else: the job log is a blob URL
-          # and the step's output below the test reporter's tail never became an annotation.
-          # Each run's output now goes to a file; a run that fails says so, and the last lines it
-          # printed become the annotation. A run that passes prints its table and is quiet.
+          # A failure here used to be "exit code 1" and nothing else: the job log is a blob URL a
+          # session without it cannot open, and the step's output below the test reporter's tail
+          # never became an annotation. A failing run now asks the binary again with `--json`, and
+          # those measurement numbers are the annotation -- the same numbers, not a re-parse of
+          # the table.
           set +e
           status=0
           for args in "" "--check-shaders --strict"; do
+            echo "== horizon-gl21-info $args"
             # shellcheck disable=SC2086
-            cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args \
-              > gl21-run.out 2> gl21-run.err
+            cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args
             run=$?
-            if [ "$run" -eq 0 ]; then
-              cat gl21-run.out
-            else
-              echo "::error::horizon-gl21-info $args exited $run"
-              tail -q -n 20 gl21-run.out gl21-run.err | sed 's/^/::error::/'
+            if [ "$run" -ne 0 ]; then
+              echo "::error::horizon-gl21-info $args exited $run; the measurements follow"
+              # shellcheck disable=SC2086
+              cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args --json \
+                | od -c | head -40 | sed 's/^/::error:: '
             fi
             status=$(( status | run ))
           done
           set -e
           [ "$status" -eq 0 ]
-          cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- --json > gl21-report.json
-          python -c "import json; json.load(open('gl21-report.json'))"
 
   # The launcher is its own workspace (launcher/Cargo.toml), so verify's cargo runs never build it. A pull request that
   # changes it or a crate it builds is checked here, and so is every push to main: two pull requests can each pass
