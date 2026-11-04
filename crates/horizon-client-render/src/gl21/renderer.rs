@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn a_pass_sets_its_state_once_however_many_draws_it_has() {
-        // Two sections, two sprites each: four solid draws in one pass, one `state` call.
+        // Two sections, one sprite each: two solid draws in one pass, one `state` call.
         let a = vertices(6, 3);
         let b = vertices(6, 4);
         let mut renderer = Renderer::new(1024);
@@ -593,7 +593,9 @@ mod tests {
             .iter()
             .filter(|call| call.starts_with("draw "))
             .count();
-        assert_eq!(draws, 3, "one draw per section, and the present quad");
+        // One draw per section's run. The present quad is not one of these: the device draws it in
+        // `present`, from its own buffer, which is why `Recording::present` logs "present".
+        assert_eq!(draws, 2, "one draw per section, both in the solid pass");
         // One state for the solid pass, one for the present quad's reset.
         assert_eq!(states, 2, "{:?}", device.calls);
     }
@@ -632,8 +634,9 @@ mod tests {
             .filter(|call| call.starts_with("draw "))
             .collect();
         assert_eq!(draws[0], "draw 0+6", "the sky was stored first: {draws:?}");
-        // And the translucent face's draw comes last of the world's.
-        let last_world = draws[draws.len() - 2];
+        // And the translucent face's draw comes last of the world's: the section's solid run is
+        // stored whole before the see-through one, so it is one run further on.
+        let last_world = draws.last().expect("the see-through draw");
         assert_eq!(last_world, "draw 9+3", "solid then see-through: {draws:?}");
     }
 
