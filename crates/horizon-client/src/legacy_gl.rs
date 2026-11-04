@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::legacy_game::Game;
 use crate::legacy_game::scene::RenderScene;
+use crate::legacy_game::server::LinkMode;
 use crate::legacy_game::world::{ATLAS_EDGE, ATLAS_TILE_PIXELS, ATLAS_TILES, Block};
 use glow::HasContext;
 use glutin::config::{Api, Config, ConfigTemplateBuilder};
@@ -551,6 +552,7 @@ impl App {
             if let Err(err) = self.game.save() {
                 eprintln!("{}", lang::tr("horizon.legacyGl.saveError", &[&err]));
             }
+            self.game.shutdown();
         }
     }
 
@@ -706,6 +708,28 @@ impl App {
         );
         if self.mode == Mode::Game {
             println!("{}", lang::get("horizon.legacyGl.game.started"));
+            match self.game.network_mode() {
+                LinkMode::Integrated => {
+                    println!("{}", lang::get("horizon.legacyGl.game.integratedStarted"));
+                    println!("legacy-gl integrated: OK");
+                }
+                LinkMode::Remote => {
+                    println!("{}", lang::get("horizon.legacyGl.game.remoteStarted"));
+                    println!("legacy-gl network: OK");
+                }
+                LinkMode::Offline => {}
+            }
+            if let Some(addr) = self.game.lan_addr() {
+                let port = addr.port();
+                println!("{}", lang::tr("horizon.legacyGl.game.lanStarted", &[&port]));
+            }
+            if !self.game.network_error().is_empty() {
+                let error = self.game.network_error().to_owned();
+                eprintln!(
+                    "{}",
+                    lang::tr("horizon.legacyGl.game.networkError", &[&error])
+                );
+            }
         }
         self.apply_cursor();
         Ok(())
@@ -1020,6 +1044,11 @@ impl App {
                 &[&scene.chunks.len(), &scene.draw_count]
             )
         );
+        match self.game.network_mode() {
+            LinkMode::Integrated => println!("legacy-gl integrated: OK"),
+            LinkMode::Remote => println!("legacy-gl network: OK"),
+            LinkMode::Offline => {}
+        }
         Ok(())
     }
 

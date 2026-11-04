@@ -270,9 +270,28 @@ parity.
   --features legacy-gl`, and two `--game --frames 2` Xvfb profiles in addition
   to the two reference frames, asserting `legacy-gl game: OK` and `GL_NO_ERROR`.
 
-**Still not implemented:** multiplayer networking, the integrated server,
+**PR 11 still lacked:** multiplayer networking, the integrated server,
 vanilla protocol/entity/container behaviour, a full port of the 22k-line
 `game.rs`, wgpu visual parity, real X1650/`r300g` caps and timings, 800x600 RD4
 FPS, 30-minute stability and hardware acceptance. The original `game.rs`
 remains the modern-gl path; the legacy path is a separate single-player
 implementation. No PR, issue, `/claim`, label or roadmap item is created.
+
+
+## PR 12: integrated server and LAN link (this branch)
+
+After another «Продолжи» the client gained an authoritative server path for
+the `full` scope. `legacy_game/server.rs` owns the world, player, day time,
+edits, chunk meshes and saves on a 20 Hz integrated server thread; the window
+sends `ServerCommand` values and renders `ServerEvent::Snapshot` values.
+`legacy_game/net.rs` carries the same commands/events over a small
+newline-delimited JSON LAN protocol using only `std::net` and `serde_json`.
+`--integrated`, `--lan-port`, `--join` and `--name` select an integrated server,
+an ephemeral/fixed LAN listener, a remote client and the player name.
+
+This is a Horizon-internal LAN protocol, **not** the Minecraft Java protocol:
+it does not implement `horizon-protocol` packets, encryption, authentication,
+vanilla entity/container synchronization or dedicated-server parity. The
+original 22k-line `game.rs`, wgpu visual parity, real X1650/`r300g` caps and
+timings, 800x600 RD4 FPS, 30-minute stability and hardware acceptance remain
+out of scope. No PR, issue, `/claim`, label or roadmap item is created.

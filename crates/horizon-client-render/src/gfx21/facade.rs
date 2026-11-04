@@ -274,6 +274,10 @@ pub struct LegacySettings {
     pub world: String,
     pub fov: f32,
     pub sensitivity: f32,
+    pub integrated: bool,
+    pub lan_port: Option<u16>,
+    pub join: String,
+    pub name: String,
     pub help: bool,
     pub launch_api: bool,
     pub disabled_features: Vec<&'static str>,
@@ -292,6 +296,10 @@ impl Default for LegacySettings {
             world: String::new(),
             fov: 70.0,
             sensitivity: 0.0025,
+            integrated: false,
+            lan_port: None,
+            join: String::new(),
+            name: "Player".to_owned(),
             help: false,
             launch_api: false,
             disabled_features: Vec::new(),
@@ -312,6 +320,10 @@ impl LegacySettings {
             world: String::new(),
             fov: 70.0,
             sensitivity: 0.0025,
+            integrated: false,
+            lan_port: None,
+            join: String::new(),
+            name: "Player".to_owned(),
             help: false,
             launch_api: false,
             disabled_features: vec!["HDR", "SSBO", "compute culling", "texture arrays"],
@@ -319,8 +331,17 @@ impl LegacySettings {
     }
 
     pub fn startup_note(&self) -> String {
+        let lan = match self.lan_port {
+            None => "none".to_owned(),
+            Some(port) => port.to_string(),
+        };
+        let join = if self.join.is_empty() {
+            "none"
+        } else {
+            &self.join
+        };
         format!(
-            "graphics-api={} budget={}MiB distance={} frames={} game={} seed={} world={} disabled={}",
+            "graphics-api={} budget={}MiB distance={} frames={} game={} seed={} world={} disabled={} integrated={} lan={} join={} name={}",
             self.api.name(),
             self.texture_budget_mib,
             self.render_distance,
@@ -332,7 +353,11 @@ impl LegacySettings {
             } else {
                 &self.world
             },
-            self.disabled_features.len()
+            self.disabled_features.len(),
+            self.integrated,
+            lan,
+            join,
+            self.name
         )
     }
 }
@@ -381,6 +406,33 @@ impl LegacyArgs {
                     }
                 }
                 "--game" => settings.game = true,
+                "--integrated" => {
+                    settings.integrated = true;
+                    settings.game = true;
+                }
+                "--lan-port" => {
+                    if let Some(value) = iter.next() {
+                        match value.parse::<u16>() {
+                            Ok(port) => {
+                                settings.lan_port = Some(port);
+                                settings.integrated = true;
+                                settings.game = true;
+                            }
+                            Err(_) => unknown.push(value.clone()),
+                        }
+                    }
+                }
+                "--join" => {
+                    if let Some(value) = iter.next() {
+                        settings.join = value.clone();
+                        settings.game = true;
+                    }
+                }
+                "--name" => {
+                    if let Some(value) = iter.next() {
+                        settings.name = value.clone();
+                    }
+                }
                 "--seed" => {
                     if let Some(value) = iter.next() {
                         match value.parse::<u64>() {
@@ -470,7 +522,7 @@ mod tests {
         assert_eq!(settings.disabled_features.len(), 4);
         assert_eq!(
             settings.startup_note(),
-            "graphics-api=legacy-gl budget=48MiB distance=4 frames=1 game=false seed=20958 world=default disabled=4"
+            "graphics-api=legacy-gl budget=48MiB distance=4 frames=1 game=false seed=20958 world=default disabled=4 integrated=false lan=none join=none name=Player"
         );
     }
 
@@ -493,6 +545,13 @@ mod tests {
             "80",
             "--sensitivity",
             "0.005",
+            "--integrated",
+            "--lan-port",
+            "30303",
+            "--join",
+            "127.0.0.1:30303",
+            "--name",
+            "Guest",
             "--help",
             "--unknown",
         ]
@@ -509,6 +568,10 @@ mod tests {
         assert_eq!(parsed.settings.world, "/tmp/world.json");
         assert_eq!(parsed.settings.fov, 80.0);
         assert_eq!(parsed.settings.sensitivity, 0.005);
+        assert!(parsed.settings.integrated);
+        assert_eq!(parsed.settings.lan_port, Some(30303));
+        assert_eq!(parsed.settings.join, "127.0.0.1:30303");
+        assert_eq!(parsed.settings.name, "Guest");
         assert!(parsed.settings.help);
         assert_eq!(parsed.unknown, vec!["--unknown"]);
     }

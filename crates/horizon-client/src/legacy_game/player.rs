@@ -9,7 +9,7 @@ pub const PLAYER_WIDTH: f32 = 0.30;
 pub const PLAYER_HEIGHT: f32 = 1.80;
 pub const REACH: f32 = 5.0;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Input {
     pub forward: bool,
     pub back: bool,

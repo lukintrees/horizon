@@ -2,6 +2,7 @@
 //! outline, HUD rectangles and rasterized text. No GL calls live here.
 
 use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 
 use super::Game;
 use super::player::REACH;
@@ -19,7 +20,7 @@ const WHITE_UV: [[f32; 2]; 4] = [
     [ATLAS_INSET, 0.25 - ATLAS_INSET],
 ];
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChunkMesh {
     pub key: (i32, i32),
     pub origin: [f32; 3],

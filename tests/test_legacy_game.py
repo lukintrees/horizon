@@ -54,6 +54,15 @@ GAME_KEYS = (
     "horizon.legacyGl.game.started",
     "horizon.legacyGl.game.frame",
     "horizon.legacyGl.saveError",
+    "horizon.legacyGl.game.network",
+    "horizon.legacyGl.game.networkError",
+    "horizon.legacyGl.game.chat",
+    "horizon.legacyGl.game.offline",
+    "horizon.legacyGl.game.integrated",
+    "horizon.legacyGl.game.remote",
+    "horizon.legacyGl.game.integratedStarted",
+    "horizon.legacyGl.game.remoteStarted",
+    "horizon.legacyGl.game.lanStarted",
 )
 
 
@@ -115,6 +124,8 @@ class LegacyGameSourceTests(unittest.TestCase):
             "ControlFlow::WaitUntil",
             "MouseWheel",
             "legacy-gl game: OK",
+            "legacy-gl integrated: OK",
+            "legacy-gl network: OK",
             "horizon.legacyGl.saveError",
         ):
             self.assertIn(marker, text)
@@ -122,7 +133,7 @@ class LegacyGameSourceTests(unittest.TestCase):
 
     def test_settings_support_the_game_flags(self):
         text = FACADE.read_text(encoding="utf-8")
-        for marker in ("--game", "--frames", "--seed", "--world", "--fov", "--sensitivity", "pub game: bool", "pub seed: u64"):
+        for marker in ("--game", "--frames", "--seed", "--world", "--fov", "--sensitivity", "--integrated", "--lan-port", "--join", "--name", "pub game: bool", "pub seed: u64"):
             self.assertIn(marker, text)
 
     def test_every_locale_has_the_pr11_keys(self):
@@ -130,7 +141,8 @@ class LegacyGameSourceTests(unittest.TestCase):
             data = json.loads(path.read_text(encoding="utf-8"))
             for key in GAME_KEYS:
                 self.assertIn(key, data, f"{path.name} is missing {key}")
-            self.assertIn("--game", data["horizon.legacyGl.help"])
+            for flag in ("--game", "--integrated", "--lan-port", "--join", "--name"):
+                self.assertIn(flag, data["horizon.legacyGl.help"])
 
 
 class LegacyGameWorkflowTests(unittest.TestCase):

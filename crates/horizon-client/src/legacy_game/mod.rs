@@ -1,19 +1,22 @@
-//! PR 11: an interactive, offline single-player GL2 game state.
+//! PR 11/12: an interactive GL2 game state with an optional authoritative
+//! integrated server and LAN link.
 //!
-//! This is the first stage of the full `game.rs` port requested after the
-//! additive/`full_pr8` work. It keeps original world streaming, physics,
-//! editing, HUD, menus and saves in pure Rust; the GL2 backend only receives
-//! vertices and a text texture. Vanilla networking/integrated-server parity is
-//! not claimed yet.
+//! The offline path keeps world streaming, physics, editing, HUD, menus and
+//! saves in pure Rust. `--integrated` moves authority to a 20 Hz server thread;
+//! `--join` connects to another GL2 world over the Horizon-internal LAN
+//! protocol. This is not Minecraft Java protocol parity.
 
+pub mod net;
 pub mod player;
 pub mod save;
 pub mod scene;
+pub mod server;
 pub mod text;
 pub mod ui;
 pub mod world;
 
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -24,12 +27,12 @@ use winit::keyboard::KeyCode;
 use self::player::{Input, Player};
 use self::save::{SaveState, load, save, save_path};
 use self::scene::RenderScene;
+use self::server::{Link, LinkMode, ServerCommand, ServerEvent, ServerSnapshot};
 use self::ui::{Screen, UiAction, UiFrame, UiSnapshot};
 use self::world::World;
 
 pub const MAX_RENDER_DISTANCE: u32 = 8;
 
-#[derive(Debug)]
 pub struct Game {
     pub settings: LegacySettings,
     pub world: World,
@@ -50,6 +53,7 @@ pub struct Game {
 
 impl Game {
     pub fn new(settings: &LegacySettings) -> Self {
+        let link = Link::open(settings);
         let save_path = save_path(&settings.world);
         let mut world = World::new(settings.seed);
         let mut player = Player::spawn(&mut world);
@@ -85,6 +89,7 @@ impl Game {
             save_path,
             last_frame: Instant::now(),
             tick_accum: 0.0,
+            link,
         };
         game.sync_chunks();
         game
@@ -109,6 +114,9 @@ impl Game {
     }
 
     pub fn sync_chunks(&mut self) {
+        if !self.link.is_offline() {
+            return;
+        }
         let distance = self.settings.render_distance.clamp(1, MAX_RENDER_DISTANCE) as i32;
         let keys =
             self.world
@@ -125,6 +133,16 @@ impl Game {
 
     pub fn update(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.1);
+        if !self.link.is_offline() {
+            self.link.tick();
+            self.link.send(ServerCommand::Input(self.input.clone()));
+            self.link
+                .send(ServerCommand::Pause(self.screen != Screen::Playing));
+            for event in self.link.poll() {
+                self.apply_event(event);
+            }
+            return;
+        }
         self.tick_accum += dt;
         while self.tick_accum >= 1.0 / 20.0 {
             self.tick_accum -= 1.0 / 20.0;
@@ -161,15 +179,15 @@ impl Game {
             KeyCode::Space => self.input.jump = true,
             KeyCode::ShiftLeft | KeyCode::ShiftRight => self.input.sprint = true,
             KeyCode::ControlLeft | KeyCode::ControlRight => self.input.sneak = true,
-            KeyCode::Digit1 => self.player.set_selection(0),
-            KeyCode::Digit2 => self.player.set_selection(1),
-            KeyCode::Digit3 => self.player.set_selection(2),
-            KeyCode::Digit4 => self.player.set_selection(3),
-            KeyCode::Digit5 => self.player.set_selection(4),
-            KeyCode::Digit6 => self.player.set_selection(5),
-            KeyCode::Digit7 => self.player.set_selection(6),
-            KeyCode::Digit8 => self.player.set_selection(7),
-            KeyCode::Digit9 => self.player.set_selection(8),
+            KeyCode::Digit1 => self.select(0),
+            KeyCode::Digit2 => self.select(1),
+            KeyCode::Digit3 => self.select(2),
+            KeyCode::Digit4 => self.select(3),
+            KeyCode::Digit5 => self.select(4),
+            KeyCode::Digit6 => self.select(5),
+            KeyCode::Digit7 => self.select(6),
+            KeyCode::Digit8 => self.select(7),
+            KeyCode::Digit9 => self.select(8),
             _ => {}
         }
         false
@@ -188,16 +206,37 @@ impl Game {
         }
     }
 
+    fn select(&mut self, slot: u8) {
+        self.player.set_selection(slot);
+        if !self.link.is_offline() {
+            self.link.send(ServerCommand::SetHotbar(slot));
+        }
+    }
+
     pub fn mouse_delta(&mut self, dx: f32, dy: f32) {
-        if self.screen == Screen::Playing {
+        if self.screen != Screen::Playing {
+            return;
+        }
+        if self.link.is_offline() {
             self.player.look(dx, dy, self.settings.sensitivity);
+        } else {
+            self.link.send(ServerCommand::Look {
+                dx,
+                dy,
+                sensitivity: self.settings.sensitivity,
+            });
         }
     }
 
     pub fn mouse_wheel(&mut self, delta: f32) {
-        if self.screen == Screen::Playing {
-            self.player
-                .cycle_selection(if delta > 0.0 { -1 } else { 1 });
+        if self.screen != Screen::Playing {
+            return;
+        }
+        self.player
+            .cycle_selection(if delta > 0.0 { -1 } else { 1 });
+        if !self.link.is_offline() {
+            self.link
+                .send(ServerCommand::SetHotbar(self.player.selected));
         }
     }
 
@@ -216,6 +255,18 @@ impl Game {
                 if let Some(action) = self.ui.action_at(x, y) {
                     return self.handle_action(action);
                 }
+            }
+            return false;
+        }
+        if !self.link.is_offline() {
+            match button {
+                MouseButton::Left => {
+                    self.link.send(ServerCommand::Break);
+                }
+                MouseButton::Right => {
+                    self.link.send(ServerCommand::Place);
+                }
+                _ => {}
             }
             return false;
         }
@@ -243,26 +294,38 @@ impl Game {
     pub fn handle_action(&mut self, action: UiAction) -> bool {
         match action {
             UiAction::NewWorld => {
-                self.world = World::new(self.settings.seed);
-                self.player = Player::spawn(&mut self.world);
-                self.chunk_cache.clear();
-                self.dirty.clear();
-                self.sync_chunks();
-                self.screen = Screen::Playing;
-            }
-            UiAction::LoadWorld => {
-                if let Some(state) = load(&self.save_path) {
-                    self.world = World::new(state.seed);
-                    self.world.apply_edits(&state.edits);
-                    self.world.day_time = state.day_time;
-                    self.player = state.player;
+                if self.link.is_offline() {
+                    self.world = World::new(self.settings.seed);
+                    self.player = Player::spawn(&mut self.world);
                     self.chunk_cache.clear();
                     self.dirty.clear();
                     self.sync_chunks();
-                    self.screen = Screen::Playing;
                 } else {
-                    self.screen = Screen::Playing;
+                    self.link.send(ServerCommand::Reset {
+                        seed: self.settings.seed,
+                    });
+                    self.chunk_cache.clear();
+                    self.dirty.clear();
                 }
+                self.screen = Screen::Playing;
+            }
+            UiAction::LoadWorld => {
+                if self.link.is_offline() {
+                    if let Some(state) = load(&self.save_path) {
+                        self.world = World::new(state.seed);
+                        self.world.apply_edits(&state.edits);
+                        self.world.day_time = state.day_time;
+                        self.player = state.player;
+                    }
+                    self.chunk_cache.clear();
+                    self.dirty.clear();
+                    self.sync_chunks();
+                } else {
+                    self.link.send(ServerCommand::Load);
+                    self.chunk_cache.clear();
+                    self.dirty.clear();
+                }
+                self.screen = Screen::Playing;
             }
             UiAction::Resume | UiAction::Back => self.screen = Screen::Playing,
             UiAction::Inventory => self.screen = Screen::Inventory,
@@ -277,12 +340,16 @@ impl Game {
                     (self.settings.render_distance + 1).min(MAX_RENDER_DISTANCE);
                 self.dirty.clear();
                 self.sync_chunks();
+                self.link
+                    .send(ServerCommand::SetDistance(self.settings.render_distance));
             }
             UiAction::DecreaseDistance => {
                 self.settings.render_distance =
                     self.settings.render_distance.saturating_sub(1).max(1);
                 self.dirty.clear();
                 self.sync_chunks();
+                self.link
+                    .send(ServerCommand::SetDistance(self.settings.render_distance));
             }
             UiAction::IncreaseFov => self.settings.fov = (self.settings.fov + 5.0).min(110.0),
             UiAction::DecreaseFov => self.settings.fov = (self.settings.fov - 5.0).max(30.0),
@@ -290,7 +357,11 @@ impl Game {
         false
     }
 
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&mut self) -> Result<(), String> {
+        if !self.link.is_offline() {
+            self.link.send(ServerCommand::Save);
+            return Ok(());
+        }
         let mut state = SaveState::new(self.world.seed, &self.player);
         state.day_time = self.world.day_time;
         state.edits = self.world.saved_edits();
@@ -316,7 +387,52 @@ impl Game {
             render_distance: self.settings.render_distance as i32,
             fov: self.settings.fov,
             sensitivity: self.settings.sensitivity,
+            network_mode: self.link.mode(),
+            server_tick: self.link.tick,
+            server_tps: self.link.tps,
+            server_players: self.link.players,
+            latency_ms: self.link.latency_ms,
+            network_error: self.link.error().to_owned(),
+            chat: self.link.chat().to_owned(),
         }
+    }
+
+    fn apply_event(&mut self, event: ServerEvent) {
+        let ServerEvent::Snapshot(snapshot) = event else {
+            return;
+        };
+        self.apply_snapshot(snapshot);
+    }
+
+    fn apply_snapshot(&mut self, snapshot: ServerSnapshot) {
+        self.world.seed = snapshot.seed;
+        self.world.chunks.clear();
+        self.world.edits.clear();
+        self.world.apply_edits(&snapshot.edits);
+        self.world.day_time = snapshot.day_time;
+        self.player = snapshot.player;
+        self.chunk_cache = snapshot
+            .chunks
+            .into_iter()
+            .map(|chunk| (chunk.key, chunk.vertices))
+            .collect();
+        self.dirty.clear();
+    }
+
+    pub fn shutdown(&mut self) {
+        self.link.shutdown();
+    }
+
+    pub fn network_mode(&self) -> LinkMode {
+        self.link.mode()
+    }
+
+    pub fn network_error(&self) -> &str {
+        self.link.error()
+    }
+
+    pub fn lan_addr(&self) -> Option<SocketAddr> {
+        self.link.lan_addr()
     }
 
     pub fn build_scene(&mut self, width: u32, height: u32) -> Result<RenderScene, String> {

@@ -184,3 +184,10 @@ files were copied into this repository.
 `ab_glyph` 0.2.32 (Apache-2.0) rasterizes the already-bundled Geist Mono face
 from `horizon-theme/fonts` (SIL Open Font License 1.1) into a CPU RGBA texture
 for the GL2 HUD. No font files are downloaded and no system fonts are required.
+
+
+## PR 12: internal LAN protocol
+
+The integrated server and LAN client use only the Rust standard library's TCP
+sockets and the already-declared `serde`/`serde_json` dependencies. No new
+third-party crates, fonts, protocol code or network assets were added.

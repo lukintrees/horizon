@@ -1,8 +1,8 @@
 //! A deterministic, streamed block world for the `legacy-gl` single-player loop.
 //!
 //! It is deliberately independent of `wgpu`, `naga`, the 22k-line `game.rs` and
-//! the network: the GL2 client can stream chunks, collide with them, edit them
-//! and persist edits while the modern build is unchanged.
+//! the modern client: the GL2 client can stream chunks, collide with them, edit
+//! them and persist edits while the modern build is unchanged.
 
 use std::collections::HashMap;
 

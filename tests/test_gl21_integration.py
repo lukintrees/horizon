@@ -59,6 +59,15 @@ UI_KEYS = (
     "horizon.legacyGl.contextError",
     "horizon.legacyGl.glError",
     "horizon.legacyGl.unavailable",
+    "horizon.legacyGl.game.network",
+    "horizon.legacyGl.game.networkError",
+    "horizon.legacyGl.game.chat",
+    "horizon.legacyGl.game.offline",
+    "horizon.legacyGl.game.integrated",
+    "horizon.legacyGl.game.remote",
+    "horizon.legacyGl.game.integratedStarted",
+    "horizon.legacyGl.game.remoteStarted",
+    "horizon.legacyGl.game.lanStarted",
 )
 
 
@@ -227,6 +236,10 @@ class OwnBranchWorkflowAndDocsTests(unittest.TestCase):
         self.assertIn("tests.test_legacy_game", source)
         self.assertIn("--game --frames 2", source)
         self.assertIn("legacy-gl game: OK", source)
+        self.assertIn("--integrated --frames 2", source)
+        self.assertIn("--lan-port 0", source)
+        self.assertIn("legacy-gl integrated: OK", source)
+        self.assertIn("tests.test_legacy_server", source)
         self.assertIn("cargo test -p horizon-client --lib legacy_game --no-default-features --features legacy-gl", source)
         self.assertIn("cargo check -p horizon-client --features legacy-gl --no-default-features", source)
         self.assertIn("cargo tree -p horizon-client --no-default-features --features legacy-gl", source)
@@ -253,6 +266,7 @@ class OwnBranchWorkflowAndDocsTests(unittest.TestCase):
         self.assertNotIn("Пока игры под `legacy-gl` ещё нет", design)
         self.assertIn("Full PR 8 integration", CONTRACT.read_text(encoding="utf-8"))
         self.assertIn("PR 11", CONTRACT.read_text(encoding="utf-8"))
+        self.assertIn("PR 12", CONTRACT.read_text(encoding="utf-8"))
         self.assertIn("without `modern-gl`", README.read_text(encoding="utf-8"))
         self.assertIn("no longer", contract)
         self.assertIn("enables `modern-gl`", contract)

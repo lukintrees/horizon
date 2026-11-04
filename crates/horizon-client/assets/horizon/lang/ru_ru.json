@@ -242,7 +242,7 @@
   "horizon.legacyGl.startup": "Legacy GL 2.1 starting",
   "horizon.legacyGl.startupError": "Legacy GL 2.1 failed: %s",
   "horizon.legacyGl.frameDrawn": "Legacy GL frame drawn: %s",
-  "horizon.legacyGl.help": "Usage: horizon-client --legacy-gl [--game] [--frames N|0] [--seed N] [--world PATH] [--render-distance N] [--fov DEG] [--sensitivity N] [--graphics-api legacygl] [--texture-budget-mib MiB]",
+  "horizon.legacyGl.help": "Usage: horizon-client --legacy-gl [--game|--integrated|--join HOST:PORT] [--frames N|0] [--seed N] [--world PATH] [--lan-port PORT] [--name NAME] [--render-distance N] [--fov DEG] [--sensitivity N] [--graphics-api legacygl] [--texture-budget-mib MiB]",
   "horizon.legacyGl.launchApi": "Legacy GL 2.1 build",
   "horizon.legacyGl.unavailableMethods": "Unavailable modern methods: %s",
   "horizon.legacyGl.unknownArgument": "Ignored argument: %s",
@@ -286,5 +286,14 @@
   "horizon.legacyGl.game.block.cobble": "Булыжник",
   "horizon.legacyGl.game.started": "Одиночная игра Legacy GL запущена",
   "horizon.legacyGl.game.frame": "Кадр Legacy GL: %s чанков, %s вызовов",
-  "horizon.legacyGl.saveError": "Не удалось сохранить мир Legacy GL: %s"
+  "horizon.legacyGl.saveError": "Не удалось сохранить мир Legacy GL: %s",
+  "horizon.legacyGl.game.network": "Сеть: %s; игроков %s; тик %s; TPS %s; пинг %s мс",
+  "horizon.legacyGl.game.networkError": "Ошибка сети: %s",
+  "horizon.legacyGl.game.chat": "Чат: %s",
+  "horizon.legacyGl.game.offline": "Офлайн",
+  "horizon.legacyGl.game.integrated": "Интегрированный сервер",
+  "horizon.legacyGl.game.remote": "LAN-клиент",
+  "horizon.legacyGl.game.integratedStarted": "Интегрированный сервер Legacy GL запущен",
+  "horizon.legacyGl.game.remoteStarted": "LAN-клиент Legacy GL запущен",
+  "horizon.legacyGl.game.lanStarted": "LAN-сервер Legacy GL слушает порт %s"
 }

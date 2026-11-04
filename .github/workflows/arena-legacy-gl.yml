@@ -40,7 +40,7 @@ jobs:
 
       - name: Python caps / contract / integration / public-tree checks
         run: |
-          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game -v
+          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game tests.test_legacy_server -v
           python3 tools/gl21_caps.py \
             --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt \
             --label ci-gl21 --check --no-write --stdout
@@ -193,11 +193,28 @@ jobs:
               exit "$rc"
             fi
           done
-          tail -80 /tmp/gl21-game.log
+          for spec in "2.1 120 120" "2.0 120 110"; do
+            set -- $spec
+            export MESA_GL_VERSION_OVERRIDE="$1"
+            export MESA_GLSL_VERSION_OVERRIDE="$2"
+            export HORIZON_GLSL_DIALECT="$3"
+            echo "=== integrated game GL $1 / GLSL override $2 / dialect $3 ===" | tee -a /tmp/gl21-game.log
+            xvfb-run -a -s '-screen 0 800x600x24' \
+              cargo run -p horizon-client --no-default-features --features legacy-gl -- --legacy-gl --game --integrated --frames 2 --lan-port 0 --render-distance 2 --seed 12345 --world /tmp/horizon-legacy-integrated.json \
+              >> /tmp/gl21-game.log 2>&1
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              tail -80 /tmp/gl21-game.log
+              exit "$rc"
+            fi
+          done
+          tail -100 /tmp/gl21-game.log
           grep -q 'legacy-gl frame: OK' /tmp/gl21-game.log || { echo "::error::missing legacy-gl frame: OK"; exit 1; }
           test "$(grep -c 'legacy-gl frame: OK' /tmp/gl21-game.log)" -ge 2 || { echo "::error::expected two game frames"; exit 1; }
           grep -q 'legacy-gl game: OK' /tmp/gl21-game.log || { echo "::error::missing legacy-gl game: OK"; exit 1; }
           test "$(grep -c 'legacy-gl game: OK' /tmp/gl21-game.log)" -ge 4 || { echo "::error::expected four interactive game frames"; exit 1; }
+          grep -q 'legacy-gl integrated: OK' /tmp/gl21-game.log || { echo "::error::missing legacy-gl integrated: OK"; exit 1; }
+          test "$(grep -c 'legacy-gl integrated: OK' /tmp/gl21-game.log)" -ge 4 || { echo "::error::expected four integrated server frames"; exit 1; }
           grep -q 'all programs linked: OK' /tmp/gl21-game.log || { echo "::error::missing full program link"; exit 1; }
           grep -q 'DIALECT: Glsl120' /tmp/gl21-game.log || { echo "::error::missing Glsl120"; exit 1; }
           grep -q 'DIALECT: Glsl110' /tmp/gl21-game.log || { echo "::error::missing Glsl110"; exit 1; }

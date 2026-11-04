@@ -3,6 +3,7 @@
 
 use horizon_client_core::lang;
 
+use super::server::LinkMode;
 use super::world::Block;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +103,13 @@ pub struct UiSnapshot {
     pub render_distance: i32,
     pub fov: f32,
     pub sensitivity: f32,
+    pub network_mode: LinkMode,
+    pub server_tick: u64,
+    pub server_tps: f32,
+    pub server_players: usize,
+    pub latency_ms: u32,
+    pub network_error: String,
+    pub chat: String,
 }
 
 const PANEL: [u8; 4] = [16, 20, 28, 220];
@@ -504,6 +512,43 @@ impl UiFrame {
             &[&state.seed],
             12.0,
         ));
+        let mode_key = match state.network_mode {
+            LinkMode::Offline => "horizon.legacyGl.game.offline",
+            LinkMode::Integrated => "horizon.legacyGl.game.integrated",
+            LinkMode::Remote => "horizon.legacyGl.game.remote",
+        };
+        let mode = lang::get(mode_key);
+        self.texts.push(translated(
+            12.0,
+            122.0,
+            "horizon.legacyGl.game.network",
+            &[
+                &mode,
+                &state.server_players,
+                &state.server_tick,
+                &state.server_tps,
+                &state.latency_ms,
+            ],
+            11.0,
+        ));
+        if !state.network_error.is_empty() {
+            self.texts.push(translated(
+                12.0,
+                140.0,
+                "horizon.legacyGl.game.networkError",
+                &[&state.network_error],
+                11.0,
+            ));
+        }
+        if !state.chat.is_empty() {
+            self.texts.push(translated(
+                12.0,
+                158.0,
+                "horizon.legacyGl.game.chat",
+                &[&state.chat],
+                11.0,
+            ));
+        }
         self.texts.push(translated(
             12.0,
             h - 74.0,

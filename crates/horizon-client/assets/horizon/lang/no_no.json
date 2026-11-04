@@ -479,7 +479,7 @@
   "horizon.legacyGl.startup": "Legacy GL 2.1 starting",
   "horizon.legacyGl.startupError": "Legacy GL 2.1 failed: %s",
   "horizon.legacyGl.frameDrawn": "Legacy GL frame drawn: %s",
-  "horizon.legacyGl.help": "Usage: horizon-client --legacy-gl [--game] [--frames N|0] [--seed N] [--world PATH] [--render-distance N] [--fov DEG] [--sensitivity N] [--graphics-api legacygl] [--texture-budget-mib MiB]",
+  "horizon.legacyGl.help": "Usage: horizon-client --legacy-gl [--game|--integrated|--join HOST:PORT] [--frames N|0] [--seed N] [--world PATH] [--lan-port PORT] [--name NAME] [--render-distance N] [--fov DEG] [--sensitivity N] [--graphics-api legacygl] [--texture-budget-mib MiB]",
   "horizon.legacyGl.launchApi": "Legacy GL 2.1 build",
   "horizon.legacyGl.unavailableMethods": "Unavailable modern methods: %s",
   "horizon.legacyGl.unknownArgument": "Ignored argument: %s",
@@ -523,5 +523,14 @@
   "horizon.legacyGl.game.block.cobble": "Cobblestone",
   "horizon.legacyGl.game.started": "Legacy GL single-player started",
   "horizon.legacyGl.game.frame": "Legacy GL game frame: %s chunks, %s draws",
-  "horizon.legacyGl.saveError": "Could not save the legacy GL world: %s"
+  "horizon.legacyGl.saveError": "Could not save the legacy GL world: %s",
+  "horizon.legacyGl.game.network": "Network: %s; players %s; tick %s; TPS %s; ping %s ms",
+  "horizon.legacyGl.game.networkError": "Network error: %s",
+  "horizon.legacyGl.game.chat": "Chat: %s",
+  "horizon.legacyGl.game.offline": "Offline",
+  "horizon.legacyGl.game.integrated": "Integrated server",
+  "horizon.legacyGl.game.remote": "LAN client",
+  "horizon.legacyGl.game.integratedStarted": "Legacy GL integrated server started",
+  "horizon.legacyGl.game.remoteStarted": "Legacy GL LAN client started",
+  "horizon.legacyGl.game.lanStarted": "Legacy GL LAN server listening on port %s"
 }
