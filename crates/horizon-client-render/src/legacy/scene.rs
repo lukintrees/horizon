@@ -216,10 +216,10 @@ pub fn prepare_frame<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn test_frame(hud: &crate::hud::HudBatch) -> Frame<'_> {
+    pub(crate) fn test_frame(hud: &crate::hud::HudBatch) -> Frame<'_> {
         Frame {
             weather: &[],
             weather_time: crate::weather::Time::new(0, 0.0),

@@ -98,7 +98,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo test --locked -p horizon-client-render --features legacy-scene --lib legacy:: 2>&1 | tee "$RUNNER_TEMP/legacy-test.log"; then
+          if cargo test --locked -p horizon-client-render --features legacy-scene --lib legacy 2>&1 | tee "$RUNNER_TEMP/legacy-test.log"; then
             exit 0
           fi
           python3 - <<'PY'

@@ -45,6 +45,8 @@ fn static_entity_shader() -> String {
 mod crumbling_tests;
 mod entity_batch;
 mod entity_outline;
+#[cfg(feature = "legacy-scene")]
+mod legacy_mirror;
 #[cfg(test)]
 pub(crate) mod test_gpu;
 mod weather;
@@ -1244,6 +1246,9 @@ pub struct Renderer {
     /// CPU copies of the section and far tile meshes uploaded while `render-capture` is on
     /// (`keep_capture_copies`, or `HORIZON_RENDER_CAPTURE` at creation); `None` otherwise.
     capture_copies: Option<capture::Copies>,
+    /// Optional live CPU bridge diagnostic, not a GL renderer or fallback.
+    #[cfg(feature = "legacy-scene")]
+    legacy_mirror: Option<legacy_mirror::Mirror>,
     /// A scene to write from the next frame (`horizon-ctl render-capture DIR`).
     pub capture: Option<capture::Request>,
     /// Outcome of the last capture: its summary, or the error.
@@ -2796,6 +2801,33 @@ impl Renderer {
                 )
             })
             .collect();
+        #[cfg(feature = "legacy-scene")]
+        let legacy_mirror = if std::env::var_os("HORIZON_LEGACY_CPU_MIRROR").as_deref()
+            == Some(std::ffi::OsStr::new("1"))
+        {
+            match legacy_mirror::Mirror::new(
+                sprite_pixels,
+                sprite_size,
+                layers,
+                hud_atlas,
+                animations,
+            ) {
+                Ok(mirror) => {
+                    log::info!(
+                        "Legacy CPU mirror enabled: experimental diagnostics only; wgpu still renders"
+                    );
+                    Some(mirror)
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Legacy CPU mirror could not start: {error}; wgpu continues normally"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let animations = animate::SpriteAnimator::new(
             &device,
             animations,
@@ -4409,6 +4441,8 @@ impl Renderer {
             capture_copies: std::env::var_os("HORIZON_RENDER_CAPTURE")
                 .is_some()
                 .then(capture::Copies::default),
+            #[cfg(feature = "legacy-scene")]
+            legacy_mirror,
             capture: None,
             capture_result: None,
         })
@@ -4842,6 +4876,15 @@ impl Renderer {
         self.occlusion.update(camera, (distance / 16.0) as i32 + 2);
     }
     pub fn upload(&mut self, key: SectionKey, mesh: &SectionMesh) {
+        #[cfg(feature = "legacy-scene")]
+        if let Some(mirror) = &mut self.legacy_mirror
+            && let Err(error) = mirror.upload(key, mesh)
+        {
+            log::warn!(
+                "Legacy CPU mirror disabled after upload error: {error}; wgpu continues normally"
+            );
+            self.legacy_mirror = None;
+        }
         if let Some(copies) = &mut self.capture_copies {
             copies.section(key, mesh);
         }
@@ -5411,6 +5454,10 @@ impl Renderer {
     }
     /// Drops every section, for a level whose chunks hold `layout`.
     pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) {
+        #[cfg(feature = "legacy-scene")]
+        if let Some(mirror) = &mut self.legacy_mirror {
+            mirror.clear();
+        }
         if let Some(copies) = &mut self.capture_copies {
             *copies = capture::Copies::default();
         }
@@ -5591,6 +5638,10 @@ impl Renderer {
     }
     pub fn remove_columns(&mut self, columns: impl IntoIterator<Item = (i32, i32)>) {
         let columns: Vec<(i32, i32)> = columns.into_iter().collect();
+        #[cfg(feature = "legacy-scene")]
+        if let Some(mirror) = &mut self.legacy_mirror {
+            mirror.remove_columns(&columns);
+        }
         if let Some(copies) = &mut self.capture_copies {
             copies.remove_columns(&columns);
         }
@@ -6324,6 +6375,17 @@ impl Renderer {
         // owner instead of submitting atlas patches to the invalid device.
         if self.device_lost() {
             return Err("the graphics device was lost".into());
+        }
+        #[cfg(feature = "legacy-scene")]
+        if let Some(mirror) = &mut self.legacy_mirror {
+            mirror.frame(
+                frame,
+                [self.config.width, self.config.height],
+                self.layout.min_y(),
+                self.gamma,
+                self.fullbright,
+                self.animated_textures,
+            );
         }
         if let Some(request) = self.capture.take() {
             let result = self.write_capture(&request, frame);

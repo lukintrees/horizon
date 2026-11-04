@@ -50,6 +50,11 @@ impl World {
     pub fn contains(&self, key: SectionKey) -> bool {
         self.sections.contains_key(&key)
     }
+    /// Resident section keys, in a stable order. Visibility is the caller's
+    /// responsibility and is not implied by residency.
+    pub fn section_keys(&self) -> impl Iterator<Item = SectionKey> + '_ {
+        self.sections.keys().copied()
+    }
     pub fn len(&self) -> usize {
         self.sections.len()
     }
