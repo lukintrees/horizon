@@ -1,6 +1,6 @@
-name: GL2 lint diagnostics
-# Temporary: prints rustfmt and clippy output of horizon-client-render as one annotation, the only channel that survives
-# the sandbox. Removed once the GL2 modules are clean.
+name: GL2 test diagnostics
+# Temporary: runs the same tests as verify, without stopping at the first failing binary, and prints the failing
+# tests and their panic lines as one annotation (the only channel that survives the sandbox). Removed once green.
 on:
   workflow_dispatch:
   push:
@@ -11,9 +11,9 @@ on:
 permissions:
   contents: read
 jobs:
-  lint:
+  tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -22,41 +22,24 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: gl2-lint
-      - name: Formatting and clippy of horizon-client-render
+          shared-key: verify
+          save-if: false
+      - name: Tests with every failure listed
         run: |
           set +e
-          cargo +stable fmt --all -- --check > fmt.txt 2>&1
-          cargo +stable fmt --all
-          git diff -- crates/horizon-client-render/src/gl2 > fmt.diff
-          git checkout -- crates/horizon-client-render/src/gl2
-          fmt_exit=$?
-          cargo +stable clippy -p horizon-client-render --all-targets --message-format=json -- -D warnings > clippy.json 2> clippy.err
-          clippy_exit=$?
-          python3 - "$fmt_exit" "$clippy_exit" <<'PY'
-          import json, sys
-          fmt_exit, clippy_exit = sys.argv[1], sys.argv[2]
-          out = [f"fmt exit={fmt_exit} clippy exit={clippy_exit}"]
-          out += [l.rstrip() for l in open("fmt.txt", errors="replace") if l.startswith("Diff in ")]
-          out.append("--- rustfmt diff of gl2 ---")
-          out += open("fmt.diff", errors="replace").read().splitlines()
-          for line in open("clippy.json", errors="replace"):
-              try:
-                  m = json.loads(line)
-              except ValueError:
-                  continue
-              if m.get("reason") != "compiler-message":
-                  continue
-              msg = m["message"]
-              if msg["level"] not in ("error", "warning"):
-                  continue
-              spans = [s for s in msg["spans"] if s.get("is_primary")] or msg["spans"]
-              where = f'{spans[0]["file_name"]}:{spans[0]["line_start"]}' if spans else "-"
-              code = (msg.get("code") or {}).get("code", "")
-              out.append(f'{msg["level"]} {where} [{code}] {msg["message"]}')
-          out.append("--- clippy stderr (tail) ---")
-          out += open("clippy.err", errors="replace").read()[-3000:].splitlines()
-          text = "\n".join(out)[:40000]
+          cargo +stable test --workspace --lib --bins --tests --no-fail-fast > test.txt 2>&1
+          code=$?
+          python3 - "$code" <<'PY'
+          import re, sys
+          code = sys.argv[1]
+          lines = open("test.txt", errors="replace").read().splitlines()
+          keep = []
+          for i, l in enumerate(lines):
+              if re.search(r"FAILED|panicked|error\[|error:|Running |failures:|test result: FAILED", l):
+                  keep.append(l.rstrip())
+          text = f"exit={code}\n" + "\n".join(keep)
+          tail = "\n".join(lines[-40:])
+          text = (text + "\n--- tail ---\n" + tail)[:40000]
           esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print(f"::error title=gl2-lint::{esc}")
+          print(f"::error title=gl2-tests::{esc}")
           PY
