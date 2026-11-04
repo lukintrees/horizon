@@ -591,9 +591,10 @@ mod tests {
         source.sky.ambient_light_color = [0.5; 3];
         source.entities = &dynamic;
         source.static_block_entities = &snapshots;
-        source.visible_static_block_entity_sections = &[key];
+        let visible_keys = [key];
+        source.visible_static_block_entity_sections = &visible_keys;
         let visible = frame::VisibleSections {
-            solid: &[key],
+            solid: &visible_keys,
             translucent: &[],
         };
         let near = |renderer: &mut TerrainHudRenderer, at: [u32; 2], expected: [u8; 3]| {
