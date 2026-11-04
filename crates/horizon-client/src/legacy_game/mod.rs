@@ -49,6 +49,7 @@ pub struct Game {
     pub save_path: PathBuf,
     pub last_frame: Instant,
     tick_accum: f32,
+    link: Link,
 }
 
 impl Game {
