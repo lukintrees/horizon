@@ -251,6 +251,22 @@ impl Renderer {
         }
     }
 
+    /// The CPU time the frame waited on the GPU (the wgpu path only; OpenGL 2 waits in the driver).
+    pub fn last_wait(&self) -> Duration {
+        match self {
+            Self::Wgpu(r) => r.last_wait,
+            Self::Gl2(_) => Duration::ZERO,
+        }
+    }
+
+    /// The CPU time spent encoding the frame's commands (the wgpu path only).
+    pub fn last_encode(&self) -> Duration {
+        match self {
+            Self::Wgpu(r) => r.last_encode,
+            Self::Gl2(_) => Duration::ZERO,
+        }
+    }
+
     pub fn resident_sections(&self) -> usize {
         match self {
             Self::Wgpu(r) => r.resident_sections(),

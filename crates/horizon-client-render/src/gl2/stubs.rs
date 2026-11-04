@@ -36,13 +36,13 @@ impl Renderer {
 
     pub fn release_surface(&mut self) {}
 
-    pub fn recreate_surface(&mut self) -> Result<()> { Ok(Default::default()) }
+    pub fn recreate_surface(&mut self) -> Result<()> { Ok(()) }
 
     pub fn set_present_mode(&mut self, _vsync: bool, _mode: crate::graphics::PresentMode) {}
 
     pub fn flat_draws(&self) -> bool { Default::default() }
 
-    pub fn set_flat_draws(&mut self, _on: bool) -> Result<()> { Ok(Default::default()) }
+    pub fn set_flat_draws(&mut self, _on: bool) -> Result<()> { Ok(()) }
 
     pub fn wants_water_plane(&self) -> bool { Default::default() }
 
@@ -52,7 +52,7 @@ impl Renderer {
 
     pub fn section_cull(&self) -> bool { Default::default() }
 
-    pub fn set_section_cull(&mut self, _on: bool) -> Result<()> { Ok(Default::default()) }
+    pub fn set_section_cull(&mut self, _on: bool) -> Result<()> { Ok(()) }
 
     pub fn culled_sections(&self) -> Option<([usize; 2], f32)> { Default::default() }
 
@@ -60,7 +60,7 @@ impl Renderer {
 
     pub fn gpu_frame(&self) -> bool { Default::default() }
 
-    pub fn set_gpu_culling(&mut self, _on: bool) -> Result<()> { Ok(Default::default()) }
+    pub fn set_gpu_culling(&mut self, _on: bool) -> Result<()> { Ok(()) }
 
     pub fn has_light_colors(&self) -> bool { Default::default() }
 

@@ -18352,7 +18352,7 @@ impl Game<'_> {
                     if let Some(threshold) = self.options.spikes
                         && let Some(r) = self.renderer.as_ref()
                     {
-                        let cpu = now.elapsed().saturating_sub(r.last_wait).as_secs_f32() * 1000.0;
+                        let cpu = now.elapsed().saturating_sub(r.last_wait()).as_secs_f32() * 1000.0;
                         // Spans timed between frames (`idle`) come first.
                         let spans = horizon_client::spans::merge(&frame_spans);
                         let between = between.as_secs_f32() * 1000.0;
@@ -18376,31 +18376,30 @@ impl Game<'_> {
                         }
                     }
                     if let Some(r) = self.renderer.as_mut() {
-                        let cpu = now.elapsed().saturating_sub(r.last_wait);
+                        let cpu = now.elapsed().saturating_sub(r.last_wait());
                         if rendered {
                             let ms = |d: Duration| d.as_secs_f32() * 1000.0;
-                            self.frame_graph.record(
-                                ms(elapsed),
-                                ms(cpu),
-                                r.gpu_times.last().copied(),
-                            );
-                            if let Some(&gpu) = r.gpu_times.last() {
+                            let gpu = r.wgpu().and_then(|w| w.gpu_times.last().copied());
+                            self.frame_graph.record(ms(elapsed), ms(cpu), gpu);
+                            if let Some(gpu) = gpu {
                                 self.gpu_utilization =
                                     f64::from(gpu) * 100.0 / f64::from(ms(cpu).max(0.001));
                             }
                             self.frame_stats.record_cpu(ms(cpu));
-                            let render = r.last_encode;
+                            let render = r.last_encode();
                             self.frame_stats.record_phases([
                                 ms(updated - now),
                                 ms(ticked - updated),
-                                ms(ticked.elapsed().saturating_sub(r.last_wait + render)),
+                                ms(ticked.elapsed().saturating_sub(r.last_wait() + render)),
                                 ms(render),
                             ]);
                             self.frame_stats
                                 .record_block_entities(r.static_block_entity_frame_stats());
                         }
-                        self.frame_stats.record_gpu(&r.gpu_times);
-                        r.gpu_times.clear();
+                        if let Some(w) = r.wgpu_mut() {
+                            self.frame_stats.record_gpu(&w.gpu_times);
+                            w.gpu_times.clear();
+                        }
                     }
                     horizon_client::ram_limit::frame();
                     self.limit_frame();
@@ -18440,7 +18439,10 @@ impl Game<'_> {
                         consumed = true;
                     }
                     if let Some(result) =
-                        self.renderer.as_mut().and_then(|r| r.capture_result.take())
+                        self.renderer
+                            .as_mut()
+                            .and_then(|r| r.wgpu_mut())
+                            .and_then(|r| r.capture_result.take())
                         && let Some(reply) = self.pending_render_capture.take()
                     {
                         let value = result.unwrap_or_else(|e| serde_json::json!({ "error": e }));
