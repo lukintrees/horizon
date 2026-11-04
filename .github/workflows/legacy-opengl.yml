@@ -120,6 +120,8 @@ jobs:
           {
             cargo clippy --locked -p horizon-client-render --features legacy-gl-window --example legacy_gl_window -- -D warnings &&
             cargo build --locked -p horizon-client-render --features legacy-gl-window --example legacy_gl_window &&
+            LIBGL_ALWAYS_SOFTWARE=1 WINIT_UNIX_BACKEND=x11 MESA_GL_VERSION_OVERRIDE=2.1 MESA_GLSL_VERSION_OVERRIDE=120 xvfb-run -a cargo test --locked -p horizon-client-render --features legacy-scene,legacy-gl-window --lib legacy::renderer::tests::native_frame_smoke -- --ignored &&
+            LIBGL_ALWAYS_SOFTWARE=1 WINIT_UNIX_BACKEND=x11 MESA_GL_VERSION_OVERRIDE=2.0 MESA_EXTENSION_OVERRIDE='-GL_ARB_pixel_buffer_object -GL_EXT_pixel_buffer_object' xvfb-run -a cargo test --locked -p horizon-client-render --features legacy-scene,legacy-gl-window --lib legacy::renderer::tests::native_frame_smoke -- --ignored &&
             LIBGL_ALWAYS_SOFTWARE=1 WINIT_UNIX_BACKEND=x11 MESA_GL_VERSION_OVERRIDE=2.1 MESA_GLSL_VERSION_OVERRIDE=120 xvfb-run -a target/debug/examples/legacy_gl_window --smoke &&
             LIBGL_ALWAYS_SOFTWARE=1 WINIT_UNIX_BACKEND=x11 MESA_GL_VERSION_OVERRIDE=2.0 MESA_EXTENSION_OVERRIDE='-GL_ARB_pixel_buffer_object -GL_EXT_pixel_buffer_object' xvfb-run -a target/debug/examples/legacy_gl_window --smoke
           } 2>&1 | tee "$RUNNER_TEMP/legacy-window.log" && exit 0

@@ -252,3 +252,93 @@ impl Renderer {
         })
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use crate::{
+        font::Patch, hud::HudBatch, legacy::scene::tests::test_frame, mesher::TerrainVertex,
+    };
+    use winit::{
+        application::ApplicationHandler,
+        event::WindowEvent,
+        event_loop::{ActiveEventLoop, EventLoop},
+        platform::x11::EventLoopBuilderExtX11,
+        window::WindowId,
+    };
+
+    #[derive(Default)]
+    struct Smoke {
+        completed: bool,
+    }
+    impl ApplicationHandler for Smoke {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            let window = Arc::new(
+                event_loop
+                    .create_window(
+                        Window::default_attributes()
+                            .with_inner_size(winit::dpi::PhysicalSize::new(64, 64)),
+                    )
+                    .unwrap(),
+            );
+            let mut renderer = Renderer::new(
+                window,
+                Textures {
+                    terrain_pixels: &[255; 4],
+                    terrain_side: 1,
+                    terrain_layers: 1,
+                    gui_pixels: &[255; 4],
+                    gui_width: 1,
+                    gui_height: 1,
+                    animations: &[],
+                },
+            )
+            .unwrap();
+            let quad = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]
+                .map(|p| TerrainVertex::new([p[0], p[1], 0.], p, 0, u32::MAX, 0));
+            let mut mesh = SectionMesh::default();
+            mesh.solid.extend(quad);
+            mesh.translucent.extend(quad);
+            renderer.upload((0, 0, 0), &mesh).unwrap();
+            let mut hud = HudBatch::new([64, 64]);
+            hud.quad(
+                [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
+                [[0., 0.], [1., 0.], [1., 1.], [0., 1.]],
+                u32::MAX,
+            );
+            hud.patches.push(Patch {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+                rgba: vec![255, 0, 0, 255],
+            });
+            let frame = test_frame(&hud);
+            let report = renderer
+                .render(&frame, &[(0, 0, 0)], 0, 0.5, false, true)
+                .unwrap();
+            assert!(report.presented);
+            assert_eq!(report.terrain_draws, 2);
+            assert_eq!(report.hud_vertices, 6);
+            assert!(report.omitted_hud_blends.is_empty());
+            assert!(report.omitted_entity_overlays.is_empty());
+            renderer.remove_columns([(0, 0)]);
+            assert_eq!(renderer.section_keys().count(), 0);
+            renderer.clear_sections();
+            drop(renderer);
+            self.completed = true;
+            event_loop.exit();
+        }
+        fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
+    }
+    #[test]
+    #[ignore = "requires an X11 display with OpenGL 2.0 or newer"]
+    fn native_frame_smoke() {
+        let mut builder = EventLoop::builder();
+        builder.with_x11().with_any_thread(true);
+        let event_loop = builder.build().unwrap();
+        let mut app = Smoke::default();
+        event_loop.run_app(&mut app).unwrap();
+        assert!(app.completed);
+    }
+}
