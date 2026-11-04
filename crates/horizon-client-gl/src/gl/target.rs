@@ -205,38 +205,6 @@ impl Target {
         }
         self.color.destroy(ctx);
     }
-
-    /// The sample counts worth offering: 2x and 4x where the driver reports they fit.
-    ///
-    /// 6x is what the chip also supports and what this path does not offer: at 1366x768 it is
-    /// most of the frame time on a GPU this size, and the plan's budget has no room for it
-    /// (docs/gl21-x1650-plan.ru.md §9). Empty when MSAA is unavailable, which is what the
-    /// settings screen shows instead of a switch that does nothing.
-    pub fn sample_counts(ctx: &Context) -> Vec<u32> {
-        if !ctx.has(Feature::FramebufferMultisample) {
-            return Vec::new();
-        }
-        let gl = ctx.gl();
-        let max = unsafe { gl.get_parameter_i32(MAX_SAMPLES_EXT) };
-        [2i32, 4]
-            .into_iter()
-            .filter(|samples| *samples <= max)
-            .map(|samples| samples as u32)
-            .collect()
-    }
-
-    /// What the driver actually gave this renderbuffer: a 4x request that became 2x is worth
-    /// a log line rather than a mystery.
-    pub fn actual_samples(&self, ctx: &Context) -> u32 {
-        let gl = ctx.gl();
-        let Some(color) = self.color else { return 0 };
-        unsafe {
-            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(color));
-            let samples = gl.get_renderbuffer_parameter_i32(glow::RENDERBUFFER, SAMPLES);
-            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
-            samples.max(0) as u32
-        }
-    }
 }
 
 /// `GL_SAMPLES` (1.3): the sample count a renderbuffer actually got. A driver that silently
@@ -408,6 +376,38 @@ impl MultisampleTarget {
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
         }
         Ok(())
+    }
+
+    /// The sample counts worth offering: 2x and 4x where the driver reports they fit.
+    ///
+    /// 6x is what the chip also supports and what this path does not offer: at 1366x768 it is
+    /// most of the frame time on a GPU this size, and the plan's budget has no room for it
+    /// (docs/gl21-x1650-plan.ru.md §9). Empty when MSAA is unavailable, which is what the
+    /// settings screen shows instead of a switch that does nothing.
+    pub fn sample_counts(ctx: &Context) -> Vec<u32> {
+        if !ctx.has(Feature::FramebufferMultisample) {
+            return Vec::new();
+        }
+        let gl = ctx.gl();
+        let max = unsafe { gl.get_parameter_i32(MAX_SAMPLES_EXT) };
+        [2i32, 4]
+            .into_iter()
+            .filter(|samples| *samples <= max)
+            .map(|samples| samples as u32)
+            .collect()
+    }
+
+    /// What the driver actually gave this renderbuffer: a 4x request that became 2x is worth
+    /// a log line rather than a mystery.
+    pub fn actual_samples(&self, ctx: &Context) -> u32 {
+        let gl = ctx.gl();
+        let Some(color) = self.color else { return 0 };
+        unsafe {
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(color));
+            let samples = gl.get_renderbuffer_parameter_i32(glow::RENDERBUFFER, SAMPLES);
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            samples.max(0) as u32
+        }
     }
 
     pub fn size(&self) -> (u32, u32) {

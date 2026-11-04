@@ -99,6 +99,9 @@ impl Sampling {
 /// second constant that could drift.
 pub const SRGB8_ALPHA8_EXT: u32 = 0x8C43;
 
+/// The extension that makes [`SRGB8_ALPHA8_EXT`] a legal internal format: `GL_EXT_texture_sRGB`.
+pub const SRGB_TEXTURES: crate::caps::Feature = crate::caps::Feature::SrgbTextures;
+
 /// A 2D texture.
 #[derive(Debug)]
 pub struct Texture {
@@ -211,7 +214,20 @@ impl Texture {
                 0,
                 // The *unsized* internal format: `GL_RGBA8` is a 3.0 token that 2.1 drivers
                 // reject, and `GL_RGBA` with `GL_UNSIGNED_BYTE` gives the same thing.
-                glow::RGBA as i32,
+                //
+                // sRGB is the exception, and it is the whole point of `set_srgb`: the sized
+                // `GL_SRGB8_ALPHA8_EXT` is what makes the driver linearize on sample, and an
+                // unsized `GL_RGBA` would upload the same bytes as a plain texture. The flag
+                // needs `EXT_texture_sRGB`, so a texture asked for sRGB on a driver without it
+                // is an error here rather than a silently washed-out sprite.
+                match (self.srgb, ctx.has(SRGB_TEXTURES)) {
+                    (false, _) => glow::RGBA as i32,
+                    (true, true) => SRGB8_ALPHA8_EXT as i32,
+                    (true, false) => {
+                        gl.bind_texture(glow::TEXTURE_2D, None);
+                        return Err(Error::Missing(SRGB_TEXTURES));
+                    }
+                },
                 self.width as i32,
                 self.height as i32,
                 0,
