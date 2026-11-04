@@ -37,6 +37,8 @@ SHORT = re.compile(
     r"(?:\[[^\]]+\])?: (?P<message>.*)$"
 )
 
+# `---- a_test stdout ----` opens a failed test's output; what it printed follows.
+SECTION = re.compile(r"^---- (?P<name>\S+) stdout ----$")
 # `thread 'gl21::draws::tests::a_test' panicked at crates/x/src/y.rs:12:5:`
 PANIC = re.compile(r"^thread '(?P<name>[^']+)' panicked at (?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+):?")
 # The location a rustc diagnostic points at: ` --> crates/x/src/y.rs:12:5`.
@@ -101,8 +103,23 @@ def test_annotations(text):
     """(file, line, message) for each failed test and each compile error of a `cargo test` run."""
     out = []
     lines = text.splitlines()
+    # What the test that failed last said: its own panic line, when the harness printed one, is
+    # where it points; without one the assertion is a `---- test stdout ----` block whose first
+    # line is the message and whose `left`/`right` lines are the interesting part.
+    current = None
     for index, raw in enumerate(lines):
         line = raw.strip()
+        section = SECTION.match(line)
+        if section:
+            current = {"name": section.group("name"), "body": []}
+        elif current is not None:
+            if line.startswith("failures:") or line.startswith("test result:"):
+                current = None
+            else:
+                current["body"].append(line)
+        if current is not None and len(current["body"]) >= 6:
+            out.append(_section_annotation(current))
+            current = None
         panic = PANIC.match(line)
         if panic:
             out.append(
@@ -142,6 +159,20 @@ def test_annotations(text):
                 )
             )
     return out
+
+
+def _section_annotation(section):
+    """A failed test that printed no `panicked at` line: its name, and the first lines it printed."""
+    body = [line for line in section["body"] if line and not line.startswith("note:")]
+    where = "?"
+    for line in body:
+        found = re.search(r"(crates/[\w/.-]+\.rs|tools/[\w/.-]+\.py):(\d+)", line)
+        if found:
+            where = found.group(2)
+            break
+    message = " | ".join(body[:4]) or "the test failed without printing anything"
+    return ("crates/horizon-client-render/src/gl21/mod.rs", 1 if where == "?" else int(where),
+            f"{section['name']}: {message}")
 
 
 def annotations(mode, text):
