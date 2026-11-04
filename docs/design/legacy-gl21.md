@@ -56,7 +56,7 @@ Rust 1.99 (npm-пакеты `@toolchain-bin/*`, системный `x86_64-linux
 `GFX21_GOLDEN_OUT=/tmp/legacy-gl-scene.rgba cargo test` пишет кадр, а
 `python3 tools/legacy_gl_golden.py --check` сравнивает его с независимым Python-рендером;
 плюс `python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game tests.test_legacy_server -v` (64 теста),
-полный `python3 -m unittest discover -s tests` (691 тест, 26 skipped; прямые `rustc`-пробы идут через wrapper с `-C linker-features=-lld` для локального Rust 1.99), `tools/gl21_caps.py --check` (L1),
+полный `python3 -m unittest discover -s tests` (691 тест, 1 skipped при доступном локальном Rust 1.99 через wrapper с `-C linker-features=-lld`; без Rust в `PATH` пропускаются 26 профильных Rust-тестов), `tools/gl21_caps.py --check` (L1),
 `git diff --check`, `tools/check_public_tree.py`, 0 битых Markdown-ссылок.
 Попытка собрать локальное зеркало из 3413 вендорённых крейтов GitHub покрыла 294/488 точных версий
 `Cargo.lock`, но 194 (включая `cpal`, `glam`, `winit`) с разрешённых хостов недоступны; `cargo check` поэтому
