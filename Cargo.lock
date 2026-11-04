@@ -1583,6 +1583,9 @@ dependencies = [
 [[package]]
 name = "horizon-legacy-gl"
 version = "0.1.0"
+dependencies = [
+ "winit",
+]
 
 [[package]]
 name = "horizon-mcp"

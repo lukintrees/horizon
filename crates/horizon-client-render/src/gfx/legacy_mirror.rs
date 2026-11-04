@@ -14,6 +14,7 @@ pub(super) struct Mirror {
     reported_frame: bool,
     reported_error: bool,
     reported_omissions: bool,
+    reported_hud_omissions: bool,
 }
 impl Mirror {
     pub fn new(
@@ -36,6 +37,7 @@ impl Mirror {
             reported_frame: false,
             reported_error: false,
             reported_omissions: false,
+            reported_hud_omissions: false,
         })
     }
 
@@ -63,7 +65,7 @@ impl Mirror {
         fullbright: bool,
         animated: bool,
     ) {
-        let result = (|| -> Result<(usize, usize, usize, Vec<(u32, usize)>), String> {
+        let result = (|| -> Result<_, String> {
             if animated {
                 self.animator
                     .advance(self.world.atlas_mut(), frame.ticks, None)
@@ -86,15 +88,22 @@ impl Mirror {
                 plan.entities.vertices.len(),
                 plan.hud.vertices.len(),
                 plan.omitted_entity_overlays,
+                plan.omitted_hud_blends,
             ))
         })();
         match result {
-            Ok((terrain, entities, hud, omitted)) => {
+            Ok((terrain, entities, hud, omitted, hud_omitted)) => {
                 if !omitted.is_empty() && !self.reported_omissions {
                     log::warn!(
                         "Legacy CPU mirror skipped unsupported entity overlay quads: {omitted:?}"
                     );
                     self.reported_omissions = true;
+                }
+                if !hud_omitted.is_empty() && !self.reported_hud_omissions {
+                    log::warn!(
+                        "Legacy CPU mirror skipped unsupported HUD blend triangles: {hud_omitted:?}"
+                    );
+                    self.reported_hud_omissions = true;
                 }
                 if !frame.title && !self.reported_frame {
                     log::info!(
@@ -144,6 +153,17 @@ mod tests {
         frame.entities = &unsupported;
         mirror.frame(&frame, [32, 32], 0, 0.5, false, true);
         assert!(mirror.reported_omissions);
+        assert!(!mirror.reported_error);
+        let mut special_hud = crate::hud::HudBatch::new([32, 32]);
+        special_hud.quad(
+            [[0., 0.], [1., 0.], [1., 1.], [0., 1.]],
+            [[0.5, 0.5]; 4],
+            u32::MAX,
+        );
+        special_hud.blend_since(0, crate::hud::Blend::EndPortal);
+        let frame = crate::legacy::scene::tests::test_frame(&special_hud);
+        mirror.frame(&frame, [32, 32], 0, 0.5, false, true);
+        assert!(mirror.reported_hud_omissions);
         assert!(!mirror.reported_error);
         mirror.remove_columns(&[(2, 3)]);
         assert!(mirror.world.is_empty());

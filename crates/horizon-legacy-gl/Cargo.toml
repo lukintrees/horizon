@@ -8,6 +8,10 @@ description = "Experimental OpenGL 2.0 terrain drawing backend"
 
 [features]
 window-context = []
+winit-window = ["window-context", "dep:winit"]
+
+[dependencies]
+winit = { version = "0.30.13", optional = true }
 
 [lints]
 workspace = true

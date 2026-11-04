@@ -79,7 +79,7 @@ test-support = []
 # CPU frame conversion for the experimental GL world; not a selectable renderer.
 legacy-scene = []
 # Native GLX/WGL context bootstrap, currently only used by the developer example.
-legacy-gl-window = ["horizon-legacy-gl/window-context"]
+legacy-gl-window = ["horizon-legacy-gl/winit-window"]
 
 [build-dependencies]
 horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }

@@ -18,6 +18,12 @@ use std::{
 ))]
 pub mod window;
 
+#[cfg(all(
+    feature = "winit-window",
+    any(target_os = "linux", target_os = "windows")
+))]
+pub mod surface;
+
 pub const TERRAIN_VERTEX_SHADER: &str = include_str!("terrain.vert");
 pub const TERRAIN_FRAGMENT_SHADER: &str = include_str!("terrain.frag");
 

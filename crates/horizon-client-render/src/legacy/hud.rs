@@ -230,6 +230,14 @@ pub struct Mesh {
     pub runs: Vec<Run>,
 }
 
+/// Output of the opt-in partial HUD conversion. Unsupported blend runs are
+/// counted by blend and their source triangles are omitted, never silently.
+#[derive(Default, Debug)]
+pub struct BuildReport {
+    pub mesh: Mesh,
+    pub omitted: Vec<(Blend, usize)>,
+}
+
 impl Mesh {
     /// Convert to the backend's ordered draws so the vertex buffer is uploaded once.
     pub fn draws(&self) -> Vec<horizon_legacy_gl::Draw> {
@@ -296,6 +304,25 @@ fn clip(poly: &[Point], axis: usize, limit: f32, lower: bool) -> Vec<Point> {
 /// Atlas patch uploads are a separate step: apply `batch.patches` via
 /// `Atlas::update_rect`, then update the returned pages on the GPU.
 pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, Error> {
+    Ok(build_inner(atlas, batch, window, false)?.mesh)
+}
+
+/// Convert supported HUD runs and report skipped blend types and triangle
+/// counts. Invalid ranges and invalid supported geometry still fail.
+pub fn build_supported(
+    atlas: &Atlas,
+    batch: &HudBatch,
+    window: [u32; 2],
+) -> Result<BuildReport, Error> {
+    build_inner(atlas, batch, window, true)
+}
+
+fn build_inner(
+    atlas: &Atlas,
+    batch: &HudBatch,
+    window: [u32; 2],
+    skip_unsupported: bool,
+) -> Result<BuildReport, Error> {
     if window.contains(&0)
         || window.iter().any(|&side| side > i32::MAX as u32)
         || !batch.scale.is_finite()
@@ -304,22 +331,9 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
         return Err(Error::InvalidViewport);
     }
     let mut mesh = Mesh::default();
+    let mut omitted: Vec<(Blend, usize)> = Vec::new();
     let mut expected = 0usize;
-    for (range, blend) in batch.runs() {
-        let blend = match blend {
-            Blend::Alpha => UiBlend::Alpha,
-            Blend::Invert => UiBlend::Invert,
-            Blend::Additive => UiBlend::Additive,
-            Blend::Vignette => UiBlend::Vignette,
-            Blend::Depth([x, y, w, h]) => {
-                let x = x.min(window[0]);
-                let y = y.min(window[1]);
-                let w = w.min(window[0] - x);
-                let h = h.min(window[1] - y);
-                UiBlend::Depth([x as i32, (window[1] - y - h) as i32, w as i32, h as i32])
-            }
-            _ => return Err(Error::UnsupportedBlend),
-        };
+    for (range, source_blend) in batch.runs() {
         let start = range.start as usize;
         let end = range.end as usize;
         if start != expected
@@ -331,6 +345,33 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
             return Err(Error::InvalidTriangles);
         }
         expected = end;
+        let blend = match source_blend {
+            Blend::Alpha => UiBlend::Alpha,
+            Blend::Invert => UiBlend::Invert,
+            Blend::Additive => UiBlend::Additive,
+            Blend::Vignette => UiBlend::Vignette,
+            Blend::Depth([x, y, w, h]) => {
+                let x = x.min(window[0]);
+                let y = y.min(window[1]);
+                let w = w.min(window[0] - x);
+                let h = h.min(window[1] - y);
+                UiBlend::Depth([x as i32, (window[1] - y - h) as i32, w as i32, h as i32])
+            }
+            _ if skip_unsupported => {
+                if let Some((_, count)) =
+                    omitted.iter_mut().find(|(blend, _)| *blend == source_blend)
+                {
+                    *count += (end - start) / 3;
+                } else {
+                    omitted
+                        .try_reserve(1)
+                        .map_err(|_| Error::AllocationFailed)?;
+                    omitted.push((source_blend, (end - start) / 3));
+                }
+                continue;
+            }
+            _ => return Err(Error::UnsupportedBlend),
+        };
         let mut needs_depth_clear = matches!(blend, UiBlend::Depth(_));
         if matches!(blend, UiBlend::Depth([_, _, 0, _] | [_, _, _, 0])) {
             continue;
@@ -451,7 +492,7 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
     if expected != batch.vertices.len() {
         return Err(Error::InvalidTriangles);
     }
-    Ok(mesh)
+    Ok(BuildReport { mesh, omitted })
 }
 
 /// Convenience to match the HUD atlas API's pixel-space patch.
@@ -770,6 +811,41 @@ mod tests {
                 .iter()
                 .all(|run| run.blend == UiBlend::Invert)
         );
+    }
+
+    #[test]
+    fn partial_hud_build_reports_omitted_blends_and_keeps_order() {
+        let atlas = Atlas::new(8, 4, &[255; 8 * 4 * 4], 4).unwrap();
+        let mut batch = make_batch();
+        batch.quad(
+            [[0., 0.], [4., 0.], [4., 4.], [0., 4.]],
+            [[0.5, 0.5]; 4],
+            u32::MAX,
+        );
+        batch.quad(
+            [[0., 0.], [4., 0.], [4., 4.], [0., 4.]],
+            [[0.5, 0.5]; 4],
+            u32::MAX,
+        );
+        batch.blends.push((6..12, Blend::EndPortal));
+        batch.blends.push((12..18, Blend::CitGlint(3)));
+        assert_eq!(
+            build(&atlas, &batch, [32, 32]).unwrap_err(),
+            Error::UnsupportedBlend
+        );
+        let partial = build_supported(&atlas, &batch, [32, 32]).unwrap();
+        assert_eq!(
+            partial.omitted,
+            [(Blend::EndPortal, 2), (Blend::CitGlint(3), 2)]
+        );
+        let expected = build(&atlas, &make_batch(), [32, 32]).unwrap();
+        assert_eq!(partial.mesh.vertices, expected.vertices);
+        assert_eq!(partial.mesh.runs, expected.runs);
+        batch.blends[1].0 = 11..18;
+        assert!(matches!(
+            build_supported(&atlas, &batch, [32, 32]),
+            Err(Error::InvalidTriangles)
+        ));
     }
 
     #[test]

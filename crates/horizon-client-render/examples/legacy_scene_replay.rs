@@ -3,6 +3,7 @@
 //! the user's own prepared resources matching the capture; no assets are bundled.
 //! `cargo run -p horizon-client-render --features legacy-scene,legacy-gl-window
 //!  --example legacy_scene_replay -- CAPTURE_DIR [RESOURCE_ROOT]`
+#![forbid(unsafe_code)]
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod app {
     use horizon_client_render::{
@@ -16,26 +17,21 @@ mod app {
             world::{SectionKey, World},
         },
     };
-    use horizon_legacy_gl::{Page, Renderer, window::WindowContext};
+    use horizon_legacy_gl::{Page, surface::Surface};
     use std::{
-        ffi::{CStr, c_void},
         path::PathBuf,
         sync::Arc,
         time::{Duration, Instant},
     };
-    #[cfg(target_os = "linux")]
-    use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
     use winit::{
         application::ApplicationHandler,
         event::WindowEvent,
         event_loop::{ActiveEventLoop, EventLoop},
-        raw_window_handle::{HasWindowHandle, RawWindowHandle},
         window::{Window, WindowId},
     };
 
     struct State {
-        renderer: Option<Renderer>,
-        context: Option<WindowContext>,
+        surface: Surface,
         window: Arc<Window>,
         scene: Scene,
         world: World,
@@ -45,148 +41,76 @@ mod app {
         next_frame: Instant,
         visible: Vec<SectionKey>,
     }
-    impl Drop for State {
-        fn drop(&mut self) {
-            // SAFETY: state owns the window and context on the event-loop
-            // thread; the renderer is deleted before its context and window.
-            unsafe {
-                if let Some(context) = &self.context
-                    && context.make_current().is_ok()
-                    && let Some(renderer) = self.renderer.take()
-                {
-                    renderer.destroy();
-                }
-            }
-            self.context.take();
+    fn draw(state: &mut State) -> Result<(), String> {
+        let renderer = &mut state.surface;
+        let size = state.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Ok(());
         }
-    }
-
-    unsafe fn context(window: &Window) -> Result<WindowContext, String> {
-        let handle = window.window_handle().map_err(|e| e.to_string())?;
-        #[cfg(target_os = "linux")]
-        {
-            let display = window.display_handle().map_err(|e| e.to_string())?;
-            match (display.as_raw(), handle.as_raw()) {
-                (RawDisplayHandle::Xlib(display), RawWindowHandle::Xlib(window)) => {
-                    let display = display.display.ok_or("null Xlib display")?.as_ptr();
-                    // SAFETY: caller retains the X11 window and display for the context lifetime.
-                    unsafe {
-                        WindowContext::new_xlib(display, window.window)
-                            .map_err(|e| format!("{e:?}"))
-                    }
-                }
-                _ => Err("legacy replay requires X11/Xlib, not Wayland".into()),
-            }
+        if size.width > i32::MAX as u32 || size.height > i32::MAX as u32 {
+            return Err("viewport is too large".into());
         }
-        #[cfg(target_os = "windows")]
-        {
-            match handle.as_raw() {
-                // SAFETY: caller retains the Win32 window for the context lifetime.
-                RawWindowHandle::Win32(window) => unsafe {
-                    WindowContext::new_win32(window.hwnd.get() as *mut c_void)
-                        .map_err(|e| format!("{e:?}"))
-                },
-                _ => Err("legacy replay requires a Win32 window".into()),
-            }
-        }
-    }
-
-    unsafe fn proc(context: &WindowContext, name: &CStr) -> Result<*const c_void, String> {
-        // SAFETY: the caller made this context current on its owning thread.
-        let address = unsafe { context.resolve(name) };
-        if address.is_null() || address as usize <= 3 || address as usize == usize::MAX {
-            Err(format!("missing {}", name.to_string_lossy()))
-        } else {
-            Ok(address)
-        }
-    }
-
-    unsafe fn draw(state: &mut State) -> Result<(), String> {
-        let context = state.context.as_ref().ok_or("missing GL context")?;
-        let renderer = state.renderer.as_mut().ok_or("missing GL renderer")?;
-        // SAFETY: the State owns a live context and window on this thread.
-        unsafe {
-            context.make_current().map_err(|e| format!("{e:?}"))?;
-            let viewport = std::mem::transmute::<
-                *const c_void,
-                unsafe extern "system" fn(i32, i32, i32, i32),
-            >(proc(context, c"glViewport")?);
-            let clear_color = std::mem::transmute::<
-                *const c_void,
-                unsafe extern "system" fn(f32, f32, f32, f32),
-            >(proc(context, c"glClearColor")?);
-            let clear = std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32)>(proc(
-                context, c"glClear",
-            )?);
-            let size = state.window.inner_size();
-            if size.width == 0 || size.height == 0 {
-                return Ok(());
-            }
-            if size.width > i32::MAX as u32 || size.height > i32::MAX as u32 {
-                return Err("viewport is too large".into());
-            }
-            let hud = HudBatch::new([size.width, size.height]);
-            let frame = state.scene.frame(&hud);
-            let elapsed_ticks =
-                (state.started.elapsed().as_millis() / 50).min(u128::from(u64::MAX)) as u64;
-            state
-                .animator
-                .advance(
-                    state.world.atlas_mut(),
-                    frame.ticks.saturating_add(elapsed_ticks),
-                    None,
-                )
-                .map_err(|e| format!("sprite animation: {e}"))?;
-            let dirty: Vec<_> = state.animator.dirty().collect();
-            for (page, rect) in dirty {
-                let source = &state.world.atlas().pages()[page];
-                renderer
-                    .update_page_region(
-                        page,
-                        Page {
-                            side: source.side,
-                            pixels: &source.pixels,
-                        },
-                        rect,
-                    )
-                    .map_err(|e| format!("sprite upload: {e:?}"))?;
-                state.animator.uploaded(page).map_err(|e| e.to_string())?;
-            }
-            let prepared = scene::prepare_frame(
-                &mut state.world,
-                &mut state.gui,
-                &frame,
-                [size.width, size.height],
-                state.scene.renderer.min_y,
-                &state.visible,
-                state.scene.renderer.gamma,
-                state.scene.renderer.fullbright,
+        let hud = HudBatch::new([size.width, size.height]);
+        let frame = state.scene.frame(&hud);
+        let elapsed_ticks =
+            (state.started.elapsed().as_millis() / 50).min(u128::from(u64::MAX)) as u64;
+        state
+            .animator
+            .advance(
+                state.world.atlas_mut(),
+                frame.ticks.saturating_add(elapsed_ticks),
+                None,
             )
-            .map_err(|e| format!("frame plan: {e:?}"))?;
-            // Captures deliberately omit entities and HUD. The placeholder GUI
-            // atlas is only for preparing their empty passes, never rendered.
-            if !prepared.entities.vertices.is_empty() || !prepared.hud.vertices.is_empty() {
-                return Err("capture unexpectedly contains entity or HUD geometry".into());
-            }
-            viewport(0, 0, size.width as i32, size.height as i32);
-            clear_color(
+            .map_err(|e| format!("sprite animation: {e}"))?;
+        let dirty: Vec<_> = state.animator.dirty().collect();
+        for (page, rect) in dirty {
+            let source = &state.world.atlas().pages()[page];
+            renderer
+                .update_page_region(
+                    page,
+                    Page {
+                        side: source.side,
+                        pixels: &source.pixels,
+                    },
+                    rect,
+                )
+                .map_err(|e| format!("sprite upload: {e:?}"))?;
+            state.animator.uploaded(page).map_err(|e| e.to_string())?;
+        }
+        let prepared = scene::prepare_frame(
+            &mut state.world,
+            &mut state.gui,
+            &frame,
+            [size.width, size.height],
+            state.scene.renderer.min_y,
+            &state.visible,
+            state.scene.renderer.gamma,
+            state.scene.renderer.fullbright,
+        )
+        .map_err(|e| format!("frame plan: {e:?}"))?;
+        // Captures deliberately omit entities and HUD. The placeholder GUI
+        // atlas is only for preparing their empty passes, never rendered.
+        if !prepared.entities.vertices.is_empty() || !prepared.hud.vertices.is_empty() {
+            return Err("capture unexpectedly contains entity or HUD geometry".into());
+        }
+        if !renderer
+            .begin_frame([
                 prepared.fog.color[0],
                 prepared.fog.color[1],
                 prepared.fog.color[2],
                 1.0,
-            );
-            clear(0x4000 | 0x0100);
-            for draw in prepared.terrain {
-                if let Some(fog) = draw.fog {
-                    renderer.draw_ordered_with_fog(draw.vertices, &draw.draws, &draw.transform, fog)
-                } else {
-                    renderer.draw_ordered(draw.vertices, &draw.draws, &draw.transform)
-                }
-                .map_err(|e| format!("world draw: {e:?}"))?;
-            }
-            context.swap_buffers().map_err(|e| format!("{e:?}"))?;
-            Ok(())
+            ])
+            .map_err(|e| format!("clear: {e}"))?
+        {
+            return Ok(());
         }
+        for draw in prepared.terrain {
+            renderer
+                .draw_ordered(draw.vertices, &draw.draws, &draw.transform, draw.fog)
+                .map_err(|e| format!("world draw: {e:?}"))?;
+        }
+        renderer.present().map_err(|e| format!("{e:?}"))?;
+        Ok(())
     }
 
     struct App {
@@ -216,11 +140,8 @@ mod app {
                         )
                         .map_err(|e| e.to_string())?,
                 );
-                // SAFETY: window, context and renderer are retained together in State.
-                let context = unsafe { context(&window)? };
-                // SAFETY: the context is current and remains on this event-loop thread.
-                let mut renderer = unsafe { Renderer::new(|name| context.resolve(name)) }
-                    .map_err(|e| format!("GL init: {e:?}"))?;
+                let mut renderer =
+                    Surface::new(window.clone()).map_err(|e| format!("GL init: {e}"))?;
                 let result =
                     (|| -> Result<(World, Vec<SectionKey>, legacy_hud::PatchAtlas), String> {
                         let atlas = Atlas::new(
@@ -238,8 +159,8 @@ mod app {
                                 pixels: &p.pixels,
                             })
                             .collect();
-                        // SAFETY: the context remains current and page bytes are alive for the call.
-                        unsafe { renderer.upload_pages(&pages) }
+                        renderer
+                            .upload_pages(&pages)
                             .map_err(|e| format!("atlas upload: {e:?}"))?;
                         let hud = HudBatch::new(scene.renderer.size);
                         let frame = scene.frame(&hud);
@@ -269,14 +190,7 @@ mod app {
                                 .map_err(|e| format!("placeholder GUI atlas: {e:?}"))?;
                         Ok((world, visible, legacy_hud::PatchAtlas::new(gui)))
                     })();
-                let (world, visible, gui) = match result {
-                    Ok(value) => value,
-                    Err(error) => {
-                        // SAFETY: still on the owning thread with the context current.
-                        unsafe { renderer.destroy() };
-                        return Err(error);
-                    }
-                };
+                let (world, visible, gui) = result?;
                 eprintln!(
                     "Loaded {} near sections. This replay omits the game loop, HUD, entities, sky and LOD.",
                     visible.len()
@@ -285,8 +199,7 @@ mod app {
                 let started = Instant::now();
                 window.request_redraw();
                 Ok(State {
-                    renderer: Some(renderer),
-                    context: Some(context),
+                    surface: renderer,
                     window,
                     scene,
                     world,
@@ -318,8 +231,7 @@ mod app {
                 }
                 WindowEvent::RedrawRequested => {
                     if let Some(state) = &mut self.state {
-                        // SAFETY: state owns the context and the event loop stays on this thread.
-                        if let Err(error) = unsafe { draw(state) } {
+                        if let Err(error) = draw(state) {
                             self.error = Some(error);
                             self.state.take();
                             event_loop.exit();

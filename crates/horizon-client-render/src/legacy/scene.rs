@@ -162,6 +162,8 @@ pub struct FramePlan<'a> {
     /// Nonempty only for `prepare_supported_frame`; these quads are not drawn.
     pub omitted_entity_overlays: Vec<(u32, usize)>,
     pub hud: hud::Mesh,
+    /// Unsupported GUI blends and omitted triangle counts in partial mode.
+    pub omitted_hud_blends: Vec<(crate::hud::Blend, usize)>,
     pub view_projection: [f32; 16],
     pub fog: Fog,
 }
@@ -187,7 +189,8 @@ pub fn prepare_frame<'a>(
 
 /// Prepare an explicitly incomplete frame, omitting unsupported entity
 /// materials and returning their codes/counts in `omitted_entity_overlays`.
-/// HUD errors and malformed geometry still fail; no omission is silent.
+/// Unsupported HUD blends are reported separately; malformed ranges and
+/// supported geometry still fail. No omission is silent.
 pub fn prepare_supported_frame<'a>(
     world: &'a mut World,
     gui: &mut PatchAtlas,
@@ -228,7 +231,14 @@ fn prepare_frame_inner<'a>(
             omitted: Vec::new(),
         }
     };
-    let hud = hud::build(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?;
+    let hud = if skip_unsupported {
+        hud::build_supported(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?
+    } else {
+        hud::BuildReport {
+            mesh: hud::build(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?,
+            omitted: Vec::new(),
+        }
+    };
     world.set_lightmap(lights);
     let terrain = if frame.title {
         Vec::new()
@@ -252,7 +262,8 @@ fn prepare_frame_inner<'a>(
         solid_count,
         entities: entities.mesh,
         omitted_entity_overlays: entities.omitted,
-        hud,
+        hud: hud.mesh,
+        omitted_hud_blends: hud.omitted,
         view_projection,
         fog: frame_fog(frame),
     })
