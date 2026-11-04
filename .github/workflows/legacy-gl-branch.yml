@@ -114,7 +114,33 @@ jobs:
             fi
           done
       - name: Lint the game bridges and GL2 coordinator
-        run: cargo clippy --locked -p horizon-client-render --features legacy-gl --lib --tests -- -D warnings
+        shell: bash
+        run: |
+          set +e
+          cargo clippy --locked -p horizon-client-render --features legacy-gl --lib --tests --message-format=json -- -D warnings > target/legacy-branch/clippy.jsonl 2> target/legacy-branch/clippy.stderr
+          status=$?
+          cat target/legacy-branch/clippy.stderr
+          python3 - <<'PYLINT'
+          import json
+          from pathlib import Path
+          def escape(value):
+              return str(value).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          for line in Path('target/legacy-branch/clippy.jsonl').read_text().splitlines():
+              try:
+                  record = json.loads(line)
+              except ValueError:
+                  print(line)
+                  continue
+              if record.get('reason') != 'compiler-message':
+                  continue
+              msg = record['message']
+              if msg.get('level') != 'error':
+                  continue
+              span = next((s for s in msg.get('spans', []) if s.get('is_primary')), {})
+              location = 'file=' + escape(span['file_name']) + ',line=' + str(span['line_start']) + ',' if span else ''
+              print('::error ' + location + 'title=Game bridge Clippy::' + escape((msg.get('rendered') or msg['message'])[:5000]))
+          PYLINT
+          exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
