@@ -1492,6 +1492,9 @@ mod tests {
             );
         }
         assert!(renderer.unload_section([0; 3]).unwrap());
+        assert_eq!(renderer.resident_sections(), 0);
+        // Scene unload retires resources; collect at the documented boundary.
+        renderer.world.collect_garbage().unwrap();
         assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 0);
     }
 }

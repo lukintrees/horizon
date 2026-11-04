@@ -54,6 +54,14 @@ struct Rect {
 }
 
 #[repr(C)]
+struct MinMaxInfo {
+    reserved: [i32; 2],
+    max_size: [i32; 2],
+    max_position: [i32; 2],
+    min_track: [i32; 2],
+    max_track: [i32; 2],
+}
+#[repr(C)]
 struct CreateStruct {
     parameter: *mut c_void,
     instance: Handle,
@@ -91,6 +99,14 @@ unsafe extern "system" fn window_proc(
     // The stable Box<State> is passed at creation and outlives DestroyWindow.
     // No State queue borrow is held across any native call/reentrant callback.
     unsafe {
+        if message == 0x0024 && lparam != 0 {
+            // WM_GETMINMAXINFO
+            // The system's default caption minimum silently expands small test
+            // drawables (and makes a 1x1 client resize impossible). Keep native
+            // max bounds, but let the caller enforce its own GUI minimum.
+            (*(lparam as *mut MinMaxInfo)).min_track = [1, 1];
+            return 0;
+        }
         if message == 0x0081 {
             // WM_NCCREATE
             let create = &*(lparam as *const CreateStruct);
@@ -129,6 +145,7 @@ unsafe extern "system" fn window_proc(
 // ABI layout guards, evaluated by cargo check for each Windows target as well.
 const _: () = {
     assert!(size_of::<PixelFormat>() == 40);
+    assert!(size_of::<MinMaxInfo>() == 40);
     assert!(size_of::<CreateStruct>() == if size_of::<usize>() == 4 { 48 } else { 80 });
     assert!(std::mem::offset_of!(Message, wparam) == if size_of::<usize>() == 4 { 8 } else { 16 });
     assert!(size_of::<Message>() == if size_of::<usize>() == 4 { 32 } else { 48 });
