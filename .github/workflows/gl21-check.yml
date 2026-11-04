@@ -1,0 +1,58 @@
+name: gl21 check
+# A temporary, branch-scoped check for the OpenGL 2.1 work (docs/opengl21-plan.md), so that
+# `cargo fmt` and `clippy` output reach the agent that wrote the code: this sandbox cannot read the
+# action logs (they live on blob storage it cannot reach), but it can read check annotations, so the
+# errors are republished as annotations. Delete this file before the branch merges.
+#
+# Nothing here runs on other branches: it does not replace `checks`, it repeats two of its steps in
+# a form that names the file and line of every complaint.
+on:
+  push:
+    branches: [arena/7a094209-horizon]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gl21-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install Rust toolchain and the ALSA and udev headers the client links against
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gl21-check
+      # rustfmt writes a unified diff of what it would change; `tools/gl21_annotate.py` turns each
+      # hunk's file and line into an annotation, which the API returns even when the log cannot be
+      # read from where the work is being done.
+      - name: Format
+        id: fmt
+        run: |
+          set +e
+          cargo +stable fmt --all -- --check > /tmp/fmt.diff 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          cat /tmp/fmt.diff
+      - name: Turn the formatting diff into annotations
+        if: steps.fmt.outputs.status != '0'
+        run: python tools/gl21_annotate.py fmt /tmp/fmt.diff
+      - name: Clippy
+        id: clippy
+        run: |
+          set +e
+          cargo +stable clippy -p horizon-client-render --all-targets --message-format=short -- -D warnings > /tmp/clippy.txt 2>&1
+          status=$?
+          cat /tmp/clippy.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Turn the linter's complaints into annotations
+        if: steps.clippy.outputs.status != '0'
+        run: python tools/gl21_annotate.py clippy /tmp/clippy.txt
