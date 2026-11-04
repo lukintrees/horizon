@@ -40,7 +40,7 @@ jobs:
 
       - name: Python caps / contract / integration / public-tree checks
         run: |
-          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game tests.test_legacy_server -v
+          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game tests.test_legacy_server tests.test_legacy_multiplayer -v
           python3 tools/gl21_caps.py \
             --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt \
             --label ci-gl21 --check --no-write --stdout
@@ -215,6 +215,8 @@ jobs:
           test "$(grep -c 'legacy-gl game: OK' /tmp/gl21-game.log)" -ge 4 || { echo "::error::expected four interactive game frames"; exit 1; }
           grep -q 'legacy-gl integrated: OK' /tmp/gl21-game.log || { echo "::error::missing legacy-gl integrated: OK"; exit 1; }
           test "$(grep -c 'legacy-gl integrated: OK' /tmp/gl21-game.log)" -ge 4 || { echo "::error::expected four integrated server frames"; exit 1; }
+          grep -q 'legacy-gl multiplayer: OK' /tmp/gl21-game.log || { echo "::error::missing legacy-gl multiplayer: OK"; exit 1; }
+          test "$(grep -c 'legacy-gl multiplayer: OK' /tmp/gl21-game.log)" -ge 4 || { echo "::error::expected four multiplayer frames"; exit 1; }
           grep -q 'all programs linked: OK' /tmp/gl21-game.log || { echo "::error::missing full program link"; exit 1; }
           grep -q 'DIALECT: Glsl120' /tmp/gl21-game.log || { echo "::error::missing Glsl120"; exit 1; }
           grep -q 'DIALECT: Glsl110' /tmp/gl21-game.log || { echo "::error::missing Glsl110"; exit 1; }

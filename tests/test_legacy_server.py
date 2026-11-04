@@ -50,7 +50,11 @@ class IntegratedServerSourceTests(unittest.TestCase):
             "LinkMode",
             "NetServer",
             "NetClient",
+            "ClientCommand",
+            "ContainerAction",
+            "ServerPlayer",
             "fn integrated_server_steps_and_answers_a_ping",
+            "fn chat_commands_and_container_are_authoritative",
             "fn integrated_and_remote_links_exchange_a_ping",
         ):
             self.assertIn(marker, text)
@@ -68,6 +72,8 @@ class IntegratedServerSourceTests(unittest.TestCase):
             "Hello",
             "Event(ServerEvent)",
             "Bye",
+            "ServerEvent::Welcome",
+            "ServerCommand::Client",
             "fn a_client_reads_a_loopback_welcome_and_event",
         ):
             self.assertIn(marker, text)
@@ -77,11 +83,12 @@ class IntegratedServerSourceTests(unittest.TestCase):
     def test_game_routes_input_and_hud_shows_network_status(self):
         text = MOD.read_text(encoding="utf-8")
         for marker in (
-            "ServerCommand::Input(self.input.clone())",
-            "ServerCommand::Pause",
-            "ServerCommand::Break",
-            "ServerCommand::Place",
-            "ServerCommand::SetHotbar",
+            "ClientCommand::Input(self.input.clone())",
+            "ClientCommand::Pause",
+            "ClientCommand::Break",
+            "ClientCommand::Place",
+            "ClientCommand::SetHotbar",
+            "ClientCommand::Chat",
             "network_mode",
         ):
             self.assertIn(marker, text)
@@ -100,6 +107,7 @@ class IntegratedServerSourceTests(unittest.TestCase):
             "LinkMode::Integrated",
             "LinkMode::Remote",
             "self.game.shutdown()",
+            "legacy-gl multiplayer: OK",
         ):
             self.assertIn(marker, backend)
 
@@ -121,6 +129,8 @@ class IntegratedServerWorkflowTests(unittest.TestCase):
             "--integrated --frames 2",
             "--lan-port 0",
             "legacy-gl integrated: OK",
+            "legacy-gl multiplayer: OK",
+            "tests.test_legacy_multiplayer",
             "cargo test -p horizon-client --lib legacy_game --no-default-features --features legacy-gl",
         ):
             self.assertIn(marker, text)

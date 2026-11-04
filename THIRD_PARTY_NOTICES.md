@@ -191,3 +191,10 @@ for the GL2 HUD. No font files are downloaded and no system fonts are required.
 The integrated server and LAN client use only the Rust standard library's TCP
 sockets and the already-declared `serde`/`serde_json` dependencies. No new
 third-party crates, fonts, protocol code or network assets were added.
+
+
+## PR 13: multiplayer state
+
+PR 13 adds no new third-party dependencies. Per-player state, chat commands,
+the shared container and unique LAN names are implemented with the Rust
+standard library, `serde`/`serde_json` and the existing bundled translations.

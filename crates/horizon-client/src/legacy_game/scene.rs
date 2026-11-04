@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Game;
 use super::player::REACH;
+use super::server::ServerPlayer;
 use super::text::{TextAtlas, TextQuad};
 use super::ui::{Rect, UiFrame};
 use super::world::{CHUNK_SIZE, height_at};
@@ -201,6 +202,18 @@ fn selection_lines(out: &mut Vec<f32>, block: [i32; 3]) {
     }
 }
 
+fn name_color(name: &str) -> [u8; 4] {
+    let hash = name.bytes().fold(37_u32, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    [
+        80 + (hash % 160) as u8,
+        80 + ((hash >> 8) % 160) as u8,
+        80 + ((hash >> 16) % 160) as u8,
+        255,
+    ]
+}
+
 impl RenderScene {
     pub fn build(game: &mut Game, width: u32, height: u32) -> Result<Self, String> {
         let width = width.max(1);
@@ -226,16 +239,25 @@ impl RenderScene {
             .collect::<Vec<_>>();
 
         let mut entities = Vec::new();
-        for index in 0..4_i32 {
-            let x = eye.x + 8.0 + index as f32 * 5.0;
-            let z = eye.z - 6.0 + (index % 2) as f32 * 7.0;
-            let y = height_at(game.world.seed, x.floor() as i32, z.floor() as i32) as f32 + 2.0;
-            push_entity(
-                &mut entities,
-                [x, y, z],
-                0.6,
-                [220, 96 + index as u8 * 20, 80, 255],
-            );
+        for remote in &game.remote_players {
+            if remote.name.as_str() == game.link.name() {
+                continue;
+            }
+            let position = remote.player.position;
+            push_entity(&mut entities, position, 0.6, name_color(&remote.name));
+        }
+        if entities.is_empty() {
+            for index in 0..4_i32 {
+                let x = eye.x + 8.0 + index as f32 * 5.0;
+                let z = eye.z - 6.0 + (index % 2) as f32 * 7.0;
+                let y = height_at(game.world.seed, x.floor() as i32, z.floor() as i32) as f32 + 2.0;
+                push_entity(
+                    &mut entities,
+                    [x, y, z],
+                    0.6,
+                    [220, 96 + index as u8 * 20, 80, 255],
+                );
+            }
         }
 
         let mut lines = Vec::new();

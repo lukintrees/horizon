@@ -1,4 +1,4 @@
-//! Screen layout for the GL2 single-player client. All visible labels come
+//! Screen layout for the GL2 client. All visible labels come
 //! from bundled translation keys; no English UI text is hardcoded here.
 
 use horizon_client_core::lang;
@@ -13,6 +13,7 @@ pub enum Screen {
     Pause,
     Inventory,
     Options,
+    Chat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +30,7 @@ pub enum UiAction {
     DecreaseDistance,
     IncreaseFov,
     DecreaseFov,
+    Container(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,6 +112,10 @@ pub struct UiSnapshot {
     pub latency_ms: u32,
     pub network_error: String,
     pub chat: String,
+    pub chat_input: String,
+    pub chat_lines: Vec<String>,
+    pub player_names: Vec<String>,
+    pub container: [u8; 27],
 }
 
 const PANEL: [u8; 4] = [16, 20, 28, 220];
@@ -223,6 +229,32 @@ impl UiFrame {
             Screen::Playing => {
                 frame.hud(state);
             }
+            Screen::Chat => {
+                frame.hud(state);
+                frame.rects.push(Rect {
+                    x0: 12.0,
+                    y0: h - 150.0,
+                    x1: w - 12.0,
+                    y1: h - 70.0,
+                    color: PANEL,
+                });
+                for (index, line) in state.chat_lines.iter().rev().take(4).enumerate() {
+                    frame.texts.push(translated(
+                        20.0,
+                        h - 142.0 + index as f32 * 14.0,
+                        "horizon.legacyGl.game.chatLine",
+                        &[line],
+                        11.0,
+                    ));
+                }
+                frame.texts.push(translated(
+                    20.0,
+                    h - 84.0,
+                    "horizon.legacyGl.game.chatPrompt",
+                    &[&state.chat_input],
+                    12.0,
+                ));
+            }
             Screen::Pause => {
                 frame.hud(state);
                 frame.rects.push(Rect {
@@ -317,9 +349,50 @@ impl UiFrame {
                         11.0,
                     ));
                 }
+                frame.texts.push(text(
+                    center - 220.0,
+                    200.0,
+                    "horizon.legacyGl.game.containerTitle",
+                    18.0,
+                    ACCENT,
+                ));
+                for slot in 0_usize..27 {
+                    let x = center - 220.0 + (slot % 9) as f32 * 50.0;
+                    let y = 230.0 + (slot / 9) as f32 * 48.0;
+                    frame.rects.push(Rect {
+                        x0: x,
+                        y0: y,
+                        x1: x + 44.0,
+                        y1: y + 40.0,
+                        color: HOTBAR,
+                    });
+                    frame.buttons.push(button(
+                        x,
+                        y,
+                        44.0,
+                        40.0,
+                        "horizon.legacyGl.game.containerSlotLabel",
+                        UiAction::Container(slot as u8),
+                    ));
+                    let block_name = lang::get(Block::from_u8(state.container[slot]).name_key());
+                    frame.texts.push(translated(
+                        x + 3.0,
+                        y + 4.0,
+                        "horizon.legacyGl.game.containerSlot",
+                        &[&(slot + 1), &block_name],
+                        9.0,
+                    ));
+                }
+                frame.texts.push(text(
+                    center - 220.0,
+                    382.0,
+                    "horizon.legacyGl.game.containerClick",
+                    11.0,
+                    TEXT,
+                ));
                 frame.buttons.push(button(
                     center - 80.0,
-                    220.0,
+                    410.0,
                     160.0,
                     36.0,
                     "horizon.legacyGl.game.back",
@@ -546,6 +619,23 @@ impl UiFrame {
                 158.0,
                 "horizon.legacyGl.game.chat",
                 &[&state.chat],
+                11.0,
+            ));
+        }
+        let joined = state.player_names.join(", ");
+        self.texts.push(translated(
+            12.0,
+            176.0,
+            "horizon.legacyGl.game.playerList",
+            &[&state.server_players, &joined],
+            11.0,
+        ));
+        for (index, line) in state.chat_lines.iter().rev().take(3).enumerate() {
+            self.texts.push(translated(
+                12.0,
+                194.0 + index as f32 * 14.0,
+                "horizon.legacyGl.game.chatLine",
+                &[line],
                 11.0,
             ));
         }

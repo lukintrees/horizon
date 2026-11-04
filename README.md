@@ -105,7 +105,7 @@ cargo run --release -p horizon-client
 
 Prepared files land in the gitignored `.local/`: never commit or share them. Options, controls and architecture: [the native client guide](docs/native-client.md); all developer docs: [docs/README.md](docs/README.md).
 
-An experimental OpenGL 2.1/2.0 path for old GPUs is documented in [Legacy GL 2.1 / Radeon X1650](docs/design/legacy-gl21.md). The default build remains wgpu. With `--no-default-features --features legacy-gl` the same client builds a separate GL2 game loop without `modern-gl`, with `graphicsApi:legacygl`/`--legacy-gl` and its own UI/localization keys. `--integrated` starts an authoritative integrated server on a 20 Hz thread; `--lan-port` and `--join` connect GL2 clients over a Horizon-internal LAN protocol, not the Minecraft Java protocol. Real X1650, wgpu parity and 30-minute stability checks remain unmeasured.
+An experimental OpenGL 2.1/2.0 path for old GPUs is documented in [Legacy GL 2.1 / Radeon X1650](docs/design/legacy-gl21.md). The default build remains wgpu. With `--no-default-features --features legacy-gl` the same client builds a separate GL2 game loop without `modern-gl`, with `graphicsApi:legacygl`/`--legacy-gl` and its own UI/localization keys. `--integrated` starts an authoritative integrated server on a 20 Hz thread; `--lan-port` and `--join` connect GL2 clients over a Horizon-internal LAN protocol, not the Minecraft Java protocol. Multiplayer state includes chat commands, a player list, a shared container and visible remote players. Real X1650, wgpu parity and 30-minute stability checks remain unmeasured.
 
 ## Roadmap
 

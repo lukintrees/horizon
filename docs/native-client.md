@@ -877,7 +877,7 @@ without an error. Its view was inspected. The
 seven client tests and all-target client Clippy passed. Full gameplay parity and
 playable Linux release acceptance on the target machine remain pending.
 
-## Legacy OpenGL 2.1 (experimental, full integration plus the PR 11 offline single-player scene and PR 12 integrated server/LAN link)
+## Legacy OpenGL 2.1 (experimental, full integration plus the PR 11 offline single-player scene, PR 12 integrated server/LAN link and PR 13 multiplayer state)
 
 `cargo run -p horizon-client --no-default-features --features legacy-gl --
 --legacy-gl` builds a separate GL2 game loop. The `legacy-gl` feature no longer
@@ -893,7 +893,7 @@ is requested. See [the Russian design document](design/legacy-gl21.md) and
 Checks that need no GPU or crates.io resolution:
 
 ```sh
-python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game tests.test_legacy_server -v
+python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration tests.test_legacy_game tests.test_legacy_server tests.test_legacy_multiplayer -v
 python3 tools/gl21_caps.py --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt --label ci-gl21 --check --no-write --stdout
 python3 tools/legacy_gl_golden.py --check benchmarks/graphics/legacy-gl-scene.rgba
 python3 tools/legacy_gl_smoke.py --check --stdout

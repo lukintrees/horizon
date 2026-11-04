@@ -295,3 +295,23 @@ vanilla entity/container synchronization or dedicated-server parity. The
 original 22k-line `game.rs`, wgpu visual parity, real X1650/`r300g` caps and
 timings, 800x600 RD4 FPS, 30-minute stability and hardware acceptance remain
 out of scope. No PR, issue, `/claim`, label or roadmap item is created.
+
+
+## PR 13: authoritative multiplayer state (this branch)
+
+After another «Продолжи» the `full` scope gained multiplayer gameplay on top
+of the integrated server. `server.rs` now holds a `HashMap` of per-actor player
+states, actor-scoped `ClientCommand` values, chat commands, a bounded chat log
+and a shared 27-slot container; snapshots carry all players and the container.
+`net.rs` assigns unique names on `Hello`, sends `ServerEvent::Welcome`, and
+rewrites remote actor commands from the authenticated connection instead of
+trusting a client-supplied name. `T` opens a localized chat prompt, `E` opens
+the shared container, `Screen::Chat` shows recent chat lines, and the HUD shows
+the player list. `scene.rs` draws visible remote players as colored entities.
+
+This is still a Horizon-internal LAN protocol, **not** the Minecraft Java
+protocol: no vanilla login/encryption, entity AI, container menus, redstone,
+dedicated server or 22k-line `game.rs` parity. wgpu visual parity, real
+X1650/`r300g` caps and timings, 800x600 RD4 FPS, 30-minute stability and
+hardware acceptance remain unmeasured. No PR, issue, `/claim`, label or
+roadmap item is created.

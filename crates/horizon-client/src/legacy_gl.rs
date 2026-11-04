@@ -1049,6 +1049,9 @@ impl App {
             LinkMode::Remote => println!("legacy-gl network: OK"),
             LinkMode::Offline => {}
         }
+        if self.game.network_mode() != LinkMode::Offline {
+            println!("legacy-gl multiplayer: OK");
+        }
         Ok(())
     }
 
@@ -1321,7 +1324,7 @@ impl ApplicationHandler for App {
                     return;
                 };
                 let exit = if event.state == ElementState::Pressed {
-                    self.game.key_down(key)
+                    self.game.key_down(key, event.text.as_deref())
                 } else {
                     self.game.key_up(key);
                     false

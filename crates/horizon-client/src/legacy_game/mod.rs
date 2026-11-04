@@ -1,5 +1,5 @@
-//! PR 11/12: an interactive GL2 game state with an optional authoritative
-//! integrated server and LAN link.
+//! PR 11/12/13: an interactive GL2 game state with an authoritative
+//! integrated server, LAN link and multiplayer state.
 //!
 //! The offline path keeps world streaming, physics, editing, HUD, menus and
 //! saves in pure Rust. `--integrated` moves authority to a 20 Hz server thread;
@@ -27,7 +27,10 @@ use winit::keyboard::KeyCode;
 use self::player::{Input, Player};
 use self::save::{SaveState, load, save, save_path};
 use self::scene::RenderScene;
-use self::server::{Link, LinkMode, ServerCommand, ServerEvent, ServerSnapshot};
+use self::server::{
+    ClientCommand, ContainerAction, Link, LinkMode, ServerCommand, ServerEvent, ServerPlayer,
+    ServerSnapshot,
+};
 use self::ui::{Screen, UiAction, UiFrame, UiSnapshot};
 use self::world::World;
 
@@ -50,6 +53,9 @@ pub struct Game {
     pub last_frame: Instant,
     tick_accum: f32,
     link: Link,
+    remote_players: Vec<ServerPlayer>,
+    container: [u8; 27],
+    chat_input: String,
 }
 
 impl Game {
@@ -91,6 +97,9 @@ impl Game {
             last_frame: Instant::now(),
             tick_accum: 0.0,
             link,
+            remote_players: Vec::new(),
+            container: [0; 27],
+            chat_input: String::new(),
         };
         game.sync_chunks();
         game
@@ -136,9 +145,9 @@ impl Game {
         let dt = dt.clamp(0.0, 0.1);
         if !self.link.is_offline() {
             self.link.tick();
-            self.link.send(ServerCommand::Input(self.input.clone()));
+            self.link.client(ClientCommand::Input(self.input.clone()));
             self.link
-                .send(ServerCommand::Pause(self.screen != Screen::Playing));
+                .client(ClientCommand::Pause(self.screen != Screen::Playing));
             for event in self.link.poll() {
                 self.apply_event(event);
             }
@@ -155,15 +164,37 @@ impl Game {
         }
     }
 
-    pub fn key_down(&mut self, key: KeyCode) -> bool {
+    pub fn key_down(&mut self, key: KeyCode, text: Option<&str>) -> bool {
+        if self.screen == Screen::Chat {
+            match key {
+                KeyCode::Escape => self.screen = Screen::Playing,
+                KeyCode::Enter => {
+                    self.submit_chat();
+                    self.screen = Screen::Playing;
+                }
+                KeyCode::Backspace => {
+                    self.chat_input.pop();
+                }
+                _ => {
+                    if let Some(text) = text {
+                        self.append_chat_text(text);
+                    }
+                }
+            }
+            return false;
+        }
         match key {
             KeyCode::Escape => match self.screen {
                 Screen::Playing => self.screen = Screen::Pause,
-                Screen::Pause | Screen::Inventory | Screen::Options => {
+                Screen::Pause | Screen::Inventory | Screen::Options | Screen::Chat => {
                     self.screen = Screen::Playing
                 }
                 Screen::Title => return true,
             },
+            KeyCode::KeyT => {
+                self.screen = Screen::Chat;
+                self.chat_input.clear();
+            }
             KeyCode::KeyE => {
                 self.screen = if self.screen == Screen::Inventory {
                     Screen::Playing
@@ -194,6 +225,31 @@ impl Game {
         false
     }
 
+    pub fn append_chat_text(&mut self, text: &str) {
+        if self.screen != Screen::Chat {
+            return;
+        }
+        for ch in text.chars() {
+            if !ch.is_control() && self.chat_input.len() < 64 {
+                self.chat_input.push(ch);
+            }
+        }
+    }
+
+    fn submit_chat(&mut self) {
+        let text = self.chat_input.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        if self.link.is_offline() {
+            self.link
+                .local_chat(format!("{}: {text}", self.link.name()));
+        } else {
+            self.link.client(ClientCommand::Chat(text));
+        }
+        self.chat_input.clear();
+    }
+
     pub fn key_up(&mut self, key: KeyCode) {
         match key {
             KeyCode::KeyW | KeyCode::ArrowUp => self.input.forward = false,
@@ -210,7 +266,7 @@ impl Game {
     fn select(&mut self, slot: u8) {
         self.player.set_selection(slot);
         if !self.link.is_offline() {
-            self.link.send(ServerCommand::SetHotbar(slot));
+            self.link.client(ClientCommand::SetHotbar(slot));
         }
     }
 
@@ -221,7 +277,7 @@ impl Game {
         if self.link.is_offline() {
             self.player.look(dx, dy, self.settings.sensitivity);
         } else {
-            self.link.send(ServerCommand::Look {
+            self.link.client(ClientCommand::Look {
                 dx,
                 dy,
                 sensitivity: self.settings.sensitivity,
@@ -237,7 +293,7 @@ impl Game {
             .cycle_selection(if delta > 0.0 { -1 } else { 1 });
         if !self.link.is_offline() {
             self.link
-                .send(ServerCommand::SetHotbar(self.player.selected));
+                .client(ClientCommand::SetHotbar(self.player.selected));
         }
     }
 
@@ -252,8 +308,17 @@ impl Game {
             return false;
         }
         if self.screen != Screen::Playing {
-            if button == MouseButton::Left {
-                if let Some(action) = self.ui.action_at(x, y) {
+            if let Some(action) = self.ui.action_at(x, y) {
+                if let UiAction::Container(slot) = action {
+                    let action = if button == MouseButton::Left {
+                        ContainerAction::Take
+                    } else {
+                        ContainerAction::Put
+                    };
+                    self.container_action(slot, action);
+                    return false;
+                }
+                if button == MouseButton::Left {
                     return self.handle_action(action);
                 }
             }
@@ -262,10 +327,10 @@ impl Game {
         if !self.link.is_offline() {
             match button {
                 MouseButton::Left => {
-                    self.link.send(ServerCommand::Break);
+                    self.link.client(ClientCommand::Break);
                 }
                 MouseButton::Right => {
-                    self.link.send(ServerCommand::Place);
+                    self.link.client(ClientCommand::Place);
                 }
                 _ => {}
             }
@@ -290,6 +355,36 @@ impl Game {
             self.sync_chunks();
         }
         false
+    }
+
+    fn container_action(&mut self, slot: u8, action: ContainerAction) {
+        if !self.link.is_offline() {
+            self.link.client(ClientCommand::Container { slot, action });
+            return;
+        }
+        let index = (slot as usize).min(self.container.len() - 1);
+        let selected = self.player.selected as usize;
+        match action {
+            ContainerAction::Take => {
+                let item = self.container[index];
+                if item != 0
+                    && (self.player.slots[selected] == item || self.player.counts[selected] == 0)
+                {
+                    if self.player.counts[selected] == 0 {
+                        self.player.slots[selected] = item;
+                    }
+                    self.player.counts[selected] = self.player.counts[selected].saturating_add(1);
+                    self.container[index] = 0;
+                }
+            }
+            ContainerAction::Put => {
+                let item = self.player.slots[selected];
+                if item != 0 && self.player.counts[selected] > 0 && self.container[index] == 0 {
+                    self.player.counts[selected] -= 1;
+                    self.container[index] = item;
+                }
+            }
+        }
     }
 
     pub fn handle_action(&mut self, action: UiAction) -> bool {
@@ -342,7 +437,7 @@ impl Game {
                 self.dirty.clear();
                 self.sync_chunks();
                 self.link
-                    .send(ServerCommand::SetDistance(self.settings.render_distance));
+                    .client(ClientCommand::SetDistance(self.settings.render_distance));
             }
             UiAction::DecreaseDistance => {
                 self.settings.render_distance =
@@ -350,10 +445,11 @@ impl Game {
                 self.dirty.clear();
                 self.sync_chunks();
                 self.link
-                    .send(ServerCommand::SetDistance(self.settings.render_distance));
+                    .client(ClientCommand::SetDistance(self.settings.render_distance));
             }
             UiAction::IncreaseFov => self.settings.fov = (self.settings.fov + 5.0).min(110.0),
             UiAction::DecreaseFov => self.settings.fov = (self.settings.fov - 5.0).max(30.0),
+            UiAction::Container(_) => {}
         }
         false
     }
@@ -395,6 +491,10 @@ impl Game {
             latency_ms: self.link.latency_ms,
             network_error: self.link.error().to_owned(),
             chat: self.link.chat().to_owned(),
+            chat_input: self.chat_input.clone(),
+            chat_lines: self.link.chat_lines().to_vec(),
+            player_names: self.link.names().to_vec(),
+            container: self.container,
         }
     }
 
@@ -411,7 +511,15 @@ impl Game {
         self.world.edits.clear();
         self.world.apply_edits(&snapshot.edits);
         self.world.day_time = snapshot.day_time;
-        self.player = snapshot.player;
+        let local_name = self.link.name();
+        self.player = snapshot
+            .players
+            .iter()
+            .find(|entry| entry.name.as_str() == local_name)
+            .map(|entry| entry.player.clone())
+            .unwrap_or(snapshot.player);
+        self.remote_players = snapshot.players;
+        self.container = snapshot.container;
         self.chunk_cache = snapshot
             .chunks
             .into_iter()

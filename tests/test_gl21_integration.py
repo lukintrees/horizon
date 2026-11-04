@@ -68,6 +68,35 @@ UI_KEYS = (
     "horizon.legacyGl.game.integratedStarted",
     "horizon.legacyGl.game.remoteStarted",
     "horizon.legacyGl.game.lanStarted",
+    "horizon.legacyGl.game.chatPrompt",
+    "horizon.legacyGl.game.chatOpen",
+    "horizon.legacyGl.game.chatLine",
+    "horizon.legacyGl.game.playerList",
+    "horizon.legacyGl.game.containerTitle",
+    "horizon.legacyGl.game.containerSlot",
+    "horizon.legacyGl.game.containerSlotLabel",
+    "horizon.legacyGl.game.containerClick",
+    "horizon.legacyGl.game.serverName",
+    "horizon.legacyGl.game.playerJoined",
+    "horizon.legacyGl.game.playerLeft",
+    "horizon.legacyGl.game.commandHelp",
+    "horizon.legacyGl.game.commandUnknown",
+    "horizon.legacyGl.game.commandSeed",
+    "horizon.legacyGl.game.commandTime",
+    "horizon.legacyGl.game.commandList",
+    "horizon.legacyGl.game.commandSpawn",
+    "horizon.legacyGl.game.commandHeal",
+    "horizon.legacyGl.game.commandGive",
+    "horizon.legacyGl.game.commandContainer",
+    "horizon.legacyGl.game.commandSaved",
+    "horizon.legacyGl.game.commandSaveError",
+    "horizon.legacyGl.game.commandPosition",
+    "horizon.legacyGl.game.commandTp",
+    "horizon.legacyGl.game.commandUsage",
+    "horizon.legacyGl.game.commandDay",
+    "horizon.legacyGl.game.commandNight",
+    "horizon.legacyGl.game.commandReset",
+    "horizon.legacyGl.game.commandLoaded",
 )
 
 
@@ -240,6 +269,8 @@ class OwnBranchWorkflowAndDocsTests(unittest.TestCase):
         self.assertIn("--lan-port 0", source)
         self.assertIn("legacy-gl integrated: OK", source)
         self.assertIn("tests.test_legacy_server", source)
+        self.assertIn("tests.test_legacy_multiplayer", source)
+        self.assertIn("legacy-gl multiplayer: OK", source)
         self.assertIn("cargo test -p horizon-client --lib legacy_game --no-default-features --features legacy-gl", source)
         self.assertIn("cargo check -p horizon-client --features legacy-gl --no-default-features", source)
         self.assertIn("cargo tree -p horizon-client --no-default-features --features legacy-gl", source)
@@ -267,6 +298,7 @@ class OwnBranchWorkflowAndDocsTests(unittest.TestCase):
         self.assertIn("Full PR 8 integration", CONTRACT.read_text(encoding="utf-8"))
         self.assertIn("PR 11", CONTRACT.read_text(encoding="utf-8"))
         self.assertIn("PR 12", CONTRACT.read_text(encoding="utf-8"))
+        self.assertIn("PR 13", CONTRACT.read_text(encoding="utf-8"))
         self.assertIn("without `modern-gl`", README.read_text(encoding="utf-8"))
         self.assertIn("no longer", contract)
         self.assertIn("enables `modern-gl`", contract)

@@ -108,7 +108,8 @@ impl NetServer {
                             match listener.accept() {
                                 Ok((stream, peer)) => {
                                     let _ = stream.set_nodelay(true);
-                                    let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                                    let _ =
+                                        stream.set_read_timeout(Some(Duration::from_millis(50)));
                                     let Some(writer_stream) = stream.try_clone().ok() else {
                                         continue;
                                     };
@@ -122,7 +123,9 @@ impl NetServer {
                                             while running.load(Ordering::Relaxed) {
                                                 match rx.recv_timeout(Duration::from_millis(50)) {
                                                     Ok(message) => {
-                                                        if write_message(&mut writer, &message).is_err() {
+                                                        if write_message(&mut writer, &message)
+                                                            .is_err()
+                                                        {
                                                             break;
                                                         }
                                                     }
@@ -153,38 +156,67 @@ impl NetServer {
                                                     if let Some(message) = parse_message(&line) {
                                                         match message {
                                                             NetMessage::Hello { name: hello } => {
-                                                                name = hello;
+                                                                let mut assigned = hello;
                                                                 if let Ok(mut list) =
                                                                     reader_clients.lock()
                                                                 {
+                                                                    if list.iter().any(|client| {
+                                                                        client.name == assigned
+                                                                    }) {
+                                                                        assigned = format!(
+                                                                            "{assigned}-{}",
+                                                                            peer.port()
+                                                                        );
+                                                                    }
                                                                     if let Some(client) = list
                                                                         .iter_mut()
-                                                                        .find(|client| client.id == id)
+                                                                        .find(|client| {
+                                                                            client.id == id
+                                                                        })
                                                                     {
-                                                                        client.name = name.clone();
+                                                                        client.name =
+                                                                            assigned.clone();
                                                                     }
                                                                 }
-                                                                let _ = tx.send(
-                                                                    NetMessage::Welcome {
-                                                                        name: "Horizon Legacy GL"
-                                                                            .to_owned(),
-                                                                    },
-                                                                );
+                                                                name = assigned.clone();
+                                                                let _ =
+                                                                    tx.send(NetMessage::Welcome {
+                                                                        name: assigned.clone(),
+                                                                    });
                                                                 let _ = reader_commands.send(
                                                                     ServerCommand::Join {
-                                                                        name: name.clone(),
+                                                                        name: assigned,
                                                                     },
                                                                 );
                                                             }
                                                             NetMessage::Command(command) => {
-                                                                if !matches!(
-                                                                    command,
-                                                                    ServerCommand::Stop
-                                                                        | ServerCommand::Load
-                                                                        | ServerCommand::Reset { .. }
-                                                                ) {
-                                                                    let _ =
-                                                                        reader_commands.send(command);
+                                                                let forwarded = match command {
+                                                                    ServerCommand::Client {
+                                                                        command,
+                                                                        ..
+                                                                    } => Some(
+                                                                        ServerCommand::Client {
+                                                                            name: name.clone(),
+                                                                            command,
+                                                                        },
+                                                                    ),
+                                                                    ServerCommand::Ping(id) => {
+                                                                        Some(ServerCommand::Ping(
+                                                                            id,
+                                                                        ))
+                                                                    }
+                                                                    ServerCommand::Leave {
+                                                                        ..
+                                                                    } => {
+                                                                        Some(ServerCommand::Leave {
+                                                                            name: name.clone(),
+                                                                        })
+                                                                    }
+                                                                    _ => None,
+                                                                };
+                                                                if let Some(command) = forwarded {
+                                                                    let _ = reader_commands
+                                                                        .send(command);
                                                                 }
                                                             }
                                                             NetMessage::Welcome { .. }
@@ -205,8 +237,7 @@ impl NetServer {
                                         if let Ok(mut list) = reader_clients.lock() {
                                             list.retain(|client| client.id != id);
                                         }
-                                        let _ = reader_commands
-                                            .send(ServerCommand::Leave { name });
+                                        let _ = reader_commands.send(ServerCommand::Leave { name });
                                     });
                                 }
                                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -342,9 +373,8 @@ impl NetClient {
                                     if let Some(message) = parse_message(&line) {
                                         match message {
                                             NetMessage::Welcome { name } => {
-                                                let _ = reader_event_tx.send(ServerEvent::Log(
-                                                    format!("connected to {name}"),
-                                                ));
+                                                let _ = reader_event_tx
+                                                    .send(ServerEvent::Welcome { name });
                                             }
                                             NetMessage::Event(event) => {
                                                 let _ = reader_event_tx.send(event);
@@ -406,12 +436,16 @@ impl Drop for NetClient {
 
 #[cfg(test)]
 mod tests {
+    use super::super::server::ClientCommand;
     use super::*;
     use std::time::Instant;
 
     #[test]
     fn messages_round_trip_as_one_json_line() {
-        let message = NetMessage::Command(ServerCommand::Ping(9));
+        let message = NetMessage::Command(ServerCommand::Client {
+            name: "Tester".to_owned(),
+            command: ClientCommand::Chat("hello".to_owned()),
+        });
         let line = serde_json::to_string(&message).unwrap();
         assert_eq!(parse_message(&line), Some(message));
         assert!(!line.contains('\n'));
@@ -446,15 +480,19 @@ mod tests {
         });
 
         let (mut client, events) = NetClient::connect(&addr.to_string(), "Tester").unwrap();
+        let mut saw_welcome = false;
         let mut saw_pong = false;
         let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline && !saw_pong {
+        while Instant::now() < deadline && !(saw_welcome && saw_pong) {
             if let Ok(event) = events.recv_timeout(Duration::from_millis(50)) {
-                if matches!(event, ServerEvent::Pong(42)) {
-                    saw_pong = true;
+                match event {
+                    ServerEvent::Welcome { .. } => saw_welcome = true,
+                    ServerEvent::Pong(42) => saw_pong = true,
+                    _ => {}
                 }
             }
         }
+        assert!(saw_welcome, "the LAN client must decode a welcome");
         assert!(saw_pong, "the LAN client must decode a server event");
         client.shutdown();
         server.join().unwrap();
