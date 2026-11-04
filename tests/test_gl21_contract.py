@@ -33,12 +33,37 @@ GFX21_SOURCES = (
     "program.rs",
     "state.rs",
     "smoke.rs",
+    "atlas.rs",
+    "mesh.rs",
+    "sections.rs",
+    "passes.rs",
+    "frame.rs",
 )
 SHADER_SOURCES = (
     "smoke_120.vert",
     "smoke_120.frag",
     "smoke_110.vert",
     "smoke_110.frag",
+    "terrain_120.vert",
+    "terrain_120.frag",
+    "terrain_110.vert",
+    "terrain_110.frag",
+    "entity_120.vert",
+    "entity_120.frag",
+    "entity_110.vert",
+    "entity_110.frag",
+    "sky_120.vert",
+    "sky_120.frag",
+    "sky_110.vert",
+    "sky_110.frag",
+    "hud_120.vert",
+    "hud_120.frag",
+    "hud_110.vert",
+    "hud_110.frag",
+    "line_120.vert",
+    "line_120.frag",
+    "line_110.vert",
+    "line_110.frag",
 )
 
 
@@ -76,7 +101,10 @@ class ContractTests(unittest.TestCase):
     def test_scaffold_is_additive_and_wgpu_free(self):
         self.assertIn("pub mod gfx21;", LIB_RS.read_text(encoding="utf-8"))
         module = (GFX21 / "mod.rs").read_text(encoding="utf-8")
-        for name in ("context", "program", "state", "smoke"):
+        for name in (
+            "context", "program", "state", "smoke", "atlas", "mesh",
+            "sections", "passes", "frame",
+        ):
             self.assertIn(f"pub mod {name};", module)
         for name in GFX21_SOURCES:
             source = (GFX21 / name).read_text(encoding="utf-8")
@@ -84,7 +112,18 @@ class ContractTests(unittest.TestCase):
             self.assertNotRegex(source, r"\bnaga::", f"{name} references naga")
             self.assertNotRegex(source, r"\bunsafe\b", f"{name} uses unsafe")
 
+    def test_full_pr4_program_set_is_registered(self):
+        source = (GFX21 / "program.rs").read_text(encoding="utf-8")
+        self.assertEqual(source.count("source!("), 24)
+        for pass_name in ("Smoke", "Terrain", "Entity", "Sky", "Hud", "Line"):
+            self.assertIn(f"Pass::{pass_name}", source)
+        self.assertIn("pub const PASSES: [Pass; 6]", source)
+        self.assertIn("pub fn all_programs", source)
+        self.assertIn("all_programs(dialect)", EXAMPLE.read_text(encoding="utf-8"))
+        self.assertIn("pub mod frame;", (GFX21 / "mod.rs").read_text(encoding="utf-8"))
+
     def test_shader_sources_stay_in_the_110_120_dialect(self):
+        self.assertEqual(len(SHADER_SOURCES), 24)
         for name in SHADER_SOURCES:
             text = (SHADER_DIR / name).read_text(encoding="utf-8")
             self.assertTrue(
@@ -97,8 +136,18 @@ class ContractTests(unittest.TestCase):
                 "in vec2",
                 "out vec4",
                 "texelFetch",
+                "textureLod(",
+                "textureGrad(",
+                "textureSize(",
                 "gl_VertexID",
                 "gl_InstanceID",
+                "glDrawID",
+                "gl_BaseVertex",
+                "sampler2DArray",
+                "samplerCubeArray",
+                "uvec2",
+                "switch (",
+                "double ",
             ):
                 self.assertNotIn(forbidden, text, f"{name} contains {forbidden}")
             if name.endswith(".vert"):
@@ -106,6 +155,7 @@ class ContractTests(unittest.TestCase):
                 self.assertIn("gl_Position", text)
             else:
                 self.assertIn("gl_FragColor", text)
+            self.assertIn("void main", text)
 
     def test_legacy_gl_feature_is_wired_in_both_crates(self):
         render = tomllib.loads(CARGO_RENDER.read_text(encoding="utf-8"))
@@ -144,9 +194,8 @@ class ContractTests(unittest.TestCase):
         self.assertIn("pub type Renderer = gfx21::Renderer;", lib)
         self.assertIn("pub use gfx21::Frame;", lib)
         contract = CONTRACT.read_text(encoding="utf-8")
-        self.assertIn("PR 2b", contract)
-        self.assertIn("PR 3 stage 2", contract)
-        self.assertIn("PR 4 stage 1", contract)
+        for marker in ("PR 2b", "PR 3 stage 2", "PR 4", "PR 5", "PR 6"):
+            self.assertIn(marker, contract)
 
     def test_own_branch_workflow_runs_the_gate_and_gl_smoke(self):
         # Our own workflow only; existing CI files are deliberately untouched.
@@ -161,6 +210,11 @@ class ContractTests(unittest.TestCase):
         self.assertIn("xvfb-run", source)
         self.assertIn("HORIZON_GLSL_DIALECT", source)
         self.assertIn("HORIZON_GLSL_DIALECT", EXAMPLE.read_text(encoding="utf-8"))
+        self.assertIn("GFX21_GOLDEN_OUT", source)
+        self.assertIn("tools/legacy_gl_golden.py --check", source)
+        self.assertIn("tests.test_gl21_golden", source)
+        self.assertIn("all programs linked: OK", source)
+        self.assertIn("all_programs(dialect)", EXAMPLE.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

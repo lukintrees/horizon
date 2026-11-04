@@ -40,7 +40,7 @@ jobs:
 
       - name: Python caps / contract / public-tree checks
         run: |
-          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract -v
+          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden -v
           python3 tools/gl21_caps.py \
             --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt \
             --label ci-gl21 --check --no-write --stdout
@@ -73,8 +73,12 @@ jobs:
           pub mod gfx21;
           EOF
           cd /tmp/gfx21-check
-          cargo test --offline
+          GFX21_GOLDEN_OUT=/tmp/legacy-gl-scene.rgba cargo test --offline
           cargo clippy --offline --all-targets -- -D warnings
+
+      - name: Golden frame (CPU reference, no GPU)
+        run: |
+          python3 tools/legacy_gl_golden.py --check /tmp/legacy-gl-scene.rgba
 
       - name: PR 2b gate (full workspace, crates.io available here)
         run: |
@@ -119,5 +123,7 @@ jobs:
           done
           tail -40 /tmp/gl21-smoke.log
           grep -q 'gl21_clear: OK' /tmp/gl21-smoke.log || { echo "::error::missing gl21_clear: OK"; exit 1; }
+          grep -q 'all programs linked: OK' /tmp/gl21-smoke.log || { echo "::error::missing full program link"; exit 1; }
+          test "$(grep -c 'all programs linked: OK' /tmp/gl21-smoke.log)" -eq 2 || { echo "::error::expected two full program sets"; exit 1; }
           grep -q 'DIALECT: Glsl120' /tmp/gl21-smoke.log || { echo "::error::missing Glsl120"; exit 1; }
           grep -q 'DIALECT: Glsl110' /tmp/gl21-smoke.log || { echo "::error::missing Glsl110"; exit 1; }

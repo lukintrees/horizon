@@ -1,6 +1,6 @@
 # План: OpenGL 2.1/2.0 и запуск на AMD Radeon X1650
 
-Статус: PR 0–3 и stage 1 PR 4 реализованы в ветке `arena/81644160-horizon`; остаток PR 4 и PR 5–10 не начаты. CI своей ветки зелёный.
+Статус: PR 0–6 реализованы аддитивно в ветке `arena/81644160-horizon`; PR 7–10 не начаты. Интеграция в игру и полный `#[cfg]`-разбор `gfx`/`game.rs` остаются PR 8. CI своей ветки зелёный.
 Язык документа русский по запросу; остальные страницы `docs/` остаются английскими, поэтому в
 [индексе документации](../README.md) ссылка помечена `(RU)`. Полные `cargo`-проверки вынесены в собственный
 workflow ветки [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml): чужие actions, PR и workflow
@@ -34,26 +34,30 @@ workflow ветки [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy
 | 0 | готово локально | этот документ и ссылка в [docs/README.md](../README.md); `git diff --check`, `tools/check_public_tree.py`. Issue + `/claim` на GitHub отложены до явного запроса, чтобы не создавать шум в чужом форке. |
 | 1 | готово | `tools/gl21_caps.py`, `tests/test_gl21_caps.py`, фикстура `tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt`, эталон `benchmarks/graphics/x1650-reference-caps.{json,txt}` и шаблон `benchmarks/graphics/x1650-caps.TEMPLATE.md`. **Реальный дамп с X1650 и с Mesa `r300g` нужно снять на железе**: в песочнице карты нет. |
 | 2 | 2a и 2b готовы | 2a: `gfx21/{mod.rs,caps.rs,CONTRACT.md}`, `pub mod gfx21;`, Python-тесты контракта. 2b: фичи `legacy-gl` в обоих `Cargo.toml`, `wgpu`/`naga`/`pollster` → optional за `default = ["modern-gl"]`, алиас `pub type Renderer`/`Frame` в `lib.rs` под `#[cfg]`. `gfx` и `game.rs` пока остаются без `#[cfg]`-разбора — это PR 8. |
-| 3 | готово (stage 1 + 2) | `gfx21/{context.rs,state.rs,smoke.rs}` остаются чисто-Рустовыми; `examples/gl21_clear.rs` под `required-features=["legacy-gl"]` создаёт GLX/WGL-контекст OpenGL 2.1/2.0 через `glutin`, грузит `glow`, читает `glGet*`, линкует треугольник и проверяет `GL_NO_ERROR`. Опциональные зависимости и [нотисы](../../THIRD_PARTY_NOTICES.md) добавлены. |
-| 4 | начат (stage 1) | `gfx21/program.rs` + `gfx21/shaders/*`: smoke-программы `#version 120` и `#version 110`, статический валидатор `validate()`/`validate_all()` запрещает GLSL 3+/GL3-токены; пример линкует выбранный диалект в CI под Mesa override. Полный набор terrain/HUD-программ — остаток PR 4. |
-| 5–10 | не начаты | Зависят от атласа, конвертера, проходов и железа X1650; полный `cargo check` выполняет наш workflow в CI. |
+| 3 | готово (stage 1 + 2) | `gfx21/{context.rs,state.rs,smoke.rs}` остаются чисто-Рустовыми; `examples/gl21_clear.rs` под `required-features=["legacy-gl"]` создаёт GLX/WGL-контекст OpenGL 2.1/2.0 через `glutin`, грузит `glow`, читает `glGet*`, линкует треугольник (с PR 4 — весь набор программ) и проверяет `GL_NO_ERROR`. Опциональные зависимости и [нотисы](../../THIRD_PARTY_NOTICES.md) добавлены. |
+| 4 | готово | `gfx21/program.rs` и 24 файла `gfx21/shaders/*`: шесть программ (smoke/terrain/entity/sky/HUD/line) в `#version 120`/`#version 110`, `validate_all()`, `program_for()`/`all_programs()`. Пример линкует весь набор в обоих Xvfb-кадрах; F0 остаётся без GLSL. |
+| 5 | готово | `gfx21/{atlas.rs,mesh.rs}`: один 2D-атлас ≤2048² с гуттерами, half-texel UV и безопасными mip-уровнями; `TerrainVertex → GlVertex` с `UV_STEPS`/`TILED_UV_STEPS`, маской `OPAQUE_LAYER`, RGBA8, lightmap UV и явной 36-байтной записью. |
+| 6 | готово | `gfx21/{sections.rs,passes.rs,frame.rs}` и [`tools/legacy_gl_golden.py`](../../tools/legacy_gl_golden.py): opaque/cutout/translucent, `glMultiDrawElementsEXT`-группы, туман/лайтмап, ≤200 draw calls, CPU golden [`PNG`](../../benchmarks/graphics/legacy-gl-scene.png)/RGBA 80×60. |
+| 7–10 | не начаты | PR 7 — CPU-posing и HUD-батчи (шейдеры уже есть в PR 4); PR 8 — интеграция и полный `#[cfg]`; PR 9 — wgpu-паритет/диагностика; PR 10 — упаковка и реальная X1650. |
 
 **Ограничение среды и CI.** Изначально в песочнице Arena не было `rustc`/`cargo`; теперь установлен нативный
 Rust 1.99 (npm-пакеты `@toolchain-bin/*`, системный `x86_64-linux-gnu-ld.bfd`), но crates.io и
 `static.rust-lang.org` отсюда недоступны. Поэтому полный `cargo check -p horizon-client` перенесён в
 [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml) — свой workflow только для ветки
 `arena/81644160-horizon`: на ранере GitHub ставятся Rust 1.99 (минимум 1.95 требует `horizon-mods`) и зависимости, затем выполняется gate PR 2b.
-Локально проверены аддитивные модули отдельным крейтом без внешних зависимостей: `cargo test` (22 теста),
-`cargo clippy --offline --all-targets -- -D warnings`, `rustfmt --check` для `gfx21/*.rs` и нового примера;
-плюс `python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract -v` (18 тестов), полный
-`python3 -m unittest discover -s tests` (645 тестов, 26 skipped), `tools/gl21_caps.py --check` (L1),
+Локально проверены аддитивные модули отдельным крейтом без внешних зависимостей: `cargo test` (48 тестов),
+`cargo clippy --offline --all-targets -- -D warnings`, `rustfmt --check` для `gfx21/*.rs` и примера;
+`GFX21_GOLDEN_OUT=/tmp/legacy-gl-scene.rgba cargo test` пишет кадр, а
+`python3 tools/legacy_gl_golden.py --check` сравнивает его с независимым Python-рендером;
+плюс `python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden -v` (24 теста),
+полный `python3 -m unittest discover -s tests` (651 тест, 26 skipped), `tools/gl21_caps.py --check` (L1),
 `git diff --check`, `tools/check_public_tree.py`, 0 битых Markdown-ссылок.
 Попытка собрать локальное зеркало из 3413 вендорённых крейтов GitHub покрыла 294/488 точных версий
 `Cargo.lock`, но 194 (включая `cpal`, `glam`, `winit`) с разрешённых хостов недоступны; `cargo check` поэтому
 делает CI. Новые опциональные `glow`/`glutin`/`glutin-winit`/`raw-window-handle` описаны в
 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md). Свой workflow
 [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml) зелёный: все 11 шагов, включая gate
-PR 2b и два Xvfb-кадра GL 2.1/2.0, проходят на Rust 1.99. Реальный дамп `glxinfo` с X1650/`r300g`
+PR 2b, golden-кадр и два Xvfb-кадра GL 2.1/2.0, проходят на Rust 1.99. Реальный дамп `glxinfo` с X1650/`r300g`
 по-прежнему нужно снять на железе.
 
 ---
@@ -428,16 +432,16 @@ pickedShaderPack:          # пусто
 | 2a | Аддитивный скелет | `gfx21/caps.rs`, `mod.rs`, `CONTRACT.md`, `pub mod gfx21;`, `tests/test_gl21_contract.py`; без правок `Cargo.toml` | Python-тесты контракта; дефолтная сборка не изменена |
 | 2b | Развязка зависимостей (stage 1) | `wgpu`/`naga`/`pollster` → optional за `default = ["modern-gl"]`, фича `legacy-gl` в обоих крейтах, `pub type Renderer`/`Frame` под `#[cfg]`; `#[cfg]` на `gfx` и `game.rs` остаётся PR 8 | gate `cargo check -p horizon-client --features legacy-gl --no-default-features` пройден в [нашем workflow](../../.github/workflows/arena-legacy-gl.yml); обычная сборка без изменений |
 | 3 | Контекст | stage 1: `context.rs`, `state.rs`, `smoke.rs` (headless `gl21_clear` команды без GL-вызовов); stage 2: `examples/gl21_clear.rs` с реальным GLX/WGL-контекстом, `glGet*`, glow-загрузчиком и треугольником на экране | юнит-тесты `gfx21` и два Xvfb-кадра в нашем workflow (`GL_NO_ERROR`); затем запуск на X1650 |
-| 4 | Шейдеры | `gfx21/shaders/*` + `program.rs`: smoke-пары 120/110, статический валидатор, линковка выбранного диалекта в примере; полный набор программ — остаток PR 4 | `MESA_GL_VERSION_OVERRIDE=2.1/2.0` + `MESA_GLSL_VERSION_OVERRIDE=120/110`: оба кадра линкуются и рисуют |
-| 5 | Атлас и конвертер | `atlas.rs`, `mesh.rs`; тесты `TerrainVertex → GlVertex` с независимыми ожидаемыми значениями (`UV_STEPS`, light 16x, RGBA8), mip-gutters | юнит-тесты + скриншот одного спрайта против wgpu-эталона |
-| 6 | Террейн | `sections.rs`, `passes.rs`: opaque/cutout/translucent, `glMultiDrawElementsEXT`, туман, лайтмап, reversed-Z решение | эталонный кадр `scene` против wgpu-пути, diff по порогу; ≤200 draw calls |
+| 4 | Шейдеры | готово: 24 файла 120/110 для smoke/terrain/entity/sky/HUD/line, `validate_all()`, `program_for()`/`all_programs()`; пример линкует весь набор в обоих кадрах | `all programs linked: OK` дважды; `validate_all()` и Python-тест 24 источников |
+| 5 | Атлас и конвертер | готово: `atlas.rs`, `mesh.rs`; независимые тесты `TerrainVertex → GlVertex` (`UV_STEPS`, light 16x, RGBA8, 36 байт), mip-gutters, ≤4 сэмплера | 48 изолированных Rust-тестов + `clippy -D warnings`; скриншот одного спрайта против wgpu-эталона остаётся PR 9 |
+| 6 | Террейн | готово: `sections.rs`, `passes.rs`, `frame.rs`; opaque/cutout/translucent, `glMultiDrawElementsEXT`, туман, лайтмап, CPU golden [`PNG`](../../benchmarks/graphics/legacy-gl-scene.png), ≤200 draw calls | `tools/legacy_gl_golden.py --check` побайтно сравнивает кадр с независимым Python-рендером; wgpu-diff по порогу остаётся PR 9 |
 | 7 | Сущности, небо, HUD | `entity`/`sky`/`hud`/`line` шейдеры, CPU-posing, `HudBatch` и `Blend::*` | титульный экран, инвентарь, чат, hotbar читаемы |
 | 8 | Интеграция | `GraphicsApi::LegacyGl`, `--legacy-gl`, `graphics.rs`, `graphics_ui.rs`, `options_ui.rs`, ключи локализации, `#[cfg]` в `build_renderer`/`loading_renderer`, контракт-заглушки | `python3 tools/pr_ready.py --quick`, `horizon-ctl state/screenshot`, `ldd` без `libvulkan` |
-| 9 | CI и диагностика | наш [arena-legacy-gl.yml](../../.github/workflows/arena-legacy-gl.yml) в этой ветке (без правки чужих workflow), затем `tools/legacy_gl_smoke.py`, golden PNG, `glGetError` в debug, стартовый отчёт | зелёный свой workflow; `python3 tools/parity.py --changed-files` показывает «gameplay не затронут» |
+| 9 | CI и диагностика | PR 6 уже добавил [`tools/legacy_gl_golden.py`](../../tools/legacy_gl_golden.py) и golden PNG в наш workflow; PR 9 — `tools/legacy_gl_smoke.py`, wgpu-diff, `glGetError` в debug, стартовый отчёт | зелёный свой workflow; `python3 tools/parity.py --changed-files` показывает «gameplay не затронут» |
 | 10 | Распространение | [README.md](../../README.md), [docs/native-client.md](../native-client.md), упаковка, [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md), завести пункт roadmap при одобрении | сборка на современном хосте, запуск на реальной X1650 30 минут без краша |
 
-Порядок зависимостей: `1 → 2a → 2b → 3 → {4,5} → 6 → 7 → 8 → 9 → 10`. PR 4 и 5 можно делать параллельно. PR 3 готов (headless-команды + реальный контекст в примере); полный
-`#[cfg]`-разбор `gfx`/`game.rs` остаётся в PR 8.
+Порядок зависимостей: `1 → 2a → 2b → 3 → {4,5} → 6 → 7 → 8 → 9 → 10`. PR 4 и 5 можно делать параллельно. PR 3–6 готовы аддитивно (headless-команды, реальный контекст, полный набор шейдеров, атлас/конвертер, секции/проходы и CPU golden-кадр); полный
+`#[cfg]`-разбор `gfx`/`game.rs` и подключение рендерера к игре остаются в PR 8.
 
 ---
 
@@ -472,8 +476,8 @@ for spec in "2.1 120 120" "2.0 120 110"; do
 done
 ```
 
-Пример печатает `GL_VERSION`/`GLSL_VERSION`, выбирает `Glsl120`/`Glsl110`, линкует smoke-программу из
-`gfx21/shaders/`, рисует треугольник и завершает кадр с `GL_NO_ERROR`.
+Пример печатает `GL_VERSION`/`GLSL_VERSION`, выбирает `Glsl120`/`Glsl110`, линкует все шесть программ из
+`gfx21/shaders/` (`all programs linked: OK`), рисует smoke-треугольник и завершает кадр с `GL_NO_ERROR`.
 
 Тот же отчёт до запуска игры снимает инструмент PR 1:
 
@@ -487,21 +491,26 @@ python3 tools/gl21_caps.py --label ci-gl21 --check --no-write --stdout
 ни один GL3+-вызов не должен встречаться в исходниках `gfx21` (grep-тест), а `caps.rs` в CI работает в
 «strict»-режиме и считает запрещённые расширения отсутствующими.
 
-Эти Python-проверки, gate PR 2b, изолированные тесты `gfx21` и оба GL-кадра под Xvfb выполняет и проходит
+Эти Python-проверки, gate PR 2b, изолированные тесты `gfx21`, golden-кадр и оба GL-кадра под Xvfb выполняет и проходит
 собственный workflow ветки [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml): на ранере GitHub доступны
 crates.io и Rust 1.99 (≥1.95), поэтому там запускаются `cargo check -p horizon-client --features legacy-gl
 --no-default-features`, `cargo test -p horizon-client-render --lib gfx21 --features legacy-gl`, `rustfmt`,
-`clippy` и `cargo run --example gl21_clear` с `MESA_GL_VERSION_OVERRIDE=2.1/2.0` и
-`HORIZON_GLSL_DIALECT=120/110`. Чужие actions, PR и workflow не просматриваются и не меняются.
+`clippy`, `GFX21_GOLDEN_OUT=... cargo test` + `tools/legacy_gl_golden.py --check` и `cargo run --example gl21_clear`
+с `MESA_GL_VERSION_OVERRIDE=2.1/2.0` и `HORIZON_GLSL_DIALECT=120/110`. Чужие actions, PR и workflow не просматриваются и не меняются.
 
 ### 7.2 Проверки
 
-* Юнит-тесты конвертера вершин, паковщика атласа, `SortState`, таблицы blend'ов — с независимыми ожидаемыми
-  значениями, а не вычисленными тем же кодом ([AGENTS.md](../../AGENTS.md), «Write tests with signal»).
+* Готово: юнит-тесты атласа, конвертера вершин, секций, multi-draw и пикселей golden-кадра — с жёстко
+  заданными ожидаемыми значениями, а не вычисленными тем же кодом ([AGENTS.md](../../AGENTS.md),
+  «Write tests with signal»). `SortState` и полная таблица blend'ов остаются PR 7.
 * `gfx21::program::validate_all()` и Python-тест `test_shader_sources_stay_in_the_110_120_dialect`
-  запрещают GLSL 3+/GL3-токены в `gfx21/shaders/`; пример линкует оба диалекта под Mesa override.
-* Golden-кадры: те же 4 сцены/камеры, что в `tools/graphics_bench.py` ([docs/graphics.md](../graphics.md));
-  сравнение PNG с wgpu-путём по доле отличающихся пикселей и по средней ошибке, порог зафиксировать в тесте.
+  проверяют все 24 источника `gfx21/shaders/` и запрещают GLSL 3+/GL3-токены; пример линкует все шесть
+  программ обоих диалектов под Mesa override (`all programs linked: OK`).
+* PR 6 добавил детерминированный CPU golden-кадр 80×60 ([`PNG`](../../benchmarks/graphics/legacy-gl-scene.png),
+  [`tools/legacy_gl_golden.py`](../../tools/legacy_gl_golden.py)): Rust-растеризатор и независимый
+  Python-рендер побайтно совпадают. Это **не** паритет с wgpu: те же 4 сцены/камеры из
+  `tools/graphics_bench.py` ([docs/graphics.md](../graphics.md)), diff PNG по доле пикселей и средней ошибке
+  остаются PR 9.
 * Все существующие паритетные харнессы остаются зелёными: симуляция, `options.txt`, сохранения и сеть не меняются.
 * `python3 tools/pr_ready.py` перед каждым PR; `cargo test -p horizon-client-render --lib gfx21 --features legacy-gl`
   в [нашем workflow](../../.github/workflows/arena-legacy-gl.yml) (пока вместе с `modern-gl`; снятие стека — PR 8).

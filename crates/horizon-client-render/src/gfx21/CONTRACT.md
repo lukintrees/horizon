@@ -119,8 +119,9 @@ and have no external crate dependencies. All `renderer.<name>` and
 It creates an OpenGL 2.1 (or 2.0 under the CI override) compatibility context
 through `glutin`/`glutin-winit`, loads GL 2.1 entry points with `glow`, prints
 `GL_VERSION`, `GL_RENDERER`, `GL_VENDOR` and `GL_SHADING_LANGUAGE_VERSION`,
-selects `ShaderDialect::Glsl120` or `Glsl110`, links one smoke-triangle
-program, draws it and checks `glGetError() == GL_NO_ERROR`. The optional
+selects `ShaderDialect::Glsl120` or `Glsl110`, links all six pass programs in
+that dialect, draws the smoke triangle and checks `glGetError() == GL_NO_ERROR`.
+The optional
 `glow`/`glutin`/`glutin-winit`/`raw-window-handle` dependencies and their
 notices are recorded in `THIRD_PARTY_NOTICES.md`; no upstream source was copied.
 Mesa 26 cannot report GLSL 1.10 through `MESA_GLSL_VERSION_OVERRIDE=110`, so CI
@@ -131,6 +132,31 @@ keeps the GLSL override at 120 and forces the 110 shader pair with
 `#version 110` pairs. `validate()` rejects a mismatched `#version`, GL3+
 tokens (`in`/`out`/`layout`/`uint`/`texelFetch`/`gl_VertexID`/...), missing
 `attribute`/`gl_Position`/`gl_FragColor` and missing `void main`; `texture2D`
-stays allowed. F0 has no GLSL program (`smoke_program` returns `None`). The
-atlas, mesh converter, sections, passes and HUD still follow in PR 5–7, and the
-full `#[cfg]` split of `gfx`/`game.rs` remains PR 8.
+stays allowed. F0 has no GLSL program (`smoke_program` returns `None`).
+
+## PR 4 (full set) / PR 5 / PR 6 (additive)
+
+PR 4 now ships six pass programs (`Smoke`, `Terrain`, `Entity`, `Sky`, `Hud`,
+`Line`) as `#version 120` and `#version 110` pairs: 24 shader files in
+`shaders/`. `program_for`, `all_programs` and `PASSES` expose the registry;
+`validate_all()` checks every source and every pass/dialect pair. The GL example
+links the whole set in both CI frames and greps `all programs linked: OK`.
+
+PR 5 adds `atlas.rs` (one 2D texture, power-of-two sprite/gutter, half-texel UV
+insets, mip levels that stop before the gutter disappears, four samplers) and
+`mesh.rs` (mirrored `TerrainVertex` → `GlVertex`: `UV_STEPS`/`TILED_UV_STEPS`,
+`OPAQUE_LAYER` masking, RGBA8 expansion, 16x lightmap UV, explicit 36-byte
+little-endian vertex record). Both modules are pure Rust with independent unit
+tests.
+
+PR 6 adds `sections.rs`, `passes.rs` and `frame.rs`. Sections are ordered
+opaque → cutout → translucent (far-to-near), converted to GL2 vertices and
+`GL_UNSIGNED_SHORT` indices, grouped into `glMultiDrawElementsEXT`-style
+`counts`/byte `offsets`, and limited to ≤200 draw calls and ≤4 samplers.
+`tools/legacy_gl_golden.py` renders the same hard-coded scene independently and
+writes `benchmarks/graphics/legacy-gl-scene.{rgba,png}`; the Rust CPU
+rasterizer in `frame.rs` must match it byte-for-byte. This is a deterministic
+command-stream/CPU golden frame, **not** wgpu parity: real X1650 screenshots and
+wgpu image diffs remain PR 9/PR 10 acceptance work. Entity posing, HUD batches,
+full `Renderer`/`Frame` facade and the `#[cfg]` split of `gfx`/`game.rs` remain
+PR 7–8; `legacy-gl` still pulls `modern-gl` until PR 8.

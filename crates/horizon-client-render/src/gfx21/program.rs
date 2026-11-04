@@ -1,26 +1,74 @@
-//! GLSL 110/120 program sources and static validation (PR 4, stage 1).
+//! GLSL 110/120 program sources and static validation (PR 4, full set).
 //!
 //! The real `glCreateShader`/`glLinkProgram` calls live in the `gl21_clear`
-//! example (PR 3, stage 2). This module is pure Rust, so the additive `gfx21`
-//! scaffold stays free of the optional GL dependencies.
+//! example (PR 3 stage 2). This module is pure Rust, so the additive `gfx21`
+//! scaffold stays free of the optional GL dependencies. The six pass programs
+//! are shipped in both GLSL dialects; F0 uses fixed function only.
 
 use std::error::Error;
 use std::fmt;
 
 use super::context::ShaderDialect;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GlslStage {
     Vertex,
     Fragment,
 }
 
+/// The PR 4 pass programs. Terrain/entity/HUD/line/sky programs share the
+/// GL2 attribute/varying conventions; smoke stays the minimal link/draw probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Pass {
+    Smoke,
+    Terrain,
+    Entity,
+    Sky,
+    Hud,
+    Line,
+}
+
+impl Pass {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Smoke => "smoke",
+            Self::Terrain => "terrain",
+            Self::Entity => "entity",
+            Self::Sky => "sky",
+            Self::Hud => "hud",
+            Self::Line => "line",
+        }
+    }
+}
+
+pub const PASSES: [Pass; 6] = [
+    Pass::Smoke,
+    Pass::Terrain,
+    Pass::Entity,
+    Pass::Sky,
+    Pass::Hud,
+    Pass::Line,
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShaderSource {
     pub name: &'static str,
+    pub pass: Pass,
     pub dialect: ShaderDialect,
     pub stage: GlslStage,
     pub source: &'static str,
+}
+
+macro_rules! source {
+    ($name:literal, $pass:expr, $dialect:expr, $stage:expr, $path:literal) => {
+        ShaderSource {
+            name: $name,
+            pass: $pass,
+            dialect: $dialect,
+            stage: $stage,
+            source: include_str!($path),
+        }
+    };
 }
 
 pub const SMOKE_120_VERT: &str = include_str!("shaders/smoke_120.vert");
@@ -29,30 +77,174 @@ pub const SMOKE_110_VERT: &str = include_str!("shaders/smoke_110.vert");
 pub const SMOKE_110_FRAG: &str = include_str!("shaders/smoke_110.frag");
 
 pub const SHADERS: &[ShaderSource] = &[
-    ShaderSource {
-        name: "smoke_120.vert",
-        dialect: ShaderDialect::Glsl120,
-        stage: GlslStage::Vertex,
-        source: SMOKE_120_VERT,
-    },
-    ShaderSource {
-        name: "smoke_120.frag",
-        dialect: ShaderDialect::Glsl120,
-        stage: GlslStage::Fragment,
-        source: SMOKE_120_FRAG,
-    },
-    ShaderSource {
-        name: "smoke_110.vert",
-        dialect: ShaderDialect::Glsl110,
-        stage: GlslStage::Vertex,
-        source: SMOKE_110_VERT,
-    },
-    ShaderSource {
-        name: "smoke_110.frag",
-        dialect: ShaderDialect::Glsl110,
-        stage: GlslStage::Fragment,
-        source: SMOKE_110_FRAG,
-    },
+    source!(
+        "smoke_120.vert",
+        Pass::Smoke,
+        ShaderDialect::Glsl120,
+        GlslStage::Vertex,
+        "shaders/smoke_120.vert"
+    ),
+    source!(
+        "smoke_120.frag",
+        Pass::Smoke,
+        ShaderDialect::Glsl120,
+        GlslStage::Fragment,
+        "shaders/smoke_120.frag"
+    ),
+    source!(
+        "smoke_110.vert",
+        Pass::Smoke,
+        ShaderDialect::Glsl110,
+        GlslStage::Vertex,
+        "shaders/smoke_110.vert"
+    ),
+    source!(
+        "smoke_110.frag",
+        Pass::Smoke,
+        ShaderDialect::Glsl110,
+        GlslStage::Fragment,
+        "shaders/smoke_110.frag"
+    ),
+    source!(
+        "terrain_120.vert",
+        Pass::Terrain,
+        ShaderDialect::Glsl120,
+        GlslStage::Vertex,
+        "shaders/terrain_120.vert"
+    ),
+    source!(
+        "terrain_120.frag",
+        Pass::Terrain,
+        ShaderDialect::Glsl120,
+        GlslStage::Fragment,
+        "shaders/terrain_120.frag"
+    ),
+    source!(
+        "terrain_110.vert",
+        Pass::Terrain,
+        ShaderDialect::Glsl110,
+        GlslStage::Vertex,
+        "shaders/terrain_110.vert"
+    ),
+    source!(
+        "terrain_110.frag",
+        Pass::Terrain,
+        ShaderDialect::Glsl110,
+        GlslStage::Fragment,
+        "shaders/terrain_110.frag"
+    ),
+    source!(
+        "entity_120.vert",
+        Pass::Entity,
+        ShaderDialect::Glsl120,
+        GlslStage::Vertex,
+        "shaders/entity_120.vert"
+    ),
+    source!(
+        "entity_120.frag",
+        Pass::Entity,
+        ShaderDialect::Glsl120,
+        GlslStage::Fragment,
+        "shaders/entity_120.frag"
+    ),
+    source!(
+        "entity_110.vert",
+        Pass::Entity,
+        ShaderDialect::Glsl110,
+        GlslStage::Vertex,
+        "shaders/entity_110.vert"
+    ),
+    source!(
+        "entity_110.frag",
+        Pass::Entity,
+        ShaderDialect::Glsl110,
+        GlslStage::Fragment,
+        "shaders/entity_110.frag"
+    ),
+    source!(
+        "sky_120.vert",
+        Pass::Sky,
+        ShaderDialect::Glsl120,
+        GlslStage::Vertex,
+        "shaders/sky_120.vert"
+    ),
+    source!(
+        "sky_120.frag",
+        Pass::Sky,
+        ShaderDialect::Glsl120,
+        GlslStage::Fragment,
+        "shaders/sky_120.frag"
+    ),
+    source!(
+        "sky_110.vert",
+        Pass::Sky,
+        ShaderDialect::Glsl110,
+        GlslStage::Vertex,
+        "shaders/sky_110.vert"
+    ),
+    source!(
+        "sky_110.frag",
+        Pass::Sky,
+        ShaderDialect::Glsl110,
+        GlslStage::Fragment,
+        "shaders/sky_110.frag"
+    ),
+    source!(
+        "hud_120.vert",
+        Pass::Hud,
+        ShaderDialect::Glsl120,
+        GlslStage::Vertex,
+        "shaders/hud_120.vert"
+    ),
+    source!(
+        "hud_120.frag",
+        Pass::Hud,
+        ShaderDialect::Glsl120,
+        GlslStage::Fragment,
+        "shaders/hud_120.frag"
+    ),
+    source!(
+        "hud_110.vert",
+        Pass::Hud,
+        ShaderDialect::Glsl110,
+        GlslStage::Vertex,
+        "shaders/hud_110.vert"
+    ),
+    source!(
+        "hud_110.frag",
+        Pass::Hud,
+        ShaderDialect::Glsl110,
+        GlslStage::Fragment,
+        "shaders/hud_110.frag"
+    ),
+    source!(
+        "line_120.vert",
+        Pass::Line,
+        ShaderDialect::Glsl120,
+        GlslStage::Vertex,
+        "shaders/line_120.vert"
+    ),
+    source!(
+        "line_120.frag",
+        Pass::Line,
+        ShaderDialect::Glsl120,
+        GlslStage::Fragment,
+        "shaders/line_120.frag"
+    ),
+    source!(
+        "line_110.vert",
+        Pass::Line,
+        ShaderDialect::Glsl110,
+        GlslStage::Vertex,
+        "shaders/line_110.vert"
+    ),
+    source!(
+        "line_110.frag",
+        Pass::Line,
+        ShaderDialect::Glsl110,
+        GlslStage::Fragment,
+        "shaders/line_110.frag"
+    ),
 ];
 
 /// GLSL 3.x/4.x constructs that must never reach an X1650 driver. `texture2D`
@@ -65,12 +257,30 @@ const FORBIDDEN: &[&str] = &[
     "flat",
     "texelFetch",
     "texture",
+    "textureLod",
+    "textureGrad",
+    "textureSize",
     "gl_VertexID",
     "gl_InstanceID",
+    "glDrawID",
+    "gl_BaseVertex",
     "sampler2DArray",
+    "samplerCubeArray",
     "image2D",
+    "imageCube",
+    "atomicCounter",
     "sampler3D",
     "uniform buffer",
+    "switch",
+    "case",
+    "default",
+    "double",
+    "dvec2",
+    "dvec3",
+    "dvec4",
+    "uvec2",
+    "uvec3",
+    "uvec4",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,23 +368,53 @@ pub fn validate(source: &str, dialect: ShaderDialect, stage: GlslStage) -> Resul
     Ok(())
 }
 
-/// Validate every shipped source; the example and CI call this before linking.
+/// Validate every shipped source and every pass/dialect pair.
 pub fn validate_all() -> Result<(), String> {
     for shader in SHADERS {
         validate(shader.source, shader.dialect, shader.stage)
             .map_err(|err| format!("{}: {err}", shader.name))?;
     }
+    for &pass in &PASSES {
+        for &dialect in &[ShaderDialect::Glsl120, ShaderDialect::Glsl110] {
+            if program_for(pass, dialect).is_none() {
+                return Err(format!("missing {} program for {dialect:?}", pass.name()));
+            }
+        }
+    }
     Ok(())
+}
+
+/// The vertex/fragment pair for one pass in the selected dialect.
+pub fn program_for(pass: Pass, dialect: ShaderDialect) -> Option<(&'static str, &'static str)> {
+    let glsl = dialect.glsl_version()?;
+    let find = |stage| {
+        SHADERS
+            .iter()
+            .find(|s| s.pass == pass && s.dialect.glsl_version() == Some(glsl) && s.stage == stage)
+            .map(|s| s.source)
+    };
+    Some((find(GlslStage::Vertex)?, find(GlslStage::Fragment)?))
+}
+
+/// All six pass programs for one dialect, in `PASSES` order. The example links
+/// each pair through real GL and keeps only the smoke program for its draw.
+pub fn all_programs(
+    dialect: ShaderDialect,
+) -> Vec<(Pass, &'static str, &'static str, &'static str)> {
+    PASSES
+        .iter()
+        .copied()
+        .filter_map(|pass| {
+            let (vertex, fragment) = program_for(pass, dialect)?;
+            Some((pass, pass.name(), vertex, fragment))
+        })
+        .collect()
 }
 
 /// The smoke triangle's vertex/fragment pair for the selected dialect. F0 has
 /// no GLSL program; its fixed-function path arrives with the full renderer.
 pub fn smoke_program(dialect: ShaderDialect) -> Option<(&'static str, &'static str)> {
-    match dialect {
-        ShaderDialect::Glsl120 => Some((SMOKE_120_VERT, SMOKE_120_FRAG)),
-        ShaderDialect::Glsl110 => Some((SMOKE_110_VERT, SMOKE_110_FRAG)),
-        ShaderDialect::FixedFunction => None,
-    }
+    program_for(Pass::Smoke, dialect)
 }
 
 #[cfg(test)]
@@ -184,22 +424,41 @@ mod tests {
     #[test]
     fn every_shipped_source_validates() {
         assert_eq!(validate_all(), Ok(()));
-        assert_eq!(SHADERS.len(), 4);
+        assert_eq!(SHADERS.len(), 24);
     }
 
     #[test]
-    fn both_dialects_have_the_same_triangle_program() {
-        let (v120, f120) = smoke_program(ShaderDialect::Glsl120).unwrap();
-        let (v110, f110) = smoke_program(ShaderDialect::Glsl110).unwrap();
-        assert!(v120.starts_with("#version 120"));
-        assert!(v110.starts_with("#version 110"));
-        assert!(f120.contains("gl_FragColor"));
-        assert!(f110.contains("gl_FragColor"));
+    fn full_program_set_has_six_passes_in_both_dialects() {
+        for dialect in [ShaderDialect::Glsl120, ShaderDialect::Glsl110] {
+            let programs = all_programs(dialect);
+            assert_eq!(programs.len(), 6);
+            assert!(
+                programs
+                    .iter()
+                    .all(|(_, _, v, f)| !v.is_empty() && !f.is_empty())
+            );
+            let (v, f) = program_for(Pass::Terrain, dialect).unwrap();
+            assert!(v.starts_with(dialect_version_prefix(dialect)));
+            assert!(f.contains("gl_FragColor"));
+        }
+        assert_eq!(all_programs(ShaderDialect::FixedFunction).len(), 0);
+    }
+
+    #[test]
+    fn smoke_program_matches_the_registry() {
+        assert_eq!(
+            smoke_program(ShaderDialect::Glsl120),
+            program_for(Pass::Smoke, ShaderDialect::Glsl120)
+        );
+        assert_eq!(
+            smoke_program(ShaderDialect::Glsl110),
+            program_for(Pass::Smoke, ShaderDialect::Glsl110)
+        );
+        assert_eq!(smoke_program(ShaderDialect::FixedFunction), None);
     }
 
     #[test]
     fn fixed_function_has_no_glsl_program() {
-        assert_eq!(smoke_program(ShaderDialect::FixedFunction), None);
         assert_eq!(
             validate(
                 "void main() {}",
@@ -220,6 +479,26 @@ mod tests {
     }
 
     #[test]
+    fn texture_lod_is_rejected_but_texture2d_is_allowed() {
+        assert_eq!(
+            validate(
+                "#version 120\nuniform sampler2D atlas;\nvoid main() { gl_FragColor = texture2D(atlas, vec2(0.0)); }",
+                ShaderDialect::Glsl120,
+                GlslStage::Fragment
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate(
+                "#version 120\nuniform sampler2D atlas;\nvoid main() { gl_FragColor = textureLod(atlas, vec2(0.0), 0.0); }",
+                ShaderDialect::Glsl120,
+                GlslStage::Fragment
+            ),
+            Err(ShaderError::ForbiddenToken("textureLod"))
+        );
+    }
+
+    #[test]
     fn version_must_match_the_selected_dialect() {
         let source = "#version 110\nattribute vec2 position;\nvoid main() { gl_Position = vec4(position, 0.0, 1.0); }";
         assert_eq!(
@@ -229,5 +508,13 @@ mod tests {
                 expected: 120,
             })
         );
+    }
+
+    fn dialect_version_prefix(dialect: ShaderDialect) -> &'static str {
+        match dialect {
+            ShaderDialect::Glsl120 => "#version 120",
+            ShaderDialect::Glsl110 => "#version 110",
+            ShaderDialect::FixedFunction => unreachable!(),
+        }
     }
 }

@@ -1,5 +1,5 @@
 //! PR 3 stage 2: a real OpenGL 2.1/2.0 compatibility context and one visible
-//! triangle, followed by PR 4's GLSL 120/110 smoke programs.
+//! triangle, followed by PR 4's full GLSL 120/110 pass program set.
 //!
 //! Built only with `--features legacy-gl`; the default wgpu build is unchanged.
 //! Under CI it runs in Xvfb with Mesa version overrides. This is a standalone
@@ -19,7 +19,7 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::*;
 use glutin::surface::{Surface, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use horizon_client_render::gfx21::{ShaderDialect, program};
+use horizon_client_render::gfx21::{Pass, ShaderDialect, program};
 use raw_window_handle::HasWindowHandle;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -221,14 +221,31 @@ impl ApplicationHandler for App {
 
         let dialect = requested_dialect(&glsl);
         println!("DIALECT: {dialect:?}");
-        let (vertex_source, fragment_source) = match program::smoke_program(dialect) {
-            Some(pair) => pair,
-            None => return self.fail(event_loop, "F0 has no GLSL smoke program yet"),
-        };
-
-        let program = match unsafe { make_program(&gl, vertex_source, fragment_source) } {
-            Ok(program) => program,
-            Err(err) => return self.fail(event_loop, format!("GLSL link failed: {err}")),
+        let mut smoke: Option<glow::Program> = None;
+        let mut linked = 0_usize;
+        for (pass, name, vertex_source, fragment_source) in program::all_programs(dialect) {
+            let built = match unsafe { make_program(&gl, vertex_source, fragment_source) } {
+                Ok(built) => built,
+                Err(err) => {
+                    return self.fail(event_loop, format!("GLSL link failed for {name}: {err}"));
+                }
+            };
+            if pass == Pass::Smoke {
+                smoke = Some(built);
+            } else {
+                unsafe { gl.delete_program(built) };
+            }
+            linked += 1;
+        }
+        println!("all programs linked: OK ({linked})");
+        let program = match smoke {
+            Some(program) => program,
+            None => {
+                return self.fail(
+                    event_loop,
+                    "smoke program missing from the full program set",
+                );
+            }
         };
         let vbo = match unsafe { gl.create_buffer() } {
             Ok(buffer) => buffer,
