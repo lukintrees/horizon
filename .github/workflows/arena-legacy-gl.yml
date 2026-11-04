@@ -112,7 +112,7 @@ jobs:
               >> /tmp/gl21-smoke.log 2>&1
             rc=$?
             if [ "$rc" -ne 0 ]; then
-              python3 -c 'import re; from pathlib import Path; t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",Path("/tmp/gl21-smoke.log").read_text(errors="replace")); ls=[l for l in t.splitlines() if not any(k in l for k in ("Downloaded","Compiling","Checking","Updating crates.io"))]; s="\n".join(ls[-120:])[-20000:]; print("::error::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+              python3 -c 'import re; from pathlib import Path; t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",Path("/tmp/gl21-smoke.log").read_text(errors="replace")); ls=[l for l in t.splitlines() if not any(k in l for k in ("Downloaded","Compiling","Checking","Updating crates.io"))]; s="\n".join(ls[-80:])[-8000:]; [print("::error::"+s[i:i+800].replace("%","%25").replace("\r","%0D").replace("\n","%0A")) for i in range(0,len(s),800)]'
               exit "$rc"
             fi
           done

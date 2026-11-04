@@ -76,28 +76,30 @@ unsafe fn make_program(
     vertex_source: &str,
     fragment_source: &str,
 ) -> Result<glow::Program, String> {
-    let vertex = gl.create_shader(glow::VERTEX_SHADER)?;
-    gl.shader_source(vertex, vertex_source);
-    gl.compile_shader(vertex);
-    if !gl.get_shader_compile_status(vertex) {
-        return Err(gl.get_shader_info_log(vertex));
+    unsafe {
+        let vertex = gl.create_shader(glow::VERTEX_SHADER)?;
+        gl.shader_source(vertex, vertex_source);
+        gl.compile_shader(vertex);
+        if !gl.get_shader_compile_status(vertex) {
+            return Err(gl.get_shader_info_log(vertex));
+        }
+        let fragment = gl.create_shader(glow::FRAGMENT_SHADER)?;
+        gl.shader_source(fragment, fragment_source);
+        gl.compile_shader(fragment);
+        if !gl.get_shader_compile_status(fragment) {
+            return Err(gl.get_shader_info_log(fragment));
+        }
+        let program = gl.create_program()?;
+        gl.attach_shader(program, vertex);
+        gl.attach_shader(program, fragment);
+        gl.link_program(program);
+        if !gl.get_program_link_status(program) {
+            return Err(gl.get_program_info_log(program));
+        }
+        gl.delete_shader(vertex);
+        gl.delete_shader(fragment);
+        Ok(program)
     }
-    let fragment = gl.create_shader(glow::FRAGMENT_SHADER)?;
-    gl.shader_source(fragment, fragment_source);
-    gl.compile_shader(fragment);
-    if !gl.get_shader_compile_status(fragment) {
-        return Err(gl.get_shader_info_log(fragment));
-    }
-    let program = gl.create_program()?;
-    gl.attach_shader(program, vertex);
-    gl.attach_shader(program, fragment);
-    gl.link_program(program);
-    if !gl.get_program_link_status(program) {
-        return Err(gl.get_program_info_log(program));
-    }
-    gl.delete_shader(vertex);
-    gl.delete_shader(fragment);
-    Ok(program)
 }
 
 struct App {
