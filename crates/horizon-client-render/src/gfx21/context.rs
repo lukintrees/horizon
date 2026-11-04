@@ -1,9 +1,10 @@
-//! Validated description of a legacy GL 2.1/2.0 context (PR 3, stage 1).
+//! Validated description of a legacy GL 2.1/2.0 context (PR 3).
 //!
 //! This is still pure Rust: it consumes the same [`Report`] that
 //! `tools/gl21_caps.py` writes and decides which shader dialect and FBO entry
 //! point the renderer may use. The real GLX/WGL `glGet*` queries, window and
-//! `glow` loader arrive in a later PR; nothing here issues a GL call.
+//! glow loader now run in the `gl21_clear` example (PR 3, stage 2); nothing
+//! here issues a GL call.
 
 use std::collections::BTreeMap;
 use std::error::Error;

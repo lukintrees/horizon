@@ -60,6 +60,13 @@ wgpu = { version = "30.0.1", default-features = false, features = ["std", "parki
 winit = "0.30.13"
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 
+# PR 3 stage 2 / PR 4: a real GL 2.1 compatibility context, glow loader and
+# GLSL 110/120 smoke programs. Optional so the default wgpu build is unchanged.
+glow = { version = "0.17", optional = true }
+glutin = { version = "0.32.3", optional = true }
+glutin-winit = { version = "0.5", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "time"] }
 
@@ -73,15 +80,27 @@ wgpu = { version = "30.0.1", default-features = false, features = ["gles"], opti
 default = ["modern-gl"]
 # The wgpu 30 stack. Kept as a default feature so the normal build is unchanged.
 modern-gl = ["dep:wgpu", "dep:naga", "dep:pollster"]
-# Stage 1 of the legacy build: the feature exists and the crate-root Renderer
-# alias is compiled, but `gfx` is still built (modern-gl) until PR 8 splits
-# `game.rs`. `cargo check --features legacy-gl --no-default-features` therefore
-# still resolves the modern deps; dropping `modern-gl` here is PR 8 work.
-legacy-gl = ["modern-gl"]
+# Stage 1/2 of the legacy build: the feature exists, the crate-root Renderer
+# alias is compiled, and the real GL 2.1 context/loader/shader example is
+# available. `gfx` is still built (modern-gl) until PR 8 splits `game.rs`.
+# `cargo check --features legacy-gl --no-default-features` therefore still
+# resolves the modern deps; dropping `modern-gl` here is PR 8 work.
+legacy-gl = [
+    "modern-gl",
+    "dep:glow",
+    "dep:glutin",
+    "dep:glutin-winit",
+    "dep:raw-window-handle",
+]
 # Sound output: horizon-client's `audio` feature.
 audio = ["dep:cpal"]
 # Helpers horizon-client's tests build their fixtures with.
 test-support = []
+
+[[example]]
+name = "gl21_clear"
+path = "examples/gl21_clear.rs"
+required-features = ["legacy-gl"]
 
 [build-dependencies]
 horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }

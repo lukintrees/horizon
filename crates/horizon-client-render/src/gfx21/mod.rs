@@ -1,15 +1,19 @@
-//! Legacy OpenGL 2.1/2.0 renderer scaffold (PR 2a/2b and PR 3 stage 1).
+//! Legacy OpenGL 2.1/2.0 renderer scaffold (PR 2a/2b, PR 3 and PR 4 stage 1).
 //!
 //! Deliberately additive: this module has no `wgpu`, `naga`, `winit`, `glow`
-//! or window dependency, so adding it cannot change the default build.
+//! or window dependency, so adding it cannot change the default build. The
+//! `gl21_clear` example (PR 3 stage 2) is compiled only with `legacy-gl` and
+//! uses `glutin`/`glow` outside this module; the library module itself stays
+//! dependency-free.
 //! `gfx::Renderer` remains the only active renderer until PR 8 switches the
 //! `Renderer` type alias in `lib.rs` and splits `game.rs` with `#[cfg]`.
 //!
 //! Roadmap for this module:
 //! * PR 3 — `context.rs` (validated caps), `state.rs` (GL state cache) and
 //!   `smoke.rs` (headless `gl21_clear` command stream). The real GLX/WGL
-//!   context, `glGet*` queries and loader are still TODO.
-//! * PR 4 — `program.rs` + `shaders/`: GLSL 110/120 programs.
+//!   context, `glGet*` queries and glow loader now run in the example.
+//! * PR 4 — `program.rs` + `shaders/`: GLSL 110/120 sources and static
+//!   validation; the example links the selected dialect.
 //! * PR 5–7 — atlas, mesh converter, sections, passes, HUD.
 //! * PR 8 — the `Renderer`/`Frame` facade listed in [`CONTRACT.md`](CONTRACT.md).
 //!
@@ -19,6 +23,7 @@
 
 pub mod caps;
 pub mod context;
+pub mod program;
 pub mod smoke;
 pub mod state;
 
@@ -27,6 +32,9 @@ pub use caps::{
 };
 pub use context::{
     ContextError, FboKind, GlContext, MIN_GL, MIN_GLSL, ShaderDialect, TARGET_GL, TARGET_GLSL,
+};
+pub use program::{
+    GlslStage, SHADERS, ShaderError, ShaderSource, smoke_program, validate, validate_all,
 };
 pub use smoke::{CLEAR_COLOR, gl21_clear_commands, gl21_clear_state_stream};
 pub use state::{
@@ -96,5 +104,13 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, GlCommand::DrawRangeElements { .. }))
         );
+    }
+
+    #[test]
+    fn shipped_glsl_sources_are_reachable() {
+        assert_eq!(validate_all(), Ok(()));
+        assert!(smoke_program(ShaderDialect::Glsl120).is_some());
+        assert!(smoke_program(ShaderDialect::Glsl110).is_some());
+        assert!(smoke_program(ShaderDialect::FixedFunction).is_none());
     }
 }

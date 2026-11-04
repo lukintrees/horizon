@@ -15,6 +15,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: never
   RUST_BACKTRACE: 1
+  LIBGL_ALWAYS_SOFTWARE: '1'
+  MESA_EXTENSION_MAX_YEAR: '2006'
+  MESA_EXTENSION_OVERRIDE: '-GL_ARB_uniform_buffer_object -GL_EXT_texture_array -GL_ARB_instanced_arrays'
 
 jobs:
   legacy-gl:
@@ -30,6 +33,11 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Install Xvfb and Mesa GL for the smoke frame
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils
+
       - name: Python caps / contract / public-tree checks
         run: |
           python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract -v
@@ -39,8 +47,11 @@ jobs:
           python3 tools/check_public_tree.py
           git diff --check
 
-      - name: rustfmt for the additive gfx21 module
-        run: rustfmt --edition 2024 --check crates/horizon-client-render/src/gfx21/*.rs
+      - name: rustfmt for the additive gfx21 module and GL smoke example
+        run: |
+          rustfmt --edition 2024 --check \
+            crates/horizon-client-render/src/gfx21/*.rs \
+            crates/horizon-client-render/examples/gl21_clear.rs
 
       - name: Cargo manifest sanity
         run: cargo metadata --no-deps --format-version 1 > /dev/null
@@ -86,3 +97,26 @@ jobs:
             exit "$rc"
           fi
           tail -30 /tmp/gfx21-test.log
+
+      - name: GL 2.1/2.0 smoke frames under Xvfb
+        run: |
+          set +e
+          : > /tmp/gl21-smoke.log
+          for spec in "2.1 120" "2.0 110"; do
+            set -- $spec
+            export MESA_GL_VERSION_OVERRIDE="$1"
+            export MESA_GLSL_VERSION_OVERRIDE="$2"
+            echo "=== GL $1 / GLSL $2 ===" | tee -a /tmp/gl21-smoke.log
+            xvfb-run -a -s '-screen 0 800x600x24' \
+              cargo run -p horizon-client-render --example gl21_clear --features legacy-gl \
+              >> /tmp/gl21-smoke.log 2>&1
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              python3 -c 'import re; from pathlib import Path; t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",Path("/tmp/gl21-smoke.log").read_text(errors="replace")); ls=[l for l in t.splitlines() if not any(k in l for k in ("Downloaded","Compiling","Checking","Updating crates.io"))]; s="\n".join(ls[-120:])[-20000:]; print("::error::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+              exit "$rc"
+            fi
+          done
+          tail -40 /tmp/gl21-smoke.log
+          grep -q 'gl21_clear: OK' /tmp/gl21-smoke.log || { echo "::error::missing gl21_clear: OK"; exit 1; }
+          grep -q 'DIALECT: Glsl120' /tmp/gl21-smoke.log || { echo "::error::missing Glsl120"; exit 1; }
+          grep -q 'DIALECT: Glsl110' /tmp/gl21-smoke.log || { echo "::error::missing Glsl110"; exit 1; }

@@ -110,6 +110,24 @@ so no half-implemented renderer can be used by accident.
 PR 3 stage 1 adds `context.rs` (validated `Report` → `ShaderDialect`/`FboKind`),
 `state.rs` (`GlCommand`/`GlState` cache, GL2 enums only) and `smoke.rs`
 (headless `gl21_clear` triangle command stream). These modules make no GL calls
-and have no external crate dependencies; the real GLX/WGL context and loader,
-GLSL programs, atlas and passes follow in later PRs. All `renderer.<name>` and
+and have no external crate dependencies. All `renderer.<name>` and
 `Renderer::<name>` accesses above remain the PR 8 checklist.
+
+## PR 3 stage 2 / PR 4 stage 1 (real context, GLSL 110/120)
+
+`examples/gl21_clear.rs` is gated behind `required-features = ["legacy-gl"]`.
+It creates an OpenGL 2.1 (or 2.0 under the CI override) compatibility context
+through `glutin`/`glutin-winit`, loads GL 2.1 entry points with `glow`, prints
+`GL_VERSION`, `GL_RENDERER`, `GL_VENDOR` and `GL_SHADING_LANGUAGE_VERSION`,
+selects `ShaderDialect::Glsl120` or `Glsl110`, links one smoke-triangle
+program, draws it and checks `glGetError() == GL_NO_ERROR`. The optional
+`glow`/`glutin`/`glutin-winit`/`raw-window-handle` dependencies and their
+notices are recorded in `THIRD_PARTY_NOTICES.md`; no upstream source was copied.
+
+`program.rs` + `shaders/` ship the same triangle as `#version 120` and
+`#version 110` pairs. `validate()` rejects a mismatched `#version`, GL3+
+tokens (`in`/`out`/`layout`/`uint`/`texelFetch`/`gl_VertexID`/...), missing
+`attribute`/`gl_Position`/`gl_FragColor` and missing `void main`; `texture2D`
+stays allowed. F0 has no GLSL program (`smoke_program` returns `None`). The
+atlas, mesh converter, sections, passes and HUD still follow in PR 5–7, and the
+full `#[cfg]` split of `gfx`/`game.rs` remains PR 8.
