@@ -198,3 +198,33 @@ Two rules keep that honest:
   so a stale baseline is visible rather than silent.
 * **The GLSL path has no floor.** `tools/gl21_glsl.py --check` runs on `src/shaders/terrain/`
   with no baseline: those files are written for the target, and a finding there is a bug.
+
+## Reading a failing `gl21` build from an API-only session
+
+The job's log is served from the runner's blob storage. A session whose network reaches only
+`api.github.com` can start that download and gets `EOF` from it, so `gh run view --log-failed`
+prints nothing and the failure has no text. The workflow's build step therefore does two things
+in addition to building:
+
+* it runs clippy with `--message-format=json` and pipes the stream through
+  `tools/gl21_annotate_rustc.py`, which prints each diagnostic as a
+  `::error file=…,line=…::` workflow command;
+* it captures `cargo test`'s output to a file and annotates the tail of it on failure, because a
+  libtest failure has no structured diagnostics at all.
+
+The checks API serves those annotations, which is the whole point:
+
+```sh
+gh run view <run-id> --json jobs -q '.jobs[] | select(.name=="gl21") | .databaseId'
+gh api repos/<owner>/<repo>/check-runs/<job-id>/annotations \
+  | python -c 'import json,sys; [print(a["message"]) for a in json.load(sys.stdin)]'
+```
+
+Expect duplicates: clippy and `cargo test` both build, so the same error appears twice. GitHub
+keeps the first 50 annotations of a step, which is why the reporter caps its own output at 50
+and says so in a notice.
+
+`tools/gl21_annotate_rustc.py` is a reporter and returns 0 always: the step's exit status is
+cargo's, and a build failure cannot be turned into a pass by the tool that describes it. Its
+tests (`tests/test_gl21_annotate_rustc.py`) pin the shapes cargo actually emits, the escapes the
+workflow-command format needs, and the fallback when a stream has no diagnostics.
