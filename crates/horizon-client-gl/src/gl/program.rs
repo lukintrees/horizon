@@ -259,10 +259,6 @@ impl Program {
         (&self.vertex, &self.fragment)
     }
 
-    pub(crate) fn raw(&self) -> Option<glow::Program> {
-        self.raw
-    }
-
     /// Deletes the GL object now. Idempotent; the renderer calls it for every program it
     /// made, because a drop after the context is gone cannot call the driver.
     pub fn destroy(&mut self, ctx: &Context) {

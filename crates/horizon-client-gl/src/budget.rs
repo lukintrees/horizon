@@ -222,7 +222,7 @@ pub fn measure(source: &str, stage: Stage) -> Measured {
         if ty == Type::Unknown {
             out.unknown_types.push((*ty_word).to_string());
         }
-        let rest: String = iter.map(|w| *w).collect::<Vec<_>>().join(" ");
+        let rest: String = iter.copied().collect::<Vec<_>>().join(" ");
         for part in rest.split(',') {
             let part = part.trim();
             if part.is_empty() {
@@ -498,18 +498,20 @@ pub fn check(measured: &Measured, stage: Stage, limits: &Limits) -> Result<()> {
 /// undefined values.
 pub fn check_linked(vertex: &Measured, fragment: &Measured) -> Result<()> {
     for v in &vertex.uniforms {
-        if let Some(f) = fragment.uniform(&v.name) {
-            if f.ty != v.ty || f.count != v.count {
-                return Err(Error::budget(
-                    "linked uniforms",
-                    format!(
-                        "`{}` is {} in the vertex stage and {} in the fragment stage",
-                        v.name,
-                        describe(v),
-                        describe(f)
-                    ),
-                ));
-            }
+        // One `if let` chain rather than a nested `if`: clippy's `collapsible_if`, and the
+        // condition reads as one sentence.
+        if let Some(f) = fragment.uniform(&v.name)
+            && (f.ty != v.ty || f.count != v.count)
+        {
+            return Err(Error::budget(
+                "linked uniforms",
+                format!(
+                    "`{}` is {} in the vertex stage and {} in the fragment stage",
+                    v.name,
+                    describe(v),
+                    describe(f)
+                ),
+            ));
         }
     }
     Ok(())
@@ -594,6 +596,7 @@ mod tests {
         assert!(check(&m, Stage::Fragment, &Limits::X1650).is_err());
     }
 
+    #[test]
     fn vertex_texture_fetch_is_a_budget_failure_not_a_syntax_one() {
         let src = "uniform sampler2D cloud; varying vec2 uv; \
                    void main() { gl_Position = texture2D(cloud, uv); }";

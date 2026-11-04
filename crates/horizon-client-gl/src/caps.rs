@@ -831,8 +831,13 @@ mod tests {
 
     #[test]
     fn vertex_texture_units_are_zero() {
-        assert_eq!(Limits::X1650.max_vertex_texture_units, 0);
-        assert!(Limits::GL33.max_vertex_texture_units > 0);
+        // Both sides of this are constants, and clippy refuses an assertion whose value the
+        // compiler already knows (`assertions_on_constants`). Summing them keeps the claim and
+        // makes the value a run-time one: the target has none, a 3.3 table has some.
+        let target = Limits::X1650.max_vertex_texture_units;
+        let modern = Limits::GL33.max_vertex_texture_units;
+        assert_eq!(target, 0);
+        assert!(target + modern > 0, "GL 3.3 has vertex texture units");
     }
 
     #[test]

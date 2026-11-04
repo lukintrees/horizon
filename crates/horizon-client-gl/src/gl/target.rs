@@ -44,7 +44,6 @@ pub struct Target {
     framebuffer: Option<glow::Framebuffer>,
     color: Texture,
     depth: Option<glow::Renderbuffer>,
-    depth_size: (u32, u32),
     depth_format: DepthFormat,
     label: &'static str,
 }
@@ -105,7 +104,6 @@ impl Target {
             framebuffer: Some(framebuffer),
             color,
             depth: depth_buffer,
-            depth_size: (width, height),
             depth_format: depth,
             label,
         };
@@ -143,7 +141,10 @@ impl Target {
                     width as i32,
                     height as i32,
                 );
-                gl.framebuffer_renderbuffer(
+                // The depth renderbuffer is allocated at the colour one's size, so a mismatch
+            // between them is not a state this type can be in: nothing compared the two, and a
+            // field that exists to be compared by nothing is dead weight (`-D warnings` agreed).
+            gl.framebuffer_renderbuffer(
                     glow::FRAMEBUFFER,
                     glow::DEPTH_STENCIL_ATTACHMENT,
                     glow::RENDERBUFFER,
