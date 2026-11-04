@@ -173,8 +173,11 @@ impl Renderer {
         device.use_program(Program::Terrain);
         device.bind_texture(Texture::SpriteAtlas);
         device.bind_texture(Texture::Lightmap);
-        for draw in self.frame.draws() {
-            self.begin_pass(device, draw);
+        // The frame's draws are read while `last_pass` is written: both fields at once, so that the
+        // loop does not borrow the renderer twice.
+        let (frame, last_pass) = (&self.frame, &mut self.last_pass);
+        for draw in frame.draws() {
+            begin_pass(last_pass, device, draw);
             let uniforms = TerrainUniforms {
                 origin: [0.0; 3],
                 visibility: draw.visibility,
@@ -197,15 +200,7 @@ impl Renderer {
         self.frames += 1;
     }
 
-    /// Apply a pass's state when the pass changes: the draws arrive grouped, so this is one set of
-    /// calls per pass per frame, not per draw.
-    fn begin_pass(&mut self, device: &mut dyn Device, draw: &Draw) {
-        if self.last_pass == Some(draw.pass) {
-            return;
-        }
-        device.set_state(&state::setup(draw.pass));
-        self.last_pass = Some(draw.pass);
-    }
+
 
     /// The overlay: its whole vertex buffer, then one draw per run of blending state.
     fn draw_hud(&mut self, device: &mut dyn Device, hud: &HudDraws) {
@@ -230,6 +225,16 @@ impl Renderer {
             device.draw_hud(run.begin, run.count);
         }
     }
+}
+
+/// Apply a pass's state when the pass changes: the draws arrive grouped, so this is one set of calls
+/// per pass per frame, not per draw.
+fn begin_pass(last_pass: &mut Option<Pass>, device: &mut dyn Device, draw: &Draw) {
+    if *last_pass == Some(draw.pass) {
+        return;
+    }
+    device.set_state(&state::setup(draw.pass));
+    *last_pass = Some(draw.pass);
 }
 
 /// The part of a HUD run's state the sequence compares: the four values `state::hud` and

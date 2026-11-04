@@ -18,7 +18,10 @@
 //! Everything a caller must not get wrong is data here, and `program` holds the matching attribute
 //! and uniform tables next to the shader's own declarations, as it does for the terrain program.
 
-use crate::hud::{Blend, HudBatch, HudVertex};
+// Re-exported because they are in this module's own signatures (`State` is `hud::Blend`'s, and a
+// caller hands `HudDraws::of` a `HudBatch`): a private `use` would make the types unnameable from
+// outside, which is what `private_interfaces` warns about.
+pub use crate::hud::{Blend, HudBatch, HudVertex};
 
 /// A HUD vertex in the GL 2.1 layout: 32 bytes, five attributes, no integers.
 ///
