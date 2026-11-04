@@ -12,9 +12,12 @@ use crate::frame::{self, Pixels};
 use crate::math::{self, Mat4, Vec3};
 use crate::world::{self, World, FLOATS_PER_VERTEX};
 
-/// The sky and the fog share a colour, so distant ground fades into the sky.
-pub const SKY: [u8; 4] = [153, 204, 255, 255];
-const TOLERANCE: u8 = 2;
+/// The horizon colour: the sky at the horizon line and the fog, so distant ground fades into the sky.
+pub const HORIZON: [u8; 4] = [153, 204, 255, 255];
+/// The colour straight up. The sky is a linear gradient from the horizon line to the top of the frame.
+pub const ZENITH: [u8; 3] = [70, 120, 220];
+/// The sky is computed on the GPU, so it may differ from the CPU mirror by rounding.
+const SKY_TOLERANCE: u8 = 3;
 /// Bytes between the starts of two vertices.
 const STRIDE: i32 = (FLOATS_PER_VERTEX * 4) as i32;
 
@@ -35,6 +38,28 @@ void main() {
     gl_Position = u_view_proj * vec4(a_pos, 1.0);
     float d = distance(a_pos, u_eye);
     v_fog = clamp((d - u_fog_start) / (u_fog_end - u_fog_start), 0.0, 1.0);
+}
+"#;
+
+/// The sky: one screen-filling quad, drawn before the terrain with the depth test off. Its colour depends
+/// only on the height in normalised device coordinates, so it has the same gradient as `sky_at`.
+const SKY_VERTEX_SHADER: &str = r#"#version 120
+attribute vec2 a_clip;
+varying float v_y;
+void main() {
+    v_y = a_clip.y;
+    gl_Position = vec4(a_clip, 0.0, 1.0);
+}
+"#;
+
+const SKY_FRAGMENT_SHADER: &str = r#"#version 120
+uniform float u_horizon;
+uniform vec3 u_horizon_color;
+uniform vec3 u_zenith_color;
+varying float v_y;
+void main() {
+    float t = clamp((v_y - u_horizon) / max(1.0 - u_horizon, 0.001), 0.0, 1.0);
+    gl_FragColor = vec4(mix(u_horizon_color, u_zenith_color, t), 1.0);
 }
 "#;
 
@@ -93,6 +118,8 @@ pub struct Stats {
     pub drawn: u32,
     pub draw_calls: u32,
     pub triangles: u64,
+    /// Height of the horizon line in normalised device coordinates (-1 bottom, 1 top).
+    pub horizon_ndc: f32,
     /// Bytes of vertex data on the GPU for the whole terrain, not per frame.
     pub buffer_bytes: u64,
     pub frame_ms: f64,
@@ -107,6 +134,8 @@ struct Section {
 
 pub struct Terrain {
     program: glow::Program,
+    sky_program: glow::Program,
+    sky_buffer: glow::Buffer,
     atlas: glow::Texture,
     sections: Vec<Section>,
     total: u32,
@@ -118,6 +147,8 @@ impl Terrain {
     /// Meshes every section of `world` and uploads the non-empty ones. Needs a current context.
     pub fn new(gl: &glow::Context, world: &World) -> Result<Self, String> {
         let program = frame::link(gl, VERTEX_SHADER, FRAGMENT_SHADER, &[(0, "a_pos"), (1, "a_uv"), (2, "a_shade")])?;
+        let sky_program = frame::link(gl, SKY_VERTEX_SHADER, SKY_FRAGMENT_SHADER, &[(0, "a_clip")])?;
+        let sky_buffer = upload_sky_quad(gl)?;
         let atlas = upload_atlas(gl)?;
         let mut sections = Vec::new();
         let (mut total, mut empty, mut buffer_bytes) = (0, 0, 0u64);
@@ -146,7 +177,7 @@ impl Terrain {
                 }
             }
         }
-        Ok(Self { program, atlas, sections, total, empty, buffer_bytes })
+        Ok(Self { program, sky_program, sky_buffer, atlas, sections, total, empty, buffer_bytes })
     }
 
     /// Draws the terrain from `camera` into a `width` x `height` window and reads the frame back.
@@ -157,18 +188,38 @@ impl Terrain {
         let proj = math::perspective(camera.fovy, aspect, camera.near, camera.far);
         let view_proj: Mat4 = math::mul(&proj, &view);
         let planes = math::frustum_planes(&view_proj);
+        let horizon = horizon_ndc(camera);
 
-        let mut stats = Stats { sections: self.total, empty: self.empty, buffer_bytes: self.buffer_bytes, ..Stats::default() };
+        let mut stats = Stats {
+            sections: self.total,
+            empty: self.empty,
+            buffer_bytes: self.buffer_bytes,
+            horizon_ndc: horizon,
+            ..Stats::default()
+        };
+        let horizon_rgb = HORIZON.map(|c| f32::from(c) / 255.0);
+        let zenith_rgb = ZENITH.map(|c| f32::from(c) / 255.0);
         // SAFETY: the context is current on this thread; every handle was made on it.
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             gl.viewport(0, 0, width as i32, height as i32);
-            gl.enable(glow::DEPTH_TEST);
-            gl.depth_func(glow::LESS);
-            let sky = SKY.map(|c| f32::from(c) / 255.0);
-            gl.clear_color(sky[0], sky[1], sky[2], sky[3]);
+            gl.clear_color(horizon_rgb[0], horizon_rgb[1], horizon_rgb[2], 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
 
+            // The sky first, over the whole frame, with no depth test.
+            gl.disable(glow::DEPTH_TEST);
+            gl.use_program(Some(self.sky_program));
+            gl.uniform_1_f32(gl.get_uniform_location(self.sky_program, "u_horizon").as_ref(), horizon);
+            gl.uniform_3_f32(gl.get_uniform_location(self.sky_program, "u_horizon_color").as_ref(), horizon_rgb[0], horizon_rgb[1], horizon_rgb[2]);
+            gl.uniform_3_f32(gl.get_uniform_location(self.sky_program, "u_zenith_color").as_ref(), zenith_rgb[0], zenith_rgb[1], zenith_rgb[2]);
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sky_buffer));
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            gl.disable_vertex_attrib_array(0);
+
+            gl.enable(glow::DEPTH_TEST);
+            gl.depth_func(glow::LESS);
             gl.use_program(Some(self.program));
             gl.uniform_matrix_4_f32_slice(gl.get_uniform_location(self.program, "u_view_proj").as_ref(), false, &view_proj);
             gl.uniform_3_f32(gl.get_uniform_location(self.program, "u_eye").as_ref(), camera.eye[0], camera.eye[1], camera.eye[2]);
@@ -176,9 +227,9 @@ impl Terrain {
             gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_fog_end").as_ref(), camera.fog_end);
             gl.uniform_3_f32(
                 gl.get_uniform_location(self.program, "u_fog_color").as_ref(),
-                sky[0],
-                sky[1],
-                sky[2],
+                horizon_rgb[0],
+                horizon_rgb[1],
+                horizon_rgb[2],
             );
             gl.uniform_1_i32(gl.get_uniform_location(self.program, "u_atlas").as_ref(), 0);
             gl.active_texture(glow::TEXTURE0);
@@ -234,24 +285,25 @@ pub fn checks(pixels: &Pixels, stats: &Stats) -> Vec<Check> {
     });
 
     let (w, h) = (pixels.width, pixels.height);
-    let top_is_sky = (0..w).step_by(8).all(|x| close(pixels.at_bottom_up(x, h - 1), SKY) && close(pixels.at_bottom_up(x, h - 2), SKY));
+    let sky_on = |y: u32, got: [u8; 4]| is_sky(got, row_ndc(y, h), stats.horizon_ndc);
+    let top_is_sky = (0..w).step_by(8).all(|x| sky_on(h - 1, pixels.at_bottom_up(x, h - 1)) && sky_on(h - 2, pixels.at_bottom_up(x, h - 2)));
     checks.push(Check {
         name: "terrain_sky_top",
         required: true,
         ok: top_is_sky,
-        detail: "the top two rows of the frame equal the sky".to_string(),
+        detail: format!("the top two rows of the frame follow the sky gradient up to {ZENITH:?}"),
     });
 
     let centre = pixels.at_bottom_up(w / 2, h / 2);
     checks.push(Check {
         name: "terrain_centre_is_ground",
         required: true,
-        ok: !close(centre, SKY),
-        detail: format!("the centre pixel is {centre:?}, the sky is {SKY:?}"),
+        ok: !sky_on(h / 2, centre),
+        detail: format!("the centre pixel is {centre:?}, the sky there is {:?}", sky_at(row_ndc(h / 2, h), stats.horizon_ndc)),
     });
 
     let total = (w * h) as usize;
-    let sky_pixels = pixels.rgba.chunks_exact(4).filter(|p| close([p[0], p[1], p[2], p[3]], SKY)).count();
+    let sky_pixels: usize = (0..h).map(|y| (0..w).filter(|&x| sky_on(y, pixels.at_bottom_up(x, y))).count()).sum();
     let ground_share = 1.0 - sky_pixels as f64 / total as f64;
     checks.push(Check {
         name: "terrain_coverage",
@@ -262,8 +314,50 @@ pub fn checks(pixels: &Pixels, stats: &Stats) -> Vec<Check> {
     checks
 }
 
-fn close(got: [u8; 4], want: [u8; 4]) -> bool {
-    got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= TOLERANCE)
+/// The normalised device height of row `y` (counted from the bottom) of a frame `height` rows high.
+fn row_ndc(y: u32, height: u32) -> f32 {
+    2.0 * (y as f32 + 0.5) / height as f32 - 1.0
+}
+
+/// The sky colour at height `y` (normalised device coordinates) with the horizon at `horizon`:
+/// the horizon colour at and below the horizon line, and a linear blend up to the zenith.
+/// This is the CPU mirror of `SKY_FRAGMENT_SHADER`.
+pub fn sky_at(y: f32, horizon: f32) -> [u8; 4] {
+    let t = ((y - horizon) / (1.0 - horizon).max(0.001)).clamp(0.0, 1.0);
+    let mut out = [0, 0, 0, 255];
+    for channel in 0..3 {
+        let (from, to) = (f32::from(HORIZON[channel]), f32::from(ZENITH[channel]));
+        out[channel] = (from + (to - from) * t).round() as u8;
+    }
+    out
+}
+
+/// Whether `got` is the sky at height `y`, within the rounding of the GPU.
+fn is_sky(got: [u8; 4], y: f32, horizon: f32) -> bool {
+    let want = sky_at(y, horizon);
+    got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= SKY_TOLERANCE)
+}
+
+/// Where the horizon line falls in normalised device coordinates for `camera`. The camera looks down at
+/// the angle `theta` below the horizontal; a point at infinity on the horizon is then `tan(theta) /
+/// tan(fovy / 2)` of the half-height above the centre.
+pub fn horizon_ndc(camera: &Camera) -> f32 {
+    let d = [camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1], camera.target[2] - camera.eye[2]];
+    let horizontal = (d[0] * d[0] + d[2] * d[2]).sqrt();
+    let theta = (-d[1]).atan2(horizontal);
+    theta.tan() / (camera.fovy.to_radians() / 2.0).tan()
+}
+
+fn upload_sky_quad(gl: &glow::Context) -> Result<glow::Buffer, String> {
+    let quad: [f32; 12] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0];
+    let bytes: Vec<u8> = quad.iter().flat_map(|v| v.to_ne_bytes()).collect();
+    // SAFETY: the context is current on this thread.
+    unsafe {
+        let buffer = gl.create_buffer()?;
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer));
+        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, &bytes, glow::STATIC_DRAW);
+        Ok(buffer)
+    }
 }
 
 /// The atlas tile colours, in `world::Tile` order.
@@ -342,8 +436,15 @@ mod tests {
         Pixels { width, height, rgba }
     }
 
+    /// The horizon of the test frames: the 45 bottom rows of 64 are ground, the rest sky.
+    const TEST_HORIZON: f32 = 0.4;
+
+    fn sky_row(y: u32, height: u32) -> [u8; 4] {
+        sky_at(row_ndc(y, height), TEST_HORIZON)
+    }
+
     fn stats(sections: u32, empty: u32, culled: u32, drawn: u32) -> Stats {
-        Stats { sections, empty, culled, drawn, draw_calls: drawn, ..Stats::default() }
+        Stats { sections, empty, culled, drawn, draw_calls: drawn, horizon_ndc: TEST_HORIZON, ..Stats::default() }
     }
 
     fn passed(checks: &[Check]) -> Vec<&'static str> {
@@ -353,14 +454,14 @@ mod tests {
     #[test]
     fn a_frame_with_sky_on_top_and_ground_below_passes_every_check() {
         // Ground from the bottom up to 70% of the height, sky above.
-        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { SKY });
+        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { sky_row(y, 64) });
         let result = checks(&pixels, &stats(128, 20, 40, 68));
         assert_eq!(passed(&result).len(), result.len(), "{result:?}");
     }
 
     #[test]
     fn a_frame_of_only_sky_fails_the_ground_checks() {
-        let pixels = frame_with(64, 64, |_, _| SKY);
+        let pixels = frame_with(64, 64, |_, y| sky_row(y, 64));
         let result = checks(&pixels, &stats(128, 20, 40, 68));
         let failed: Vec<_> = result.iter().filter(|c| !c.ok).map(|c| c.name).collect();
         assert_eq!(failed, ["terrain_centre_is_ground", "terrain_coverage"]);
@@ -368,7 +469,7 @@ mod tests {
 
     #[test]
     fn a_frame_drawn_without_any_section_fails_the_drawn_check() {
-        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { SKY });
+        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { sky_row(y, 64) });
         let result = checks(&pixels, &stats(128, 20, 108, 0));
         assert!(!result.iter().find(|c| c.name == "terrain_sections_drawn").unwrap().ok);
     }
@@ -385,6 +486,24 @@ mod tests {
             let horizontal = ((c.eye[0] - 64.0).powi(2) + (c.eye[2] - 64.0).powi(2)).sqrt();
             assert!((horizontal - 62.0).abs() < 1e-3, "frame {frame}: {horizontal}");
         }
+    }
+
+    #[test]
+    fn the_sky_is_the_horizon_colour_at_the_line_and_the_zenith_at_the_top() {
+        assert_eq!(sky_at(TEST_HORIZON, TEST_HORIZON), HORIZON);
+        assert_eq!(sky_at(-1.0, TEST_HORIZON), HORIZON, "below the horizon the ground covers it");
+        assert_eq!(sky_at(1.0, TEST_HORIZON), [ZENITH[0], ZENITH[1], ZENITH[2], 255]);
+        let middle = sky_at(0.7, TEST_HORIZON);
+        assert!(middle[0] < HORIZON[0] && middle[0] > ZENITH[0], "{middle:?}");
+    }
+
+    #[test]
+    fn the_horizon_is_at_the_centre_for_a_level_camera_and_above_it_when_looking_down() {
+        let mut level = Camera::orbit(0);
+        level.eye[1] = level.target[1];
+        assert!(horizon_ndc(&level).abs() < 1e-6);
+        let down = horizon_ndc(&Camera::orbit(0));
+        assert!((0.40..0.50).contains(&down), "{down}");
     }
 
     #[test]

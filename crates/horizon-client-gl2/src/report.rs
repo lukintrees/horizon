@@ -130,7 +130,7 @@ mod tests {
             scene: "terrain",
             frames: 4,
             frame_ms_sum: 100.0,
-            terrain: Some(Stats { sections: 128, empty: 20, culled: 40, drawn: 68, draw_calls: 68, triangles: 9000, buffer_bytes: 1_000_000, frame_ms: 25.0 }),
+            terrain: Some(Stats { sections: 128, empty: 20, culled: 40, drawn: 68, draw_calls: 68, triangles: 9000, buffer_bytes: 1_000_000, horizon_ndc: 0.4, frame_ms: 25.0 }),
             ..Report::default()
         };
         let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();

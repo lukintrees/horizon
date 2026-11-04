@@ -111,7 +111,8 @@ jobs:
             for ($c = 0; $c -lt $cols; $c++) {
               $x = [int](($c + 0.5) * $bmp.Width / $cols)
               $p = $bmp.GetPixel($x, $y)
-              if ([math]::Abs($p.R - 153) -le 4 -and [math]::Abs($p.G - 204) -le 4 -and [math]::Abs($p.B - 255) -le 4) {
+              # The sky is a gradient from light blue to deep blue; the ground is green, brown or grey.
+              if ($p.B -ge 180 -and $p.B -gt $p.R + 40) {
                 $line += ' '
               } else {
                 $lum = 0.3 * $p.R + 0.59 * $p.G + 0.11 * $p.B
