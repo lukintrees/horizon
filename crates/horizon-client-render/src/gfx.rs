@@ -2843,7 +2843,7 @@ impl Renderer {
             feature = "legacy-live",
             any(target_os = "linux", target_os = "windows")
         ))]
-        let legacy_live = if !offscreen
+        let legacy_live = if offscreen.is_none()
             && std::env::var_os("HORIZON_LEGACY_GL_PREVIEW").as_deref()
                 == Some(std::ffi::OsStr::new("1"))
         {
