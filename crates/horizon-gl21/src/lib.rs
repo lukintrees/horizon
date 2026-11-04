@@ -21,6 +21,8 @@
 //!   chain, which shaders a program compiles, which attributes it is bound with.
 //! - [`quad`] — the present pass's four vertices, which are the one piece of geometry that is not
 //!   the mesher's.
+//! - [`sprites`] — the sprite atlas, filled from the mip chains the renderer already builds: the
+//!   step between `gl21::Atlas`'s layout and `Driver::upload`.
 //!
 //! None of it changes what Horizon draws by default. A run opens a GL 2.1 context only where a
 //! caller asks for one (`HORIZON_GL_PROFILE=x1650`, or a caller that names this crate's device), and
@@ -44,6 +46,7 @@ pub mod driver;
 pub mod egl;
 pub mod quad;
 pub mod resources;
+pub mod sprites;
 
 pub use driver::Driver;
 pub use resources::{Level, TextureId, Upload};
