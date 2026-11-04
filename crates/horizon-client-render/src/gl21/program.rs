@@ -129,7 +129,7 @@ pub struct Uniform {
 }
 
 /// The uniforms of the terrain program (`terrain.vert` and `terrain.frag`).
-pub const TERRAIN_UNIFORMS: [Uniform; 9] = [
+pub const TERRAIN_UNIFORMS: [Uniform; 10] = [
     Uniform {
         name: "u_view_proj",
         kind: "mat4",
@@ -171,6 +171,11 @@ pub const TERRAIN_UNIFORMS: [Uniform; 9] = [
         set_by: "the fog's two distance pairs: environmental start/end, render start/end",
     },
     Uniform {
+        name: "u_bias",
+        kind: "float",
+        set_by: "the sampler's LOD bias, passed to `texture2D` (GL_EXT_texture_lod_bias)",
+    },
+    Uniform {
         name: "u_alpha_test",
         kind: "float",
         set_by: "`Pass::alpha_test`: 0.5 solid, 0.01 see-through, 0 for no test",
@@ -184,12 +189,92 @@ pub const PRESENT_UNIFORMS: [Uniform; 1] = [Uniform {
     set_by: "texture unit 0, the frame Horizon drew",
 }];
 
+/// `hud.vert`'s attributes: exactly `gl21::hud::GlHudVertex` (five of the sixteen slots R500 has).
+pub const HUD: [Attribute; 5] = [
+    Attribute {
+        location: 0,
+        name: "a_pos",
+        kind: AttributeKind::Float,
+        size: 2,
+        normalized: false,
+        offset: 0,
+    },
+    Attribute {
+        location: 1,
+        name: "a_uv",
+        kind: AttributeKind::Float,
+        size: 2,
+        normalized: false,
+        offset: 8,
+    },
+    Attribute {
+        location: 2,
+        name: "a_color",
+        kind: AttributeKind::UnsignedByte,
+        size: 4,
+        normalized: true,
+        offset: 16,
+    },
+    Attribute {
+        location: 3,
+        name: "a_depth",
+        kind: AttributeKind::Float,
+        size: 1,
+        normalized: false,
+        offset: 20,
+    },
+    Attribute {
+        location: 4,
+        name: "a_glint_uv",
+        kind: AttributeKind::Float,
+        size: 2,
+        normalized: false,
+        offset: 24,
+    },
+];
+
+/// The uniforms of the HUD program (`hud.vert` and `hud.frag`).
+pub const HUD_UNIFORMS: [Uniform; 6] = [
+    Uniform {
+        name: "u_hud",
+        kind: "vec4",
+        set_by: "x,y: window pixels; z: `HudDraws::scale`; w: the glint texture's time",
+    },
+    Uniform {
+        name: "u_aspect",
+        kind: "vec2",
+        set_by: "x: 1 or -1, the y direction of the target's origin",
+    },
+    Uniform {
+        name: "u_atlas",
+        kind: "sampler2D",
+        set_by: "texture unit 0, the sprite and glyph atlas",
+    },
+    Uniform {
+        name: "u_glint",
+        kind: "sampler2D",
+        set_by: "texture unit 1, the repeating glint texture",
+    },
+    Uniform {
+        name: "u_linear",
+        kind: "sampler2D",
+        set_by: "texture unit 2, the atlas again with bilinear filtering (the vignette's blur)",
+    },
+    Uniform {
+        name: "u_use_linear",
+        kind: "float",
+        set_by: "1 for a run whose `hud::State::linear` is set, 0 for the plain sample",
+    },
+];
+
 /// The shader sources the renderer compiles: (file name, source).
-pub const SOURCES: [(&str, &str); 4] = [
+pub const SOURCES: [(&str, &str); 6] = [
     ("terrain.vert", include_str!("terrain.vert")),
     ("terrain.frag", include_str!("terrain.frag")),
     ("present.vert", include_str!("present.vert")),
     ("present.frag", include_str!("present.frag")),
+    ("hud.vert", include_str!("hud.vert")),
+    ("hud.frag", include_str!("hud.frag")),
 ];
 
 /// One stage's declarations: what a shader says it reads.
@@ -227,6 +312,30 @@ pub fn declarations(source: &str) -> Declarations {
     out
 }
 
+/// How many times `name` appears in `source` with its comments removed. A uniform declared and never
+/// read is what a driver reports as an inactive uniform and what silently keeps a default.
+fn mentions(source: &str, name: &str) -> usize {
+    let code: String = source
+        .lines()
+        .map(|line| match line.find("//") {
+            Some(at) => &line[..at],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let boundary = |c: Option<char>| !c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let mut count = 0;
+    let mut rest = code.as_str();
+    while let Some(at) = rest.find(name) {
+        let after = rest[at + name.len()..].chars().next();
+        if boundary(rest[..at].chars().next_back()) && boundary(after) {
+            count += 1;
+        }
+        rest = &rest[at + name.len()..];
+    }
+    count
+}
+
 /// What a program's GLSL disagrees with the tables about. Empty when they agree.
 ///
 /// Not a parser: the shaders are short and this path declares one name a line, so the mistakes worth
@@ -257,6 +366,12 @@ pub fn mismatches(
         }
         for (kind, name) in &found.uniforms {
             found_uniforms.push(name.clone());
+            if mentions(source, name) < 2 {
+                problems.push(format!(
+                    "{file}: uniform `{name}` is declared and never read: a driver would report it \
+                     inactive, and whatever it should set stays at zero"
+                ));
+            }
             match uniforms.iter().find(|u| u.name == name) {
                 None => problems.push(format!("{file}: uniform `{name}` is in no table")),
                 Some(uniform) if uniform.kind != *kind => problems.push(format!(
@@ -301,6 +416,30 @@ mod tests {
             ("present.vert", SOURCES[2].1),
             ("present.frag", SOURCES[3].1),
         ]
+    }
+
+    fn hud() -> Vec<(&'static str, &'static str)> {
+        vec![("hud.vert", SOURCES[4].1), ("hud.frag", SOURCES[5].1)]
+    }
+
+    #[test]
+    fn the_hud_tables_and_its_shaders_agree() {
+        let problems = mismatches(&hud(), &HUD, &HUD_UNIFORMS);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    #[test]
+    fn the_hud_attribute_table_is_the_hud_vertex_layout() {
+        use crate::gl21::hud::{GlHudVertex, HUD_COLOR, HUD_DEPTH, HUD_GLINT_UV, HUD_STRIDE};
+        assert_eq!(HUD_STRIDE, std::mem::size_of::<GlHudVertex>() as u32);
+        let offsets = HUD.map(|a| a.offset);
+        assert_eq!(offsets, [0, 8, HUD_COLOR, HUD_DEPTH, HUD_GLINT_UV]);
+        for pair in HUD.windows(2) {
+            let (before, after) = (pair[0], pair[1]);
+            assert_eq!(before.location + 1, after.location, "{}", after.name);
+            assert_eq!(before.end(), after.offset, "{}", after.name);
+        }
+        assert_eq!(HUD[HUD.len() - 1].end(), HUD_STRIDE);
     }
 
     #[test]

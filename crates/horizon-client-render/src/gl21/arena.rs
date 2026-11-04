@@ -130,17 +130,29 @@ impl Arena {
     /// its slot and leaves the old range behind until the next `reset` (see the module's note on
     /// appending).
     pub fn store(&mut self, handle: u32, vertices: &[GlVertex], runs: u32) -> Option<Slot> {
+        let slot = self.append(vertices, runs)?;
+        self.claim(handle, slot);
+        Some(slot)
+    }
+
+    /// Store vertices that belong to no handle — the sky's own — and say where they went. They are
+    /// appended like a section's and uploaded the same way, but no slot names them, so nothing
+    /// evicts them and only `reset` takes them back.
+    pub fn store_unowned(&mut self, vertices: &[GlVertex], runs: u32) -> Option<Slot> {
+        self.append(vertices, runs)
+    }
+
+    /// Append `vertices` at the end of the buffer, `None` when the buffer has no room.
+    fn append(&mut self, vertices: &[GlVertex], runs: u32) -> Option<Slot> {
         let len = vertices.len() as u32;
         if self.written + len > self.capacity {
             return None;
         }
         let begin = self.vertices.len() as u32;
         self.vertices.extend_from_slice(vertices);
-        let slot = Slot::at(begin, len, runs);
-        self.claim(handle, slot);
         self.pending.push(Upload { begin, len });
         self.written += len;
-        Some(slot)
+        Some(Slot::at(begin, len, runs))
     }
 
     /// The slot a handle names, if it is stored.

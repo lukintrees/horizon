@@ -217,7 +217,13 @@ def check_text(text, name="<memory>"):
         if not code.strip():
             continue
         if code_is_long(code) and not in_multiline_literal(text, number):
-            problems.append((number, f"{len(code)} columns of code is past rustfmt's {MAX_WIDTH}"))
+            what = "comment" if code.strip().startswith("//") else "code"
+            problems.append(
+                (
+                    number,
+                    f"{what} of {len(code)} columns is past rustfmt's {MAX_WIDTH}",
+                )
+            )
         width = chain_width(raw)
         if width is not None and width > CHAIN_WIDTH:
             problems.append(
@@ -259,7 +265,18 @@ def changed_files():
     )
     if out.returncode != 0:
         raise SystemExit(f"gl21_fmt_guard.py: git diff failed: {out.stderr.strip()}")
-    return [ROOT / line for line in out.stdout.splitlines() if line.endswith(".rs")]
+    committed = [ROOT / line for line in out.stdout.splitlines() if line.endswith(".rs")]
+    # Plus the new ones the branch has written but not committed yet: the guard is run before a
+    # commit, and a file that is not in the diff yet is the one most likely to be wrong.
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "*.rs"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    fresh = [ROOT / line for line in untracked.stdout.splitlines() if line.endswith(".rs")]
+    return sorted({*committed, *fresh})
 
 
 def main(argv=None):

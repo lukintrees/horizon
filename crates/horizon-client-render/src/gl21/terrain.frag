@@ -24,6 +24,10 @@
 
 uniform sampler2D u_atlas;
 uniform sampler2D u_lightmap;
+// `GL_EXT_texture_lod_bias` is on the plan's required list (§9.2), but no GLSL 1.20 driver in the
+// wild applies `GL_TEXTURE_LOD_BIAS` to `texture2D`: the bias is the sampler's state on the X1650,
+// so the shader passes it to every sprite sample itself (`gfx.rs`'s `mip_bias`, one uniform).
+uniform float u_bias;
 uniform vec4 u_fog_color;
 // environmental start/end, render-distance start/end.
 uniform vec4 u_fog;
@@ -56,7 +60,7 @@ float linear_fog(float d, float start, float end) {
 }
 
 void main() {
-    vec4 texel = texture2D(u_atlas, v_uv);
+    vec4 texel = texture2D(u_atlas, v_uv, u_bias);
     // `v_light` is the level pair (sky, block); the lightmap wants (block, sky).
     vec4 color = texel * vec4(v_color.rgb, 1.0) * lightmap(v_light.yx);
     // The fade-in mixes toward the fog colour, as the mesh's own visibility does on wgpu.
