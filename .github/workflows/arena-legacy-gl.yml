@@ -102,8 +102,8 @@ jobs:
             exit "$rc"
           fi
           tail -20 /tmp/gate.log
-          cargo tree -p horizon-client --no-default-features --features legacy-gl --prefix none > /tmp/legacy-tree.log 2>&1
-          cargo tree -p horizon-client --no-default-features --features legacy-gl -e features > /tmp/legacy-features.log 2>&1
+          cargo tree -p horizon-client --no-default-features --features legacy-gl --edges no-dev --prefix none > /tmp/legacy-tree.log 2>&1
+          cargo tree -p horizon-client --no-default-features --features legacy-gl -e features,no-dev > /tmp/legacy-features.log 2>&1
           if grep -E '^(wgpu|naga|pollster|horizon-shaders|horizon-shader-api|horizon-hdr) v' /tmp/legacy-tree.log; then
             echo "::error::modern renderer crates leaked into the legacy-gl dependency tree"
             exit 1

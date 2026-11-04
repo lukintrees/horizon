@@ -226,6 +226,8 @@ class OwnBranchWorkflowAndDocsTests(unittest.TestCase):
         self.assertIn("tests.test_gl21_integration", source)
         self.assertIn("cargo check -p horizon-client --features legacy-gl --no-default-features", source)
         self.assertIn("cargo tree -p horizon-client --no-default-features --features legacy-gl", source)
+        self.assertIn("--edges no-dev", source)
+        self.assertIn("-e features,no-dev", source)
         self.assertIn("no wgpu/naga/pollster/modern-gl", source)
         self.assertIn("cargo test -p horizon-client-render --lib gfx21 --no-default-features --features legacy-gl", source)
         self.assertIn("--example gl21_clear --no-default-features --features legacy-gl", source)

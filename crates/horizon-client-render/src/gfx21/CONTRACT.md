@@ -231,8 +231,8 @@ The user requested «Теперь интегрируй все в игру» and 
   `FullFramePlan::reference()` frame under Xvfb for both CI profiles. It calls
   `glGetError()` and checks `MAX_DRAWS`; all FFI stays in this one module.
 * Own-branch CI verifies: `cargo check -p horizon-client --features legacy-gl
-  --no-default-features`, a `cargo tree` assertion that no modern renderer
-  crates or `modern-gl` feature leak, `cargo test -p horizon-client-render
+  --no-default-features`, a `cargo tree --edges no-dev` assertion that no
+  modern renderer crates or `modern-gl` feature leak, `cargo test -p horizon-client-render
   --lib gfx21 --no-default-features --features legacy-gl`, the unchanged
   `gl21_clear` frames and two full `horizon-client -- --legacy-gl --frames 1`
   frames under Xvfb (GL 2.1/GLSL 120 and GL 2.0/GLSL 110).
