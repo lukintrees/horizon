@@ -55,11 +55,12 @@ impl Plan {
         // The largest offered count at or below the request, never above it: asking a chip
         // that reports 4 samples for 6 is `GL_INVALID_OPERATION` and an incomplete framebuffer,
         // which on this driver is a black window and no message.
+        // `rfind` says "the last one that fits" without building a filter, and it walks from the
+        // end, which is where the largest count is.
         let samples = OFFERED
             .iter()
             .copied()
-            .filter(|offered| *offered != 0 && *offered <= requested)
-            .next_back()
+            .rfind(|offered| *offered != 0 && *offered <= requested)
             .unwrap_or(0);
         if samples == 0 {
             return Plan::None;

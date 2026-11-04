@@ -63,7 +63,10 @@ pub struct Upload {
 /// the layer is sprite 0 with no opaque flag.
 pub fn quad_vertices() -> [TerrainVertex; 4] {
     let sky = 15;
-    let light = sky | 0 << 8;
+    // Sky in the low byte, block light in the high one; `0 << 8` is the "no block light" half
+    // spelled out, and clippy is right that it is a no-op -- the comment is the clearer record.
+    let block = 0;
+    let light = sky | block << 8;
     let white = 0xFFFF_FFFF;
     let corner = |x: f32, z: f32, u: f32, v: f32| TerrainVertex {
         pos: [x, 1.0, z],

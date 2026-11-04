@@ -472,7 +472,7 @@ impl Executor {
                 id: draw.geometry.buffer,
             });
         };
-        if draw.geometry.index_count % 3 != 0 {
+        if !draw.geometry.index_count.is_multiple_of(3) {
             return Err(ExecuteError::BadGeometry {
                 draw: draw.label,
                 detail: format!(
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn a_draw_that_is_not_a_whole_number_of_triangles_is_refused() {
-        let whole = |count: u32| count % 3 == 0;
+        let whole = |count: u32| count.is_multiple_of(3);
         assert!(whole(6));
         assert!(!whole(5));
         assert!(whole(0), "an empty draw is legal and draws nothing");

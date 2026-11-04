@@ -38,10 +38,25 @@ type MultiDrawElementsFn = unsafe extern "system" fn(u32, *const i32, u32, *cons
 /// extension and exports `glMultiDrawArraysEXT` but not the indexed one is a real case
 /// (`GL_EXT_multi_draw_arrays` is the only place the indexed form exists on 2.1), so the two
 /// are tracked apart and a pass that needs the indexed form falls back alone.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+// No `PartialEq`/`Eq`: those compare the pointers themselves, and two function pointers to the
+// same function need not be equal (and two different ones can be equal after merging). What a
+// caller asks is whether an entry point is there, which `has_arrays`/`has_elements` answer.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MultiDrawPointers {
     pub arrays: Option<MultiDrawArraysFn>,
     pub elements: Option<MultiDrawElementsFn>,
+}
+
+impl MultiDrawPointers {
+    /// Whether the driver exports the indexed form, the one a tiled pass needs.
+    pub fn has_elements(&self) -> bool {
+        self.elements.is_some()
+    }
+
+    /// Whether the driver exports the unindexed form.
+    pub fn has_arrays(&self) -> bool {
+        self.arrays.is_some()
+    }
 }
 
 /// A run of draws in one buffer, in the form `glMultiDrawElementsEXT` takes: a count per draw
@@ -331,7 +346,7 @@ mod tests {
         assert!(arrays_fn(std::ptr::null()).is_none());
         assert!(elements_fn(std::ptr::null()).is_none());
         // A real address, never called here.
-        let address = 1 as usize as *const c_void;
+        let address = 1_usize as *const c_void;
         assert!(arrays_fn(address).is_some());
         assert!(elements_fn(address).is_some());
     }

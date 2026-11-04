@@ -306,7 +306,7 @@ mod tests {
         // machine without one the open fails and there is nothing to ask.
         if let Ok(lib) = GlLibrary::open() {
             assert!(!lib.has("glDefinitelyNotAFunction_Horizon"));
-            assert!(std::ptr::null() == lib.symbol("glDefinitelyNotAFunction_Horizon"));
+            assert!(lib.symbol("glDefinitelyNotAFunction_Horizon").is_null());
         }
     }
 }
