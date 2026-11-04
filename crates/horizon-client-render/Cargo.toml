@@ -83,5 +83,6 @@ horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }
 workspace = true
 
 [dev-dependencies]
+horizon-legacy-render = { path = "../horizon-legacy-render" }
 horizon-items = { path = "../horizon-items", features = ["test-support"] }
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out", "glsl-out", "msl-out", "spv-out"] }

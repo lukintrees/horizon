@@ -1,7 +1,7 @@
 //! Resource-owning safe renderer; GL names never cross the API boundary.
 use crate::{Context, raw::Gl};
 use horizon_render_api::{
-    Draw, Frame, Image, MeshId, Pass, RenderBackend, TextureId, Vertex, relative_origin,
+    Clear, Draw, Frame, Image, MeshId, Pass, RenderBackend, TextureId, Vertex, relative_origin,
 };
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
@@ -44,6 +44,7 @@ struct Uniforms {
     cutoff: i32,
     fog: i32,
     fog_end: i32,
+    force_opaque: i32,
 }
 
 pub struct Renderer<'a> {
@@ -125,6 +126,7 @@ impl<'a> Renderer<'a> {
                 cutoff: -1,
                 fog: -1,
                 fog_end: -1,
+                force_opaque: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -148,6 +150,7 @@ impl<'a> Renderer<'a> {
                 cutoff: location(c"cutoff")?,
                 fog: location(c"fog")?,
                 fog_end: location(c"fog_end")?,
+                force_opaque: location(c"force_opaque")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -376,12 +379,9 @@ impl RenderBackend for Renderer<'_> {
         self.check()
     }
     fn render(&mut self, frame: &Frame<'_>) -> Result<(), String> {
-        if frame
-            .view_projection
-            .iter()
-            .chain(&frame.clear)
-            .any(|v| !v.is_finite())
+        if frame.view_projection.iter().any(|v| !v.is_finite())
             || frame.camera.iter().any(|v| !v.is_finite())
+            || matches!(frame.clear, Clear::ColorDepth(color) if color.iter().any(|v| !v.is_finite()))
         {
             return Err("non-finite frame state".into());
         }
@@ -408,38 +408,63 @@ impl RenderBackend for Renderer<'_> {
             (self.gl.disable)(0x0B44); // CULL_FACE: CPU prepares the visible faces
             (self.gl.depth_mask)(1);
             (self.gl.depth_func)(0x0201); // LESS
-            (self.gl.clear_color)(
-                frame.clear[0],
-                frame.clear[1],
-                frame.clear[2],
-                frame.clear[3],
-            );
-            (self.gl.clear)(0x4000 | 0x0100);
+            match frame.clear {
+                Clear::Load => (),
+                Clear::Depth => (self.gl.clear)(0x0100),
+                Clear::ColorDepth(color) => {
+                    (self.gl.clear_color)(color[0], color[1], color[2], color[3]);
+                    (self.gl.clear)(0x4000 | 0x0100);
+                }
+            }
             (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
             for draw in frame.draws {
                 let mesh = &self.meshes[&draw.mesh];
                 let offset = self.validate_draw(draw, frame)?;
                 (self.gl.uniform3f)(self.uniforms.origin, offset[0], offset[1], offset[2]);
                 let (start, end, color) = match (frame.fog, draw.pass) {
-                    (Some(f), pass) if pass != Pass::Overlay => (f.start, f.end, f.color),
+                    (Some(f), pass) if !pass.is_overlay() => (f.start, f.end, f.color),
                     _ => (1e20, 2e20, [0.; 3]),
                 };
                 (self.gl.uniform4f)(self.uniforms.fog, color[0], color[1], color[2], start);
                 (self.gl.uniform1f)(self.uniforms.fog_end, end);
+                let cutoff = match draw.pass {
+                    Pass::Cutout => 0.1,
+                    Pass::Overlay | Pass::OverlayAdditive | Pass::OverlayDepth => 0.004,
+                    _ => 0.,
+                };
+                (self.gl.uniform1f)(self.uniforms.cutoff, cutoff);
                 (self.gl.uniform1f)(
-                    self.uniforms.cutoff,
-                    if draw.pass == Pass::Cutout { 0.1 } else { 0. },
+                    self.uniforms.force_opaque,
+                    if draw.pass == Pass::OverlayVignette {
+                        1.
+                    } else {
+                        0.
+                    },
                 );
-                if draw.pass == Pass::Overlay {
+                if draw.pass.is_overlay() && draw.pass != Pass::OverlayDepth {
                     (self.gl.disable)(0x0B71);
                 } else {
                     (self.gl.enable)(0x0B71);
                 }
-                let blend = matches!(draw.pass, Pass::Translucent | Pass::Overlay);
-                (self.gl.depth_mask)(u8::from(!blend));
-                if blend {
+                (self.gl.depth_func)(if draw.pass == Pass::OverlayDepth {
+                    0x0203
+                } else {
+                    0x0201
+                });
+                let depth_write =
+                    matches!(draw.pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth);
+                (self.gl.depth_mask)(u8::from(depth_write));
+                let factors = match draw.pass {
+                    Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),
+                    Pass::OverlayAdditive => Some((1, 1, 1, 1)),
+                    Pass::OverlayVignette => Some((0, 0x0301, 0, 1)),
+                    Pass::Overlay | Pass::OverlayDepth => Some((0x0302, 0x0303, 1, 0x0303)),
+                    Pass::Translucent => Some((0x0302, 0x0303, 0x0302, 0x0303)),
+                    _ => None,
+                };
+                if let Some((src, dst, src_alpha, dst_alpha)) = factors {
                     (self.gl.enable)(0x0BE2);
-                    (self.gl.blend_func)(0x0302, 0x0303);
+                    (self.gl.blend_func)(src, dst, src_alpha, dst_alpha);
                 } else {
                     (self.gl.disable)(0x0BE2);
                 }
@@ -452,6 +477,15 @@ impl RenderBackend for Renderer<'_> {
                 for (unit, id) in [(0x84C0, draw.texture), (0x84C1, draw.lightmap)] {
                     (self.gl.active_texture)(unit);
                     (self.gl.bind_texture)(0x0DE1, self.textures[&id].name);
+                    // The credits vignette uses a linear atlas sampler. Restore
+                    // nearest on every other draw, including the lightmap.
+                    let filter = if unit == 0x84C0 && draw.pass == Pass::OverlayVignette {
+                        0x2601
+                    } else {
+                        0x2600
+                    };
+                    (self.gl.tex_parameter)(0x0DE1, 0x2800, filter);
+                    (self.gl.tex_parameter)(0x0DE1, 0x2801, filter);
                 }
                 (self.gl.bind_buffer)(0x8892, mesh.buffers[0]);
                 (self.gl.bind_buffer)(0x8893, mesh.buffers[1]);

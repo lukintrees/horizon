@@ -1,6 +1,7 @@
 //! Backend-neutral SDR draw contract. No wgpu, OpenGL, windowing or resource decoder.
 #![forbid(unsafe_code)]
 pub mod atlas;
+pub mod gui;
 pub mod scene;
 pub mod terrain;
 
@@ -33,6 +34,31 @@ pub enum Pass {
     Translucent,
     /// Screen-space geometry uses the supplied projection, without depth testing.
     Overlay,
+    OverlayInvert,
+    OverlayAdditive,
+    OverlayVignette,
+    /// Alpha-blended GUI model with LEQUAL depth testing and depth writes.
+    OverlayDepth,
+}
+impl Pass {
+    pub fn is_overlay(self) -> bool {
+        matches!(
+            self,
+            Self::Overlay
+                | Self::OverlayInvert
+                | Self::OverlayAdditive
+                | Self::OverlayVignette
+                | Self::OverlayDepth
+        )
+    }
+}
+/// Load/store policy for one view. A GUI view can load the world's colour while
+/// using its own projection; a hand/model view can clear depth without erasing it.
+#[derive(Clone, Copy, Debug)]
+pub enum Clear {
+    Load,
+    Depth,
+    ColorDepth([f32; 4]),
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Draw {
@@ -55,7 +81,7 @@ pub struct Frame<'a> {
     /// Column-major desktop GL projection/view. Z clip range is -w..w.
     pub view_projection: [f32; 16],
     pub camera: [f64; 3],
-    pub clear: [f32; 4],
+    pub clear: Clear,
     pub fog: Option<Fog>,
     /// Order is authoritative, including back-to-front translucency and UI.
     pub draws: &'a [Draw],

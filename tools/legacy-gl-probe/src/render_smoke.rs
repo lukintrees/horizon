@@ -1,6 +1,6 @@
 //! Exercises the reusable backend through its safe, backend-neutral API.
 use horizon_legacy_render::{Budget, Context, Renderer, Stats};
-use horizon_render_api::{Draw, Fog, Frame, IDENTITY, Image, Pass, RenderBackend, Vertex};
+use horizon_render_api::{Clear, Draw, Fog, Frame, IDENTITY, Image, Pass, RenderBackend, Vertex};
 
 fn quad(color: [f32; 4], z: f32, extent: f32) -> [Vertex; 4] {
     [
@@ -20,7 +20,7 @@ fn frame(draws: &[Draw]) -> Frame<'_> {
     Frame {
         view_projection: IDENTITY,
         camera: [0.; 3],
-        clear: [0., 0., 0., 1.],
+        clear: Clear::ColorDepth([0., 0., 0., 1.]),
         fog: None,
         draws,
     }
@@ -373,6 +373,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_terrain_atlas_contract");
     scene_lifecycle(context)?;
     checks.push("backend_resident_sections");
+    gui_compositor(context)?;
+    checks.push("backend_gui_compositor");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -387,7 +389,7 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
         let other_context = Context::new(kind, [64, 64])?;
         let mut other = Renderer::new(&other_context, Budget::default())?;
         let mut empty = frame(&[]);
-        empty.clear = [0., 1., 0., 1.];
+        empty.clear = Clear::ColorDepth([0., 1., 0., 1.]);
         other.render(&empty)?;
         renderer.render(&frame(&[Draw {
             texture: blue,
@@ -553,4 +555,147 @@ fn scene_lifecycle(context: &Context) -> Result<(), String> {
         small.stats() == Stats::default(),
         "failed scene constructor leaked atlas pages",
     )
+}
+
+fn gui_compositor(context: &Context) -> Result<(), String> {
+    use horizon_render_api::gui::{self, Blend, Input};
+    fn error(e: impl std::fmt::Debug) -> String {
+        format!("GUI: {e:?}")
+    }
+    let mut renderer = Renderer::new(context, Budget::default())?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let make = |color, depth| {
+        let p = [[8., 8.], [56., 8.], [56., 56.], [8., 56.]];
+        [0, 1, 2, 0, 2, 3].map(|i| Input {
+            pos: p[i],
+            uv: [0.5; 2],
+            color,
+            depth,
+        })
+    };
+    let convert = |data: &[Input], blend| {
+        gui::runs(data, &[(0..data.len(), blend)], [64; 2], 1., [1.; 2], 100).map_err(error)
+    };
+    let mut world = frame(&[]);
+    world.clear = Clear::ColorDepth([64. / 255., 128. / 255., 192. / 255., 1.]);
+    renderer.render(&world)?;
+    gui::render(
+        &mut renderer,
+        &convert(&make(u32::MAX, 0.), Blend::Invert)?,
+        white,
+        white,
+    )
+    .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [191, 127, 63])?;
+    pixel(&mut renderer, [4, 4], [64, 128, 192])?;
+    gui::render(
+        &mut renderer,
+        &convert(&make(0xff28_1e14, 0.), Blend::Additive)?,
+        white,
+        white,
+    )
+    .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [211, 157, 103])?;
+    // Vignette ignores sampled/tint alpha and preserves destination alpha.
+    gui::render(
+        &mut renderer,
+        &convert(&make(0x0000_4080, 0.), Blend::Vignette)?,
+        white,
+        white,
+    )
+    .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [105, 118, 103])?;
+    require(
+        renderer.read_rgba([32, 32, 1, 1])?[3] == 255,
+        "vignette changed destination alpha",
+    )?;
+    let outside = renderer.read_rgba([16, 32, 1, 1])?;
+    let model = make(0xff00_00ff, 0.2)
+        .into_iter()
+        .chain(make(0xff00_ff00, 0.8))
+        .chain(make(0xffff_0000, 0.2))
+        .collect::<Vec<_>>();
+    gui::render(
+        &mut renderer,
+        &convert(&model, Blend::Depth([20, 20, 24, 24]))?,
+        white,
+        white,
+    )
+    .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 0, 255])?; // equal-depth blue passes LEQUAL
+    require(
+        renderer.read_rgba([16, 32, 1, 1])? == outside,
+        "GUI depth scissor leaked",
+    )?;
+    gui::render(
+        &mut renderer,
+        &convert(&make(0xff00_ff00, 0.9), Blend::Depth([20, 20, 24, 24]))?,
+        white,
+        white,
+    )
+    .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 255, 0])?; // new preview has isolated depth
+    require(renderer.stats().meshes == 0, "GUI transient meshes leaked")?;
+    let gradient = renderer.create_texture(Image {
+        width: 2,
+        height: 1,
+        rgba: &[0, 0, 0, 0, 255, 255, 255, 0],
+    })?;
+    world.clear = Clear::ColorDepth([1.; 4]);
+    renderer.render(&world)?;
+    let full = [[0., 0.], [64., 0.], [64., 64.], [0., 64.]];
+    let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
+    let linear = [0, 1, 2, 0, 2, 3].map(|i| Input {
+        pos: full[i],
+        uv: uv[i],
+        color: u32::MAX,
+        depth: 0.,
+    });
+    gui::render(
+        &mut renderer,
+        &convert(&linear, Blend::Vignette)?,
+        gradient,
+        white,
+    )
+    .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [124; 3])?;
+    renderer.remove_texture(gradient)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "GUI resources not reclaimed",
+    )?;
+
+    // A failed multi-run upload must not paint a partial GUI over the world.
+    let mut small = Renderer::new(
+        context,
+        Budget {
+            mesh_bytes: 6 * 44 + 6 * 2,
+            ..Budget::default()
+        },
+    )?;
+    let white = small.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    world.clear = Clear::ColorDepth([0., 0., 1., 1.]);
+    small.render(&world)?;
+    let mut multiple = convert(&make(u32::MAX, 0.), Blend::Alpha)?;
+    multiple.extend(convert(&make(u32::MAX, 0.), Blend::Invert)?);
+    require(
+        gui::render(&mut small, &multiple, white, white).is_err(),
+        "GUI mesh budget not enforced",
+    )?;
+    pixel(&mut small, [32, 32], [0, 0, 255])?;
+    require(
+        small.stats().meshes == 0,
+        "failed GUI upload leaked staging meshes",
+    )?;
+    small.remove_texture(white)?;
+    Ok(())
 }

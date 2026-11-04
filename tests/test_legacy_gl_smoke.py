@@ -20,7 +20,7 @@ class LegacyGlSmokeTests(unittest.TestCase):
                                "backend_overlay_scissor_reset", "backend_lightmap", "backend_fog",
                                "backend_large_coordinates", "backend_validation_budget",
                                "backend_context_isolation", "backend_resource_reclamation",
-                               "backend_terrain_atlas_contract", "backend_resident_sections"],
+                               "backend_terrain_atlas_contract", "backend_resident_sections", "backend_gui_compositor"],
             "checks": ["shader_compile_link", "vbo_ebo_draw", "clear_readback",
                        "triangle_readback", "depth_readback", "invalid_shader_rejected",
                        "no_gl_error"],

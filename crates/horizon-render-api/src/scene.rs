@@ -235,7 +235,7 @@ impl<'a, B: RenderBackend> WorldScene<'a, B> {
             .render(&Frame {
                 view_projection: frame.view_projection,
                 camera: frame.camera,
-                clear: frame.clear,
+                clear: crate::Clear::ColorDepth(frame.clear),
                 fog: frame.fog,
                 draws: &draws,
             })

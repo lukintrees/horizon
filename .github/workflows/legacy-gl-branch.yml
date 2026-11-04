@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native build headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-gl-branch
@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p target/legacy-branch
           set +e
-          cargo test --locked -p horizon-client-render --lib render_bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
+          cargo test --locked -p horizon-client-render --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
           cat target/legacy-branch/cargo.stderr
           # Standard check annotations make compiler failures readable through the
@@ -64,6 +64,14 @@ jobs:
               count += 1
           PY
           exit "$status"
+      - name: Run real game HUD through GL2
+        env:
+          HORIZON_OSMESA_LIBRARY: libOSMesa.so.8
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+          MESA_GL_VERSION_OVERRIDE: '2.0'
+          MESA_GLSL_VERSION_OVERRIDE: '120'
+        run: cargo test --locked -p horizon-client-render --lib gui_bridge::gpu_tests::boot_atlas_and_real_hud_batch_reach_gl2_pixels -- --ignored
       - uses: actions/upload-artifact@v4
         if: always()
         with:

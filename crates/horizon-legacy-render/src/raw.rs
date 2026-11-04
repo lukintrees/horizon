@@ -65,7 +65,7 @@ entry_points! {
     disable: c"glDisable" (u32) -> ();
     depth_mask: c"glDepthMask" (u8) -> ();
     depth_func: c"glDepthFunc" (u32) -> ();
-    blend_func: c"glBlendFunc" (u32, u32) -> ();
+    blend_func: c"glBlendFuncSeparate" (u32, u32, u32, u32) -> ();
     scissor: c"glScissor" (i32, i32, i32, i32) -> ();
     pixel_store: c"glPixelStorei" (u32, i32) -> ();
     read_pixels: c"glReadPixels" (i32, i32, i32, i32, u32, u32, *mut c_void) -> ();
