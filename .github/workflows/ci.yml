@@ -211,16 +211,24 @@ jobs:
       # which is why --strict exists), the shader budgets, and the JSON a bug report carries.
       - name: GL 2.1 capability and budget report
         run: |
-          # An exit status here produced no annotation at all: the step's output below the tests'
-          # tail never reached GitHub, so "exit code 1" was the whole report. Each run's own
-          # stderr becomes an annotation now, and the exit status stays the step's.
+          # A failure here used to be "exit code 1" and nothing else: the job log is a blob URL
+          # and the step's output below the test reporter's tail never became an annotation.
+          # Each run's output now goes to a file; a run that fails says so, and the last lines it
+          # printed become the annotation. A run that passes prints its table and is quiet.
           set +e
           status=0
           for args in "" "--check-shaders --strict"; do
             # shellcheck disable=SC2086
             cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args \
-              2>&1 | sed 's/^/::error::/'
-            status=$(( status + ${PIPESTATUS[0]} ))
+              > gl21-run.out 2> gl21-run.err
+            run=$?
+            if [ "$run" -eq 0 ]; then
+              cat gl21-run.out
+            else
+              echo "::error::horizon-gl21-info $args exited $run"
+              tail -q -n 20 gl21-run.out gl21-run.err | sed 's/^/::error::/'
+            fi
+            status=$(( status | run ))
           done
           set -e
           [ "$status" -eq 0 ]

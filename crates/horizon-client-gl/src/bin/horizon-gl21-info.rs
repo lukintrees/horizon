@@ -236,7 +236,11 @@ fn target_caps(strict: bool) -> Caps {
     let mut caps = Caps::detect(
         Version::parse(&format!(
             "2.1.8545 Release (assumed: HORIZON_GL21_STRICT{})",
-            if strict { "=1" } else { " is off; no context was created" }
+            if strict {
+                "=1"
+            } else {
+                " is off; no context was created"
+            }
         )),
         "1.20",
         "ATI Technologies Inc. (assumed)",
