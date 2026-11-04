@@ -1,0 +1,17 @@
+Legacy GL startup report (PR 9 diagnostics; no GL context)
+  caps source          benchmarks/graphics/x1650-reference-caps.json
+  measured_on          None (NOT measured in this sandbox)
+  tier                 L1
+  GL_VERSION           2.1.8545 Release
+  GLSL_VERSION         1.20
+  GL_VENDOR            ATI Technologies Inc.
+  GL_RENDERER          Radeon X1600/X1650 Series
+  extensions           85
+  draw calls           5/200
+  samplers             4/4
+  VRAM estimate        48/160 MiB
+  glGetError count     0
+  disabled features    HDR, SSBO, compute culling, texture arrays
+  full frame draws     16/200
+  wgpu parity          NOT MEASURED
+  real X1650 run       NOT MEASURED

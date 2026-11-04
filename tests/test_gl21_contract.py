@@ -17,6 +17,9 @@ CARGO_CLIENT = ROOT / "crates/horizon-client/Cargo.toml"
 WORKFLOW = ROOT / ".github/workflows/arena-legacy-gl.yml"
 EXAMPLE = ROOT / "crates/horizon-client-render/examples/gl21_clear.rs"
 NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
+FACADE = GFX21 / "facade.rs"
+SMOKE_TOOL = ROOT / "tools/legacy_gl_smoke.py"
+SMOKE_TEST = ROOT / "tests/test_gl21_smoke.py"
 
 # These are Option<Renderer> methods, not members of Renderer itself.
 OPTION_METHODS = {
@@ -38,6 +41,14 @@ GFX21_SOURCES = (
     "sections.rs",
     "passes.rs",
     "frame.rs",
+    "blend.rs",
+    "diagnostics.rs",
+    "entities.rs",
+    "facade.rs",
+    "hud.rs",
+    "lines.rs",
+    "render.rs",
+    "sky.rs",
 )
 SHADER_SOURCES = (
     "smoke_120.vert",
@@ -102,8 +113,9 @@ class ContractTests(unittest.TestCase):
         self.assertIn("pub mod gfx21;", LIB_RS.read_text(encoding="utf-8"))
         module = (GFX21 / "mod.rs").read_text(encoding="utf-8")
         for name in (
-            "context", "program", "state", "smoke", "atlas", "mesh",
-            "sections", "passes", "frame",
+            "caps", "context", "program", "state", "smoke", "atlas", "mesh",
+            "sections", "passes", "frame", "blend", "diagnostics", "entities",
+            "facade", "hud", "lines", "render", "sky",
         ):
             self.assertIn(f"pub mod {name};", module)
         for name in GFX21_SOURCES:
@@ -185,8 +197,10 @@ class ContractTests(unittest.TestCase):
 
     def test_new_gl_dependencies_have_notices(self):
         notices = NOTICES.read_text(encoding="utf-8")
-        for name in ("glow", "glutin", "glutin-winit"):
+        for name in ("glow", "glutin", "glutin-winit", "raw-window-handle"):
             self.assertIn(name, notices, f"{name} is missing from THIRD_PARTY_NOTICES.md")
+        self.assertIn("glutin-winit` 0.5.0 is MIT", notices)
+        self.assertIn("MIT OR Apache-2.0 OR Zlib", notices)
 
     def test_crate_root_alias_is_cfg_gated(self):
         lib = LIB_RS.read_text(encoding="utf-8")
@@ -194,7 +208,8 @@ class ContractTests(unittest.TestCase):
         self.assertIn("pub type Renderer = gfx21::Renderer;", lib)
         self.assertIn("pub use gfx21::Frame;", lib)
         contract = CONTRACT.read_text(encoding="utf-8")
-        for marker in ("PR 2b", "PR 3 stage 2", "PR 4", "PR 5", "PR 6"):
+        for marker in ("PR 2b", "PR 3 stage 2", "PR 4", "PR 5", "PR 6",
+                       "PR 7", "PR 8", "PR 9", "PR 10"):
             self.assertIn(marker, contract)
 
     def test_own_branch_workflow_runs_the_gate_and_gl_smoke(self):
@@ -213,8 +228,33 @@ class ContractTests(unittest.TestCase):
         self.assertIn("GFX21_GOLDEN_OUT", source)
         self.assertIn("tools/legacy_gl_golden.py --check", source)
         self.assertIn("tests.test_gl21_golden", source)
+        self.assertIn("tests.test_gl21_smoke", source)
+        self.assertIn("tools/legacy_gl_smoke.py --check --stdout", source)
         self.assertIn("all programs linked: OK", source)
         self.assertIn("all_programs(dialect)", EXAMPLE.read_text(encoding="utf-8"))
+
+
+    def test_pr8_facade_covers_contract_surface(self):
+        contract = CONTRACT.read_text(encoding="utf-8")
+        names = set(re.findall(r"^\| `([A-Za-z_][A-Za-z0-9_]*)` \|", contract, re.M))
+        names -= OPTION_METHODS
+        extra = contract.split("at least:", 1)[1].split("##", 1)[0]
+        names |= set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", extra))
+        facade = FACADE.read_text(encoding="utf-8")
+        missing = sorted(name for name in names if name not in facade)
+        self.assertEqual(missing, [], f"facade.rs is missing: {missing}")
+
+    def test_pr7_to_pr10_modules_are_wired(self):
+        module = (GFX21 / "mod.rs").read_text(encoding="utf-8")
+        for name in ("blend", "diagnostics", "entities", "facade", "hud", "lines", "render", "sky"):
+            self.assertIn(f"pub mod {name};", module)
+        self.assertIn("pub use facade", module)
+        contract = CONTRACT.read_text(encoding="utf-8")
+        for marker in ("PR 7", "PR 8", "PR 9", "PR 10"):
+            self.assertIn(marker, contract)
+        self.assertTrue(SMOKE_TOOL.exists())
+        self.assertTrue(SMOKE_TEST.exists())
+        self.assertIn("--check", SMOKE_TOOL.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

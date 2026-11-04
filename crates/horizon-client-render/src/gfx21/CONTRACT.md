@@ -157,6 +157,35 @@ opaque → cutout → translucent (far-to-near), converted to GL2 vertices and
 writes `benchmarks/graphics/legacy-gl-scene.{rgba,png}`; the Rust CPU
 rasterizer in `frame.rs` must match it byte-for-byte. This is a deterministic
 command-stream/CPU golden frame, **not** wgpu parity: real X1650 screenshots and
-wgpu image diffs remain PR 9/PR 10 acceptance work. Entity posing, HUD batches,
-full `Renderer`/`Frame` facade and the `#[cfg]` split of `gfx`/`game.rs` remain
-PR 7–8; `legacy-gl` still pulls `modern-gl` until PR 8.
+wgpu image diffs remain future acceptance work. Entity posing, HUD batches,
+full `Renderer`/`Frame` facade and the `#[cfg]` split of `gfx`/`game.rs` were
+planned for PR 7–8; `legacy-gl` still pulls `modern-gl` in this continuation.
+
+## PR 7 / PR 8 / PR 9 / PR 10 (additive continuation)
+
+PR 7 adds `blend.rs` (six GL2 blend/alpha-test modes and far-to-near CPU
+sorting), `entities.rs` (CPU billboard posing), `sky.rs` (gradient, fog and
+day/night state), `hud.rs` (title/inventory/chat/hotbar rectangles), `lines.rs`
+(crosshair/selection rectangles) and `render.rs` (`FullFramePlan`). The PR 6
+`FramePlan` and its 19 200-byte golden frame are unchanged; the combined
+reference plan has 16 draws and uses all six pass programs.
+
+PR 8 adds `facade.rs`. It contains the `renderer.<name>` / `Renderer::<name>`
+surface above as unit-typed fields and no-op methods, plus `LegacyGraphicsApi`,
+`LegacySettings` and `LegacyArgs` for `--legacy-gl`, `--graphics-api`,
+`--texture-budget-mib` and `--render-distance`. This is a contract stub only:
+`game.rs`, `graphics.rs`, `options_ui.rs`, `options.txt` and translation keys
+are untouched, `modern-gl` remains enabled and no wgpu-typed members are faked.
+
+PR 9 adds `diagnostics.rs` with a deterministic startup report, draw/sampler/
+VRAM budget checks, GL error names and a debug `glGetError` log.
+`tools/legacy_gl_smoke.py` reads the reference caps and generated frame stats,
+writes a text/JSON report and validates it without a GL context. No wgpu image
+diff, real X1650 run, `r300g` timing or 30-minute stability test is attempted.
+
+PR 10 updates `docs/design/legacy-gl21.md`, `docs/native-client.md`,
+`README.md`, `THIRD_PARTY_NOTICES.md` and the additive CI steps. Confirmed
+licenses: `glow`/`glutin` Apache-2.0, `glutin-winit` 0.5.0 MIT and
+`raw-window-handle` 0.6.2 MIT OR Apache-2.0 OR Zlib. The full `#[cfg]` split,
+removal of `modern-gl`, wgpu visual parity and real-hardware acceptance remain
+explicitly out of scope for this branch.

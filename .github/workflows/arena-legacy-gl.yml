@@ -40,10 +40,11 @@ jobs:
 
       - name: Python caps / contract / public-tree checks
         run: |
-          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden -v
+          python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke -v
           python3 tools/gl21_caps.py \
             --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt \
             --label ci-gl21 --check --no-write --stdout
+          python3 tools/legacy_gl_smoke.py --check --stdout
           python3 tools/check_public_tree.py
           git diff --check
 

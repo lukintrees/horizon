@@ -4,8 +4,9 @@
 This script deliberately does not import the Rust `gfx21` module. It draws the
 same hard-coded reference scene with integer arithmetic and writes:
 
-  benchmarks/graphics/legacy-gl-scene.rgba  (raw RGBA8, top-down)
-  benchmarks/graphics/legacy-gl-scene.png   (RGBA8 PNG, filter 0)
+  benchmarks/graphics/legacy-gl-scene.rgba       (raw RGBA8, top-down)
+  benchmarks/graphics/legacy-gl-scene.png        (RGBA8 PNG, filter 0)
+  benchmarks/graphics/legacy-gl-scene.stats.json (PR 9 diagnostics input)
 
 CI writes the Rust rasterizer's bytes to a temporary file and calls `--check`.
 The frame is a deterministic command-stream/CPU reference, not a wgpu parity
@@ -13,6 +14,7 @@ image; real X1650 screenshots remain a separate acceptance step.
 """
 
 import argparse
+import json
 import struct
 import sys
 import zlib
@@ -21,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RGBA_PATH = ROOT / "benchmarks/graphics/legacy-gl-scene.rgba"
 PNG_PATH = ROOT / "benchmarks/graphics/legacy-gl-scene.png"
+STATS_PATH = ROOT / "benchmarks/graphics/legacy-gl-scene.stats.json"
 WIDTH = 80
 HEIGHT = 60
 
@@ -40,6 +43,27 @@ QUADS = (
 )
 HUD = ((4, 4, 20, 12, (220, 220, 220, 255)),)
 LINES = ((4, 56, 76, 57, (240, 200, 80, 255)),)
+
+# PR 9 smoke input. These are the same independent constants the Rust PR 6/7
+# plans assert; nothing here was measured on real X1650 hardware.
+STATS = {
+    "schema": 1,
+    "source": "tools/legacy_gl_golden.py --generate",
+    "width": WIDTH,
+    "height": HEIGHT,
+    "rgba_bytes": WIDTH * HEIGHT * 4,
+    "draw_calls": len(QUADS) + len(HUD) + len(LINES),
+    "samplers": 4,
+    "vertices": len(QUADS) * 4,
+    "indices": len(QUADS) * 6,
+    "full_frame_draws": 16,
+    "vram_mib": 48,
+    "gl_errors": 0,
+    "disabled_features": ["HDR", "SSBO", "compute culling", "texture arrays"],
+    "measured_on": None,
+    "fps": None,
+    "note": "CPU reference frame, NOT measured on X1650 hardware",
+}
 
 
 def sky_pixel(y):
@@ -158,11 +182,16 @@ def read_png_rgba(path):
     return width, height, bytes(out)
 
 
+def write_stats():
+    STATS_PATH.write_text(json.dumps(STATS, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def generate():
     expected = render()
     RGBA_PATH.parent.mkdir(parents=True, exist_ok=True)
     RGBA_PATH.write_bytes(expected)
     write_png(PNG_PATH, WIDTH, HEIGHT, expected)
+    write_stats()
     width, height, decoded = read_png_rgba(PNG_PATH)
     if (width, height, decoded) != (WIDTH, HEIGHT, expected):
         raise ValueError("generated PNG does not round-trip")
@@ -181,6 +210,8 @@ def check(raw_path):
     width, height, decoded = read_png_rgba(PNG_PATH)
     if (width, height, decoded) != (WIDTH, HEIGHT, expected):
         raise ValueError("committed PNG does not match the independent frame")
+    if json.loads(STATS_PATH.read_text(encoding="utf-8")) != STATS:
+        raise ValueError("committed PR 9 stats do not match the independent frame")
     print(f"golden frame: OK ({len(expected)} RGBA bytes, PNG {width}x{height})")
     return 0
 

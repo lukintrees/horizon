@@ -18,6 +18,14 @@ pub const GL_LEQUAL: u32 = 0x0203;
 pub const GL_GEQUAL: u32 = 0x0206;
 pub const GL_SRC_ALPHA: u32 = 0x0302;
 pub const GL_ONE_MINUS_SRC_ALPHA: u32 = 0x0303;
+pub const GL_ONE: u32 = 1;
+pub const GL_ZERO: u32 = 0;
+pub const GL_SRC_COLOR: u32 = 0x0300;
+pub const GL_ONE_MINUS_SRC_COLOR: u32 = 0x0301;
+pub const GL_DST_COLOR: u32 = 0x0306;
+pub const GL_ONE_MINUS_DST_COLOR: u32 = 0x0307;
+pub const GL_ALPHA_TEST: u32 = 0x0BC0;
+pub const GL_GREATER: u32 = 0x0204;
 pub const GL_TEXTURE_2D: u32 = 0x0DE1;
 pub const GL_FRAMEBUFFER: u32 = 0x8D40;
 pub const GL_UNSIGNED_SHORT: u32 = 0x1403;
@@ -32,7 +40,9 @@ pub enum GlCommand {
     Enable(u32),
     Disable(u32),
     DepthFunc(u32),
+    DepthMask(bool),
     BlendFunc(u32, u32),
+    AlphaFunc(u32, u8),
     UseProgram(u32),
     BindTexture(u32, u32),
     BindFramebuffer(u32, u32),
@@ -57,8 +67,12 @@ pub struct GlState {
     pub cull_face: bool,
     pub scissor_test: bool,
     pub depth_func: u32,
+    pub depth_mask: bool,
     pub blend_src: u32,
     pub blend_dst: u32,
+    pub alpha_test: bool,
+    pub alpha_func: u32,
+    pub alpha_ref: u8,
     pub program: u32,
     pub texture_unit: u32,
     pub bound_texture: u32,
@@ -75,8 +89,12 @@ impl Default for GlState {
             cull_face: false,
             scissor_test: false,
             depth_func: GL_LEQUAL,
+            depth_mask: true,
             blend_src: GL_SRC_ALPHA,
             blend_dst: GL_ONE_MINUS_SRC_ALPHA,
+            alpha_test: false,
+            alpha_func: GL_GREATER,
+            alpha_ref: 0,
             program: 0,
             texture_unit: 0,
             bound_texture: 0,
@@ -105,6 +123,7 @@ impl GlState {
                     GL_BLEND => !self.blend,
                     GL_CULL_FACE => !self.cull_face,
                     GL_SCISSOR_TEST => !self.scissor_test,
+                    GL_ALPHA_TEST => !self.alpha_test,
                     _ => true,
                 };
                 match *cap {
@@ -112,6 +131,7 @@ impl GlState {
                     GL_BLEND => self.blend = true,
                     GL_CULL_FACE => self.cull_face = true,
                     GL_SCISSOR_TEST => self.scissor_test = true,
+                    GL_ALPHA_TEST => self.alpha_test = true,
                     _ => {}
                 }
                 changed
@@ -122,6 +142,7 @@ impl GlState {
                     GL_BLEND => self.blend,
                     GL_CULL_FACE => self.cull_face,
                     GL_SCISSOR_TEST => self.scissor_test,
+                    GL_ALPHA_TEST => self.alpha_test,
                     _ => true,
                 };
                 match *cap {
@@ -129,6 +150,7 @@ impl GlState {
                     GL_BLEND => self.blend = false,
                     GL_CULL_FACE => self.cull_face = false,
                     GL_SCISSOR_TEST => self.scissor_test = false,
+                    GL_ALPHA_TEST => self.alpha_test = false,
                     _ => {}
                 }
                 changed
@@ -142,6 +164,17 @@ impl GlState {
                 let changed = self.blend_src != *src || self.blend_dst != *dst;
                 self.blend_src = *src;
                 self.blend_dst = *dst;
+                changed
+            }
+            GlCommand::DepthMask(mask) => {
+                let changed = self.depth_mask != *mask;
+                self.depth_mask = *mask;
+                changed
+            }
+            GlCommand::AlphaFunc(func, reference) => {
+                let changed = self.alpha_func != *func || self.alpha_ref != *reference;
+                self.alpha_func = *func;
+                self.alpha_ref = *reference;
                 changed
             }
             GlCommand::UseProgram(program) => {

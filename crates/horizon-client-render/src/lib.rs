@@ -46,9 +46,10 @@ pub mod gfx;
 /// Legacy OpenGL 2.1/2.0 renderer scaffold; additive, no wgpu dependency.
 /// See `docs/design/legacy-gl21.md` and `gfx21/CONTRACT.md`.
 pub mod gfx21;
-/// PR 2b alias. Stage 1 of `legacy-gl` still compiles `gfx` (the default
-/// `modern-gl` feature enables `wgpu`/`naga`/`pollster`); PR 8 switches
-/// `game.rs` to these names and drops the modern stack from the legacy build.
+/// PR 2b alias. `legacy-gl` still compiles `gfx` and keeps the default
+/// `modern-gl` feature (`wgpu`/`naga`/`pollster`) unchanged. PR 8 adds an
+/// additive `gfx21::Renderer` facade; `game.rs` continues to use
+/// `gfx::Renderer` until a later integration PR.
 #[cfg(feature = "legacy-gl")]
 pub use gfx21::Frame;
 #[cfg(feature = "legacy-gl")]

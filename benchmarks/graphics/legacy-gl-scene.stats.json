@@ -1,0 +1,23 @@
+{
+  "disabled_features": [
+    "HDR",
+    "SSBO",
+    "compute culling",
+    "texture arrays"
+  ],
+  "draw_calls": 5,
+  "fps": null,
+  "full_frame_draws": 16,
+  "gl_errors": 0,
+  "height": 60,
+  "indices": 18,
+  "measured_on": null,
+  "note": "CPU reference frame, NOT measured on X1650 hardware",
+  "rgba_bytes": 19200,
+  "samplers": 4,
+  "schema": 1,
+  "source": "tools/legacy_gl_golden.py --generate",
+  "vertices": 12,
+  "vram_mib": 48,
+  "width": 80
+}

@@ -876,3 +876,27 @@ without an error. Its view was inspected. The
 [startup check](../benchmarks/rust-native-attribute-updates-2026-10-07/startup-smoke.json),
 seven client tests and all-target client Clippy passed. Full gameplay parity and
 playable Linux release acceptance on the target machine remain pending.
+
+## Legacy OpenGL 2.1 (experimental, additive)
+
+The optional `legacy-gl` feature still includes `modern-gl`: the default build,
+`game.rs`, `options.txt` and translation keys are unchanged. The additive
+`gfx21` modules, the GL2 contract facade and the diagnostics are described in
+[the Russian design document](design/legacy-gl21.md) and
+[the renderer contract](../crates/horizon-client-render/src/gfx21/CONTRACT.md).
+
+Checks that need no GPU or crates.io resolution:
+
+```sh
+python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke -v
+python3 tools/gl21_caps.py --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt --label ci-gl21 --check --no-write --stdout
+python3 tools/legacy_gl_golden.py --check benchmarks/graphics/legacy-gl-scene.rgba
+python3 tools/legacy_gl_smoke.py --check --stdout
+```
+
+The smoke tool writes a deterministic [startup report](../benchmarks/graphics/legacy-gl-startup-report.txt)
+from the reference caps and [frame stats](../benchmarks/graphics/legacy-gl-scene.stats.json).
+[The branch workflow](../.github/workflows/arena-legacy-gl.yml) also links all
+six GLSL 120/110 pass programs in two Xvfb frames. Real X1650/`r300g` timing,
+wgpu image parity and a 30-minute stability run are explicitly unmeasured in
+this sandbox; the fixtures say `NOT measured`.

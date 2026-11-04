@@ -166,11 +166,14 @@ BlueMap is licensed under the MIT license:
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 > THE SOFTWARE.
 
-## glow, glutin and glutin-winit (legacy GL 2.1 context)
+## glow, glutin, glutin-winit and raw-window-handle (legacy GL 2.1 context)
 
 The optional `legacy-gl` feature uses [glow](https://github.com/grovesNL/glow) 0.17.0,
-[glutin](https://github.com/rust-windowing/glutin) 0.32.3 and its `glutin-winit` 0.5.0 helper
-to create an OpenGL 2.1/2.0 compatibility context and load GL 2.1 entry points for
-`examples/gl21_clear.rs`. glow and the glutin repository (which contains `glutin-winit`) are
-Apache-2.0; glutin's root `LICENSE` covers both crates. Only their public APIs are called: no
-upstream source files were copied into this repository.
+[glutin](https://github.com/rust-windowing/glutin) 0.32.3, its `glutin-winit` 0.5.0 helper and
+[raw-window-handle](https://github.com/rust-windowing/raw-window-handle) 0.6.2 to create an
+OpenGL 2.1/2.0 compatibility context and load GL 2.1 entry points for
+`examples/gl21_clear.rs`. Licenses confirmed from the crates' own `Cargo.toml`/`LICENSE` files:
+glow 0.17.0 and glutin 0.32.3 are Apache-2.0; `glutin-winit` 0.5.0 is MIT (its own
+`glutin-winit/LICENSE`, copyright Kirill Chibisov); `raw-window-handle` 0.6.2 is
+MIT OR Apache-2.0 OR Zlib. Only their public APIs are called: no upstream source
+files were copied into this repository.

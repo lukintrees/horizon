@@ -105,9 +105,11 @@ cargo run --release -p horizon-client
 
 Prepared files land in the gitignored `.local/`: never commit or share them. Options, controls and architecture: [the native client guide](docs/native-client.md); all developer docs: [docs/README.md](docs/README.md).
 
+An additive, experimental OpenGL 2.1/2.0 path for old GPUs is documented in [Legacy GL 2.1 / Radeon X1650](docs/design/legacy-gl21.md). It does not replace the default renderer: `legacy-gl` still includes `modern-gl`, and real X1650, wgpu parity and 30-minute stability checks remain unmeasured.
+
 ## Roadmap
 
-What is in progress, what comes next and where to help: [ROADMAP.md](ROADMAP.md), or [playhorizon.dev/hub](https://playhorizon.dev/hub) with the work board and what shipped.
+What is in progress, what comes next and where to help: [ROADMAP.md](ROADMAP.md), or [playhorizon.dev/hub](https://playhorizon.dev/hub) with the work board and what shipped. The additive legacy-GL experiment is tracked separately in [docs/design/legacy-gl21.md](docs/design/legacy-gl21.md); no roadmap item is added yet.
 
 ## Contributing
 
