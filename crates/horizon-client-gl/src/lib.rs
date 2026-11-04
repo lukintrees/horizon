@@ -43,6 +43,7 @@ pub mod exec;
 pub mod gl;
 pub mod loader;
 pub mod mesh;
+pub mod multi_draw;
 
 pub use error::{Error, Result};
 

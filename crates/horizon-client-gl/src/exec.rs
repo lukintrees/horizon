@@ -29,6 +29,7 @@ use crate::caps::Feature;
 use crate::draw::{self, Clear, Draw, Geometry, UniformId, Value, Viewport};
 use crate::error::{Error, Result};
 use crate::gl::buffer::{Buffer, VertexFormat};
+use crate::multi_draw::{MultiDraw, MultiDrawElements};
 use crate::gl::program::Program;
 use crate::gl::state::{StateCache, StateKey};
 use crate::gl::texture::{Sampling, Texture};
@@ -52,6 +53,9 @@ pub enum ExecuteError {
     /// A draw's vertex or index slice lies outside its buffer, or its index count is not a
     /// multiple of three. A driver would read past the end and draw garbage; this refuses.
     BadGeometry { draw: &'static str, detail: String },
+    /// A batched run was refused before it reached the driver: its counts and offsets do not
+    /// agree, so `primcount` would make the driver read past one of the arrays.
+    BadRun { detail: String },
 }
 
 impl std::fmt::Display for ExecuteError {
@@ -68,6 +72,7 @@ impl std::fmt::Display for ExecuteError {
                 "draw `{draw}` uses {kind} {id}, which is not in the resource table"
             ),
             ExecuteError::BadGeometry { draw, detail } => write!(f, "draw `{draw}`: {detail}"),
+            ExecuteError::BadRun { detail } => write!(f, "draw run refused: {detail}"),
         }
     }
 }
@@ -213,6 +218,12 @@ pub struct Executor {
     /// The program bound by the last draw, so a run of sections from one pipeline pays one
     /// `glUseProgram`.
     bound_program: Option<u32>,
+    /// `GL_EXT_multi_draw_arrays`'s entry points, if the renderer loaded them. Every draw in
+    /// this path is still one section at a time: batching a pass's sections into one call
+    /// needs the pass's runs collected before they are executed, which is the next step
+    /// (docs/gl21-x1650-plan.ru.md §11). What is here is the loader and the fallback, so the
+    /// step that uses it does not have to invent either.
+    multi_draw: MultiDraw,
 }
 
 impl Executor {
@@ -224,7 +235,67 @@ impl Executor {
             last_frame: FrameStats::default(),
             strict: false,
             bound_program: None,
+            multi_draw: MultiDraw::none(),
         }
+    }
+
+    /// The same executor with a context's multi-draw entry points.
+    ///
+    /// Not loaded in [`Executor::new`] because loading touches the driver's function table and
+    /// this constructor is what the tests call without a context at all.
+    pub fn with_multi_draw(mut self, multi_draw: MultiDraw) -> Self {
+        self.multi_draw = multi_draw;
+        self
+    }
+
+    /// The extension's entry points, for the pass that batches draws.
+    pub fn multi_draw(&self) -> &MultiDraw {
+        &self.multi_draw
+    }
+
+    /// Draws a pass's indexed runs with as few calls as the driver allows.
+    ///
+    /// The caller binds the vertex and index buffers and the pipeline once (this is what makes
+    /// a run a run), then hands every contiguous slice that shares them. Without
+    /// `GL_EXT_multi_draw_arrays` this is the same loop the executor's per-draw path makes,
+    /// which is why a driver without the extension is slower and not wrong.
+    ///
+    /// # Safety
+    ///
+    /// Every offset in `run` must lie inside the bound index buffer and every count must be a
+    /// multiple of three; `index_problem` is the check a caller makes before it gets here.
+    pub unsafe fn draw_run(
+        &mut self,
+        ctx: &Context,
+        run: &MultiDrawElements,
+    ) -> std::result::Result<u32, ExecuteError> {
+        if run.is_empty() {
+            return Ok(0);
+        }
+        let calls = unsafe { self.multi_draw.draw_elements(draw::PRIMITIVE_TRIANGLES_GL, run) }
+            .map_err(|e| ExecuteError::BadRun {
+                detail: e.to_string(),
+            })?;
+        let gl = ctx.gl();
+        if calls > 1 {
+            // The fallback: one `glDrawElements` per entry, and each one is a call the
+            // statistics must see.
+            for (count, offset) in run.counts.iter().zip(&run.offsets) {
+                unsafe {
+                    gl.draw_elements(
+                        draw::PRIMITIVE_TRIANGLES_GL,
+                        *count,
+                        glow::UNSIGNED_SHORT,
+                        *offset as i32,
+                    );
+                }
+                self.stats.draw_calls += 1;
+            }
+        } else {
+            self.stats.draw_calls += 1;
+        }
+        self.stats.triangles += run.indices() / 3;
+        Ok(calls)
     }
 
     /// Clears the per-frame counters. The state cache forgets too, because a pass may bind a

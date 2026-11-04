@@ -216,7 +216,8 @@ pub struct Geometry {
     pub buffer: u32,
     /// First byte of the vertices.
     pub vertex_offset: u32,
-    /// Byte stride: the legacy path packs its terrain vertices to 24 bytes.
+    /// Byte stride: 32 for a terrain vertex (`crate::mesh::VERTEX_BYTES`), which is not the
+    /// 24 the mesher uses on the wgpu side (gl/buffer.rs has the layout and why).
     pub stride: u32,
     /// Index buffer id, or `0` for a non-indexed draw (fullscreen quads).
     pub indices: u32,
