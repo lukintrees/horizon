@@ -95,8 +95,8 @@ mod tests {
     fn the_target_card_cannot_run_the_wgpu_renderer() {
         assert!(!Profile::X1650.runs_horizons_renderer());
         // The floor the renderer asks for (README: OpenGL 3.3, with texture arrays, uniform
-        // buffers
-        // and instancing from GL 3.0/3.1/3.0) is what makes the card impossible, not a setting.
+        // buffers and instancing from GL 3.0/3.1/3.0) is what makes the card impossible, not a
+        // setting.
         let floor = Profile {
             gl: (3, 3),
             texture_arrays: true,
