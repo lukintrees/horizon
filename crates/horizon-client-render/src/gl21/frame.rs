@@ -398,7 +398,17 @@ fn shifted(runs: Vec<Run>, base: u32) -> Vec<Run> {
         .collect()
 }
 
+/// How many calls the frame's draws are, the present quad included.
+pub fn draw_calls_of(frame: &Frame) -> usize {
+    frame.draws.len() + usize::from(frame.present)
+}
+
 /// The passes a frame's draws make, in order: the plan without its section numbers.
+/// How many calls the frame's draws are, the present quad included.
+pub fn draw_calls_of(frame: &Frame) -> usize {
+    frame.draws.len() + usize::from(frame.present)
+}
+
 /// The passes a frame's draws make, in order: the plan without its section numbers.
 pub fn passes(frame: &Frame) -> Vec<Pass> {
     frame.draws.iter().map(|draw| draw.pass).collect()

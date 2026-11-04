@@ -41,6 +41,7 @@ pub mod frame;
 pub mod hud;
 mod profile;
 pub mod program;
+pub mod renderer;
 pub mod state;
 pub mod vertex;
 
@@ -53,6 +54,7 @@ pub use frame::{Draw, Frame, Run, Section};
 pub use hud::{GlHudVertex, HudDraws, HudRun};
 pub use profile::Profile;
 pub use program::{Attribute, AttributeKind, Uniform};
+pub use renderer::{Device, Program, Renderer, Texture, Viewport};
 pub use state::State;
 pub use vertex::{Batches, GlVertex};
 
