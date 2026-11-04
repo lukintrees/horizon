@@ -52,9 +52,9 @@ Rust 1.99 (npm-пакеты `@toolchain-bin/*`, системный `x86_64-linux
 `Cargo.lock`, но 194 (включая `cpal`, `glam`, `winit`) с разрешённых хостов недоступны; `cargo check` поэтому
 делает CI. Новые опциональные `glow`/`glutin`/`glutin-winit`/`raw-window-handle` описаны в
 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md). Свой workflow
-[`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml) зелёный на `a5e9503` (ран `41780094122`):
-все 11 шагов, включая gate PR 2b и два Xvfb-кадра GL 2.1/2.0, проходят на Rust 1.99. Реальный дамп
-`glxinfo` с X1650/`r300g` по-прежнему нужно снять на железе.
+[`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml) зелёный: все 11 шагов, включая gate
+PR 2b и два Xvfb-кадра GL 2.1/2.0, проходят на Rust 1.99. Реальный дамп `glxinfo` с X1650/`r300g`
+по-прежнему нужно снять на железе.
 
 ---
 
