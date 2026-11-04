@@ -1,7 +1,7 @@
 # Win7 x86 build audit (O01a)
 
-Дата: 2026-11-04. Integration baseline:
-`453966cb6253adf848deb58165eba354693e7acc`.
+Дата: 2026-11-04. Integration baseline (C01/CI01):
+`74fd86ba4d7d884ff7a463c646591cbe7c6897e7`.
 Цель — воспроизводимый маршрут к Windows 7 SP1 **32-bit** и Radeon X1650,
 а не объявление совместимости по успешному hosted build.
 
