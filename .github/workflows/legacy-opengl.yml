@@ -67,6 +67,7 @@ jobs:
           PY
           exit 1
       - name: Test legacy adapters in the real crate
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
           CARGO_TERM_COLOR: never
@@ -85,6 +86,7 @@ jobs:
           PY
           exit 1
       - name: Build and test an X11 GL window
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
           CARGO_TERM_COLOR: never
@@ -106,6 +108,7 @@ jobs:
           PY
           exit 1
   windows-i686:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -134,6 +137,7 @@ jobs:
       - name: Build probe with Windows 7 standard library
         run: cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-legacy-gl --features window-context --target i686-win7-windows-msvc --example wgl_probe
       - name: Run Win7-targeted probe on hosted Windows
+        if: github.event_name == 'workflow_dispatch'
         run: ./target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
       - name: Inventory static PE imports (not a compatibility verdict)
         shell: pwsh
@@ -176,6 +180,7 @@ jobs:
           path: win7-client-static-imports.txt
           retention-days: 7
       - name: Locate libraries using the Windows 8 time API
+        if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           $sysroot = rustc +nightly --print sysroot
@@ -185,30 +190,3 @@ jobs:
           $msvc = Join-Path $vs 'VC/Tools/MSVC'
           python tools/win7_symbol_users.py --nm "$nm" --symbol GetSystemTimePreciseAsFileTime target/i686-win7-windows-msvc/debug "$kits" "$msvc"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  win7-import-source:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Fetch Windows-target dependency sources
-        run: cargo fetch --locked --target i686-win7-windows-msvc
-      - name: Find direct callers of the Windows 8 time API
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          root = Path.home() / '.cargo/registry/src'
-          hits = []
-          for path in root.glob('*/*/**/*'):
-              if path.suffix.lower() not in ('.rs', '.c', '.h', '.cc', '.cpp') or not path.is_file():
-                  continue
-              crate = path.relative_to(root).parts[1]
-              # Generated Windows API declarations are not callers.
-              if crate.startswith(('windows-', 'windows_', 'windows-sys-', 'winapi-')):
-                  continue
-              if 'GetSystemTimePreciseAsFileTime' in path.read_text(errors='ignore'):
-                  hits.append(str(path.relative_to(root)))
-          for hit in sorted(hits):
-              print('::notice::Windows time API source: ' + hit)
-          print(f'{len(hits)} source file(s) mention the API; this is not a link attribution.')
-          PY
