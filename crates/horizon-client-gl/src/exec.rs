@@ -337,7 +337,10 @@ impl Executor {
         for pass in list.passes() {
             self.stats.passes += 1;
             for requirement in pass.needs.iter() {
-                for feature in requirement.features() {
+                // `Requirement::features` yields a slice of values, not of references, so
+                // `feature` is already a `Feature`: the dereference this loop used to need was
+                // for `Needs::features`, which copies its own.
+                for &feature in requirement.features() {
                     if !caps.has(feature) {
                         return Err(map(ExecuteError::Missing {
                             pass: pass.label,

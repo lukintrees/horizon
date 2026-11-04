@@ -163,10 +163,11 @@ impl Buffer {
         if end > self.size {
             // Re-specify rather than `glBufferSubData` past the end: the driver's only report
             // for that is `GL_INVALID_VALUE`, and on the target sometimes nothing at all.
-            self.write(ctx, &vec![0; end])
+            self.write(ctx, &vec![0; end]);
         } else {
-            self.write_at(ctx, offset, data)
+            self.write_at(ctx, offset, data);
         }
+        Ok(())
     }
 
     pub fn bind(&self, ctx: &Context) {
@@ -390,7 +391,10 @@ mod tests {
     #[test]
     fn attributes_never_exceed_the_targets_sixteen_slots() {
         let format = VertexFormat::legacy();
-        assert!(*format.locations().max().unwrap() < crate::caps::Limits::X1650.max_vertex_attribs);
+        // `locations()` yields `u32` by value: `Iterator::max` gives the largest slot, and the
+        // assertion is that it is under the target's 16.
+        let highest = format.locations().max().expect("a format has attributes");
+        assert!(highest < crate::caps::Limits::X1650.max_vertex_attribs);
     }
 
     #[test]

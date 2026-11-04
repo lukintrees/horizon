@@ -17,7 +17,6 @@
 use glow::HasContext;
 
 use crate::budget::{self, Measured, Stage, Type};
-use crate::caps::Limits;
 use crate::error::{Error, Result};
 use crate::gl::Context;
 
@@ -347,6 +346,9 @@ fn compile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests need the target's limits: the library measures and compares against a
+    // `Caps` it is handed, and importing this at the top was an unused import (`-D warnings`).
+    use crate::caps::Limits;
 
     #[test]
     fn the_source_always_carries_the_version_the_context_has() {
@@ -380,7 +382,9 @@ mod tests {
             attribs::EXTRA,
         ];
         assert_eq!(slots, [0, 1, 2, 3, 4]);
-        assert!(*slots.iter().max().unwrap() < Limits::X1650.max_vertex_attribs);
+        // `slots` holds `u32` by value, so `copied()` rather than a dereference of `max()`'s
+        // `&u32`. The slot-limit check proper is in gl/buffer.rs, against the real format.
+        assert!(slots.iter().copied().max().unwrap() < Limits::X1650.max_vertex_attribs);
     }
 
     #[test]
