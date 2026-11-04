@@ -69,7 +69,9 @@ impl Renderer {
         match parse_version(&version) {
             Some(found) if found < (3, 3) => {}
             Some(_) => {
-                return Err(format!("OpenGL {version} is 3.3 or newer; wgpu draws this GPU").into());
+                return Err(
+                    format!("OpenGL {version} is 3.3 or newer; wgpu draws this GPU").into(),
+                );
             }
             None => return Err(format!("the OpenGL version {version:?} cannot be read").into()),
         }
