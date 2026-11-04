@@ -546,7 +546,7 @@ mod tests {
             Limits::default(),
         )
         .unwrap();
-        let positions = |extent, z| {
+        let positions = |extent: f32, z: f32| {
             [
                 [-extent, -extent, z],
                 [extent, -extent, z],
@@ -560,10 +560,13 @@ mod tests {
         );
         let key = [1_875_000, 0, 0];
         renderer.upload_section(key, &mesh).unwrap();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.fill(&atlas, 6., 6., 8., 8., 0xff306010);
+        let white_uv = hud.vertices[0].uv;
         let quad = |extent, z, color| {
             positions(extent, z).map(|pos| Vertex {
                 pos,
-                uv: [atlas.white.u0, atlas.white.v0],
+                uv: white_uv,
                 layer: 0,
                 color,
                 light: 0,
@@ -580,8 +583,6 @@ mod tests {
         }];
         let dynamic = quad(1., 3., 0xff0000ff); // farther red must NOT cover nearer static green
         let hand = quad(0.5, 8., 0xffff0000); // farther blue still draws AFTER depth clear
-        let mut hud = HudBatch::new([64; 2]);
-        hud.fill(&atlas, 6., 6., 8., 8., 0xff306010);
         let mut source = frame::tests::source(&hud);
         source.camera = glam::DVec3::new(30_000_000.25, 0., 0.);
         source.yaw = 0.;

@@ -66,11 +66,13 @@ jobs:
           def escape(value):
               return str(value).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           count = 0
+          test_output = []
           for line in (Path('target/legacy-branch/compiler.jsonl').read_text() + '\n' + (Path('target/legacy-branch/full-client.jsonl').read_text() if Path('target/legacy-branch/full-client.jsonl').exists() else '')).splitlines():
               try:
                   record = json.loads(line)
               except ValueError:
                   print(line)
+                  test_output.append(line)
                   continue
               if record.get('reason') != 'compiler-message':
                   continue
@@ -84,6 +86,8 @@ jobs:
                   location = 'file=' + escape(span['file_name']) + ',line=' + str(span['line_start']) + ','
               print('::error ' + location + 'title=Game bridge compile::' + escape((msg.get('rendered') or msg['message'])[:5000]))
               count += 1
+          if any('panicked at' in line or 'test result: FAILED' in line for line in test_output):
+              print('::error title=Game bridge CPU tests::' + escape('\n'.join(test_output[-85:])))
           PY
           exit "$status"
       - name: Run real game HUD through GL2
