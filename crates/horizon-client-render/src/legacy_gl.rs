@@ -1,7 +1,7 @@
 //! CPU-side building blocks for the experimental OpenGL 2 renderer.
 //!
 //! This module does not create a GL context and is not connected to the game renderer yet.
-//! In particular, a single-level atlas is not sufficient for mipmapped terrain or repeated UVs.
+//! A single-level atlas is not sufficient for mipmapped terrain.
 
 /// Prototype shaders; they are not used by the current renderer.
 pub const TERRAIN_VERTEX_SHADER: &str = include_str!("legacy_gl_terrain.vert");
@@ -421,8 +421,12 @@ pub use horizon_legacy_gl::Vertex as LegacyTerrainVertex;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TerrainConversionError {
-    MissingSprite { layer: u16 },
+    MissingSprite {
+        layer: u16,
+    },
     MixedSpriteLayers,
+    /// A sprite boundary can otherwise sample a neighboring atlas entry.
+    MissingPadding,
     RepeatingUv,
 }
 
@@ -435,7 +439,20 @@ pub fn convert_terrain_quad(
     layout: &AtlasLayout,
     quad: &[crate::mesher::TerrainVertex; 4],
 ) -> Result<(usize, [LegacyTerrainVertex; 4]), TerrainConversionError> {
+    if quad.iter().any(|v| v.uv().iter().any(|&uv| uv > 1.0)) {
+        return Err(TerrainConversionError::RepeatingUv);
+    }
+    convert_terrain_quad_unwrapped(layout, quad)
+}
+
+fn convert_terrain_quad_unwrapped(
+    layout: &AtlasLayout,
+    quad: &[crate::mesher::TerrainVertex; 4],
+) -> Result<(usize, [LegacyTerrainVertex; 4]), TerrainConversionError> {
     use crate::mesher::OPAQUE_LAYER;
+    if layout.padding == 0 {
+        return Err(TerrainConversionError::MissingPadding);
+    }
     let layer = quad[0].layer & !OPAQUE_LAYER;
     let sprite = layout
         .sprites
@@ -443,9 +460,6 @@ pub fn convert_terrain_quad(
         .ok_or(TerrainConversionError::MissingSprite { layer })?;
     if quad.iter().any(|v| v.layer & !OPAQUE_LAYER != layer) {
         return Err(TerrainConversionError::MixedSpriteLayers);
-    }
-    if quad.iter().any(|v| v.uv().iter().any(|&uv| uv > 1.0)) {
-        return Err(TerrainConversionError::RepeatingUv);
     }
     let side = layout.page_size as f32;
     let vertices = quad.map(|v| {
@@ -508,8 +522,91 @@ pub enum TerrainBatchError {
     },
 }
 
-/// Converts section quad vertices into ordered page runs, splitting before
-/// 16-bit vertex indices would overflow. Errors identify the failing quad.
+// A point on a source triangle. UVs are kept in sprite coordinates until
+// clipping has separated each repeat: atlas texture wrapping cannot do that.
+#[derive(Clone, Copy)]
+struct ClipVertex {
+    vertex: LegacyTerrainVertex,
+    uv: [f32; 2],
+}
+
+impl ClipVertex {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        fn blend<const N: usize>(a: [f32; N], b: [f32; N], t: f32) -> [f32; N] {
+            std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
+        }
+        Self {
+            uv: blend(self.uv, other.uv, t),
+            vertex: LegacyTerrainVertex {
+                pos: blend(self.vertex.pos, other.vertex.pos, t),
+                uv: blend(self.vertex.uv, other.vertex.uv, t),
+                light_uv: blend(self.vertex.light_uv, other.vertex.light_uv, t),
+                color: blend(self.vertex.color, other.vertex.color, t),
+            },
+        }
+    }
+}
+
+// Clip a convex polygon against an inclusive axis-aligned UV boundary.
+fn clip_uv(input: &[ClipVertex], axis: usize, boundary: f32, lower: bool) -> Vec<ClipVertex> {
+    let mut output = Vec::with_capacity(input.len() + 1);
+    let Some(&last) = input.last() else {
+        return output;
+    };
+    let inside = |v: ClipVertex| {
+        if lower {
+            v.uv[axis] >= boundary
+        } else {
+            v.uv[axis] <= boundary
+        }
+    };
+    let mut previous = last;
+    let mut previous_inside = inside(previous);
+    for &current in input {
+        let current_inside = inside(current);
+        if current_inside != previous_inside {
+            let t = (boundary - previous.uv[axis]) / (current.uv[axis] - previous.uv[axis]);
+            let mut crossing = previous.lerp(current, t);
+            crossing.uv[axis] = boundary;
+            output.push(crossing);
+        }
+        if current_inside {
+            output.push(current);
+        }
+        previous = current;
+        previous_inside = current_inside;
+    }
+    output
+}
+
+fn append_polygon(runs: &mut Vec<TerrainRun>, page: usize, polygon: &[LegacyTerrainVertex]) {
+    if polygon.len() < 3 {
+        return;
+    }
+    if runs
+        .last()
+        .is_none_or(|run| run.page != page || run.vertices.len() + polygon.len() > 65536)
+    {
+        runs.push(TerrainRun {
+            page,
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        });
+    }
+    let run = runs.last_mut().expect("run was created");
+    let base = run.vertices.len() as u16;
+    run.vertices.extend_from_slice(polygon);
+    for i in 1..polygon.len() - 1 {
+        run.indices
+            .extend_from_slice(&[base, base + i as u16, base + i as u16 + 1]);
+    }
+}
+
+/// Convert ordinary section quads into ordered atlas page runs. UVs beyond one
+/// repeat the sprite: each source triangle is clipped at integer UV boundaries
+/// and interpolated independently, preserving its original diagonal and shading.
+/// This path uses the section UV scale; distant terrain uses a different encoding
+/// and is not supported. Each generated run fits 16-bit indices.
 pub fn convert_terrain_runs(
     layout: &AtlasLayout,
     vertices: &[crate::mesher::TerrainVertex],
@@ -517,26 +614,71 @@ pub fn convert_terrain_runs(
     if vertices.len() % 4 != 0 {
         return Err(TerrainBatchError::IncompleteQuad);
     }
-    let mut runs: Vec<TerrainRun> = Vec::new();
+    let mut runs = Vec::new();
     for (index, chunk) in vertices.chunks_exact(4).enumerate() {
         let quad: &[crate::mesher::TerrainVertex; 4] = chunk.try_into().expect("chunks_exact(4)");
-        let (page, converted) = convert_terrain_quad(layout, quad)
+        let (page, converted) = convert_terrain_quad_unwrapped(layout, quad)
             .map_err(|error| TerrainBatchError::Quad { index, error })?;
-        if runs
-            .last()
-            .is_none_or(|run| run.page != page || run.vertices.len() > usize::from(u16::MAX) - 3)
-        {
-            runs.push(TerrainRun {
-                page,
-                vertices: Vec::new(),
-                indices: Vec::new(),
-            });
+        if quad.iter().all(|v| v.uv().iter().all(|&uv| uv <= 1.0)) {
+            append_polygon(&mut runs, page, &converted);
+            continue;
         }
-        let run = runs.last_mut().expect("run was created");
-        let base = run.vertices.len() as u16;
-        run.vertices.extend_from_slice(&converted);
-        run.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        let layer = quad[0].layer & !crate::mesher::OPAQUE_LAYER;
+        let sprite = layout.sprites[usize::from(layer)];
+        let side = layout.page_size as f32;
+        for triangle in [[0, 1, 2], [0, 2, 3]] {
+            let triangle = triangle.map(|i| ClipVertex {
+                vertex: converted[i],
+                uv: quad[i].uv(),
+            });
+            let ranges = [0, 1].map(|axis| {
+                let min = triangle
+                    .iter()
+                    .map(|v| v.uv[axis])
+                    .fold(f32::INFINITY, f32::min);
+                let max = triangle
+                    .iter()
+                    .map(|v| v.uv[axis])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                // A zero-width UV axis on a seam belongs to the lower tile, as in tile_uv.
+                let first = if min == max && min > 0.0 {
+                    min.ceil() as usize - 1
+                } else {
+                    min.floor() as usize
+                };
+                let last = if max == 0.0 {
+                    0
+                } else {
+                    max.ceil() as usize - 1
+                };
+                (first, last.max(first))
+            });
+            for y in ranges[1].0..=ranges[1].1 {
+                for x in ranges[0].0..=ranges[0].1 {
+                    let mut poly = triangle.to_vec();
+                    for (axis, tile) in [(0, x), (1, y)] {
+                        poly = clip_uv(&poly, axis, tile as f32, true);
+                        poly = clip_uv(&poly, axis, tile as f32 + 1.0, false);
+                    }
+                    let polygon: Vec<_> = poly
+                        .into_iter()
+                        .map(|v| {
+                            let mut vertex = v.vertex;
+                            vertex.uv = [
+                                (sprite.x as f32
+                                    + (v.uv[0] - x as f32).clamp(0.0, 1.0) * sprite.width as f32)
+                                    / side,
+                                (sprite.y as f32
+                                    + (v.uv[1] - y as f32).clamp(0.0, 1.0) * sprite.height as f32)
+                                    / side,
+                            ];
+                            vertex
+                        })
+                        .collect();
+                    append_polygon(&mut runs, page, &polygon);
+                }
+            }
+        }
     }
     Ok(runs)
 }
@@ -676,6 +818,140 @@ mod tests {
         );
     }
     #[test]
+    fn repeated_uv_triangles_split_at_seams_and_preserve_interpolation() {
+        use crate::mesher::TerrainVertex;
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 4,
+                height: 4,
+            }],
+            8,
+            1,
+            1,
+        )
+        .unwrap();
+        let vertex = |x: f32, y: f32| {
+            TerrainVertex::new(
+                [x, y, 0.0],
+                [x * 1.5, y * 1.5],
+                0,
+                if x == 0.0 { 0xff000000 } else { 0xff0000ff },
+                0xf0f0,
+            )
+        };
+        let quad = [
+            vertex(0., 0.),
+            vertex(1., 0.),
+            vertex(1., 1.),
+            vertex(0., 1.),
+        ];
+        let runs = convert_terrain_runs(&layout, &quad).unwrap();
+        assert_eq!(runs.len(), 1);
+        let run = &runs[0];
+        assert!(run.vertices.len() > 4);
+        let mut area = 0.0;
+        for tri in run.indices.chunks_exact(3) {
+            let [a, b, c] = [
+                run.vertices[tri[0] as usize],
+                run.vertices[tri[1] as usize],
+                run.vertices[tri[2] as usize],
+            ];
+            let cross = (b.pos[0] - a.pos[0]) * (c.pos[1] - a.pos[1])
+                - (b.pos[1] - a.pos[1]) * (c.pos[0] - a.pos[0]);
+            assert!(cross >= -1e-6, "winding reversed");
+            area += cross * 0.5;
+        }
+        assert!((area - 1.0).abs() < 1e-5, "area {area}");
+        for v in &run.vertices {
+            assert!((0.125..=0.625).contains(&v.uv[0]));
+            assert!((0.125..=0.625).contains(&v.uv[1]));
+            assert!((v.color[0] - v.pos[0]).abs() < 1e-5);
+        }
+        // The same seam position maps to both edges, not across a neighboring sprite.
+        let seam: Vec<_> = run
+            .vertices
+            .iter()
+            .filter(|v| (v.pos[0] - 2.0 / 3.0).abs() < 1e-5)
+            .collect();
+        assert!(seam.iter().any(|v| (v.uv[0] - 0.125).abs() < 1e-5));
+        assert!(seam.iter().any(|v| (v.uv[0] - 0.625).abs() < 1e-5));
+    }
+
+    #[test]
+    fn varied_repeated_uvs_conserve_each_quad_area() {
+        use crate::mesher::TerrainVertex;
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 2,
+                height: 2,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let mut seed = 7u32;
+        for _ in 0..1000 {
+            let mut next_uv = || {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed % 65536) as f32 / 32768.0
+            };
+            let positions = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.]];
+            let quad = positions
+                .map(|pos| TerrainVertex::new(pos, [next_uv(), next_uv()], 0, 0xffffffff, 0));
+            let runs = convert_terrain_runs(&layout, &quad).unwrap();
+            let mut area = 0.0;
+            for run in runs {
+                for t in run.indices.chunks_exact(3) {
+                    let [a, b, c] = [
+                        run.vertices[t[0] as usize].pos,
+                        run.vertices[t[1] as usize].pos,
+                        run.vertices[t[2] as usize].pos,
+                    ];
+                    let cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+                    assert!(cross >= -1e-6);
+                    area += cross * 0.5;
+                }
+            }
+            assert!((area - 1.0).abs() < 1e-4, "area {area}");
+        }
+    }
+
+    #[test]
+    fn repeated_constant_seam_and_split_index_limit() {
+        use crate::mesher::TerrainVertex;
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 2,
+                height: 2,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let v = |x, y| TerrainVertex::new([x, y, 0.], [1.0, y * 1.5], 0, 0xffffffff, 0);
+        let quad = [v(0., 0.), v(1., 0.), v(1., 1.), v(0., 1.)];
+        let runs = convert_terrain_runs(&layout, &quad).unwrap();
+        assert!(
+            runs[0]
+                .vertices
+                .iter()
+                .all(|v| (v.uv[0] - 0.75).abs() < 1e-6)
+        );
+        let input = quad.repeat(10000);
+        let runs = convert_terrain_runs(&layout, &input).unwrap();
+        assert!(runs.len() > 1);
+        assert!(runs.iter().all(|run| {
+            run.vertices.len() <= 65536
+                && run
+                    .indices
+                    .iter()
+                    .all(|&i| usize::from(i) < run.vertices.len())
+        }));
+    }
+
+    #[test]
     fn animated_update_matches_page_padding() {
         let layout = pack_atlas(
             &[SpriteSize {
@@ -739,8 +1015,8 @@ mod tests {
                 width: 2,
                 height: 2,
             }; 2],
-            2,
-            0,
+            4,
+            1,
             2,
         )
         .unwrap();
@@ -749,6 +1025,23 @@ mod tests {
         for layer in [0, 1, 0] {
             input.extend_from_slice(&[vertex(layer); 4]);
         }
+        let no_padding = pack_atlas(
+            &[SpriteSize {
+                width: 2,
+                height: 2,
+            }],
+            2,
+            0,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            convert_terrain_runs(&no_padding, &[vertex(0); 4]),
+            Err(TerrainBatchError::Quad {
+                index: 0,
+                error: TerrainConversionError::MissingPadding
+            })
+        );
         let runs = convert_terrain_runs(&layout, &input).unwrap();
         assert_eq!(
             runs.iter().map(|r| r.page).collect::<Vec<_>>(),
