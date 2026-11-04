@@ -504,7 +504,8 @@ mod tests {
         assert!(states[0].contains("glDisable(DEPTH_TEST)"), "{states:?}");
         assert!(states[1].contains("glDepthMask(1)"), "{states:?}");
         assert!(states[2].contains("glBlendFunc(GL_SRC_ALPHA"), "{states:?}");
-        assert!(states[3].contains("glDepthMask(1)"), "the reset: {states:?}");
+        let reset = states[3].contains("glDepthMask(1)");
+        assert!(reset, "the reset: {states:?}");
         // The sky's draw is the first one, before the world's.
         let draws: Vec<&String> = device
             .calls
