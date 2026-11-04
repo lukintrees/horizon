@@ -35,3 +35,34 @@ jobs:
           esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print(f"::error title=unittest::{esc}")
           PY
+
+  launcher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: The launcher's three checks, with their errors as annotations
+        working-directory: launcher
+        run: |
+          set +e
+          cargo +stable fmt --check > f.txt 2>&1; a=$?
+          cargo +stable clippy --all-targets --locked -- -D warnings > c.txt 2>&1; b=$?
+          cargo +stable test --locked --lib > t.txt 2>&1; d=$?
+          python3 - "$a" "$b" "$d" <<'PY'
+          import re, sys
+          a, b, d = sys.argv[1:4]
+          def pick(path, pattern, n):
+              lines = open(path, errors="replace").read().splitlines()
+              return [l for l in lines if re.search(pattern, l)][:n]
+          out = [f"fmt={a} clippy={b} test={d}"]
+          out += ["fmt: " + l for l in pick("f.txt", r"Diff in|^error", 12)]
+          out += ["clippy: " + l for l in pick("c.txt", r"^error|-->", 24)]
+          out += ["test: " + l for l in pick("t.txt", r"panicked|FAILED|test result|^error", 24)]
+          text = "\n".join(out)[:40000]
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=launcher::{esc}")
+          PY
