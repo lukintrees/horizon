@@ -201,7 +201,8 @@ The user requested «Теперь интегрируй все в игру» and 
   enables `modern-gl`: it enables only `dep:glow`, `dep:glutin`,
   `dep:glutin-winit`, `dep:raw-window-handle` and the downstream legacy
   features. `wgpu`, `naga`, `pollster`, `horizon-hdr`, `horizon-shader-api` and
-  `horizon-shaders` are optional and modern-only.
+  `horizon-shaders` are optional and modern-only; `horizon-mods/index`, which
+  also reaches `horizon-shader-api`/naga, is forwarded only by `modern-gl`.
 * `horizon-client-render/src/lib.rs` cfg-gates all modern modules. Under
   `legacy-gl` only `gfx21`, `graphics_legacy.rs` and the core reexports remain;
   `graphics.rs`/`lod.rs`/`bluemap.rs`/`gfx.rs` do not compile. `Frame` and

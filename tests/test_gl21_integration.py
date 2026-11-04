@@ -85,6 +85,13 @@ class FeatureSplitTests(unittest.TestCase):
             self.assertIn(f"dep:{dep}", client["features"]["legacy-gl"])
         for data in (client_lib, client):
             self.assertFalse(data["dependencies"]["horizon-client-render"]["default-features"])
+            self.assertNotIn(
+                "index",
+                data["dependencies"]["horizon-mods"].get("features", []),
+                "horizon-mods/index must not be enabled outside modern-gl",
+            )
+            self.assertIn("horizon-mods/index", data["features"]["modern-gl"])
+            self.assertNotIn("horizon-mods/index", data["features"]["legacy-gl"])
         self.assertIn("horizon-client-render/legacy-gl", client["features"]["legacy-gl"])
         self.assertIn("horizon-client-lib/legacy-gl", client["features"]["legacy-gl"])
         self.assertIn("horizon-client-render/legacy-gl", client_lib["features"]["legacy-gl"])
