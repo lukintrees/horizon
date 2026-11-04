@@ -18,10 +18,10 @@
 //! | Module | What it decides or does | Needs a GPU |
 //! | --- | --- | --- |
 //! | [`caps`] | what the device may do; strict mode substitutes the target's table | to detect |
-//! | [`budget`] | measures GLSL against 512 uniform components, 44 varyings, 16 samplers, 0 vertex textures, static loops | **no** |
+//! | [`budget`] | measures GLSL against the target's limits before a driver sees it | **no** |
 //! | [`draw`] | one frame described once: passes, draws, state, requirements | **no** |
-//! | [`exec`] | executes a recorded frame: state, programs, uniforms, geometry | **yes** |
-//! | [`loader`] | finding libGL/opengl32 and their entry points, with a sentence on failure | to open |
+//! | [`exec`] | executes a recorded frame and counts what it cost | **yes** |
+//! | [`loader`] | finds libGL/opengl32 and its entry points, with a sentence on failure | to open |
 //! | [`gl`] | programs, buffers, textures, framebuffers, the state cache, the context | **yes** |
 //!
 //! The GPU-free half is the half that carries the risk of the port (a shader that works on

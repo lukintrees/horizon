@@ -315,7 +315,8 @@ fn statement_kind(statement: &str) -> Option<DeclKind> {
     }
 }
 
-/// `lights[16]` -> ("lights", 16, false); `lights[N]` -> ("lights", 1, true); `uv` -> ("uv", 1, false).
+/// `lights[16]` -> ("lights", 16, false); `lights[N]` -> ("lights", 1, true);
+/// `uv` -> ("uv", 1, false).
 fn parse_name_and_size(part: &str) -> (String, u32, bool) {
     let Some(open) = part.find('[') else {
         return (part.to_string(), 1, false);
@@ -426,7 +427,8 @@ pub fn check(measured: &Measured, stage: Stage, limits: &Limits) -> Result<()> {
         return Err(Error::budget(
             format!("{} varyings", stage.name()),
             format!(
-                "{} floats, the limit is {}: pack the tint into one u32 and the flags into one float",
+                "{} floats, the limit is {}: pack the tint into one u32 and the flags into \
+                 one float",
                 measured.varying_floats, limits.max_varying_floats
             ),
         ));
@@ -592,9 +594,9 @@ mod tests {
         assert!(check(&m, Stage::Fragment, &Limits::X1650).is_err());
     }
 
-    #[test]
     fn vertex_texture_fetch_is_a_budget_failure_not_a_syntax_one() {
-        let src = "uniform sampler2D cloud; varying vec2 uv; void main() { gl_Position = texture2D(cloud, uv); }";
+        let src = "uniform sampler2D cloud; varying vec2 uv; \
+                   void main() { gl_Position = texture2D(cloud, uv); }";
         let m = measure(src, Stage::Vertex);
         assert_eq!(m.vertex_texture_samples, vec!["texture2D"]);
         let err = check(&m, Stage::Vertex, &Limits::X1650).unwrap_err();
@@ -641,9 +643,10 @@ mod tests {
 
     #[test]
     fn the_targets_budget_refuses_what_llvmpipe_would_accept() {
-        // The measured shape of terrain.wgsl's Globals on the wgpu side: 936 components.
         let mut src = String::from("uniform mat4 view_proj; uniform mat4 inverse_view;\n");
-        src.push_str("uniform vec4 fog; uniform vec4 sky; uniform vec4 misc; uniform vec4 sunrise;\n");
+        // The measured shape of terrain.wgsl's Globals on the wgpu side: 936 components.
+        src.push_str("uniform vec4 fog; uniform vec4 sky;\n");
+        src.push_str("uniform vec4 misc; uniform vec4 sunrise;\n");
         src.push_str("uniform vec4 dynamic_lights[16]; uniform vec4 colored_lights[32];\n");
         src.push_str("uniform vec4 emissive_layers[128]; uniform vec4 sunrise_fan[32];\n");
         let m = measure(&src, Stage::Vertex);

@@ -250,7 +250,8 @@ const MAX_SAMPLES_EXT: u32 = 0x8D57;
 ///
 /// The target has `EXT_framebuffer_object` and `EXT_framebuffer_blit` and, on its own driver,
 /// `EXT_framebuffer_multisample`: a 2x or 4x multisampled *renderbuffer* can be resolved into a
-/// normal texture. What it cannot do is render into a multisampled *texture* (`ARB_texture_multisample`
+/// normal texture. What it cannot do is render into a multisampled *texture*
+/// (`ARB_texture_multisample`
 /// is 3.2), so this type is deliberately not a [`Texture`]: it is a `Target` whose colour
 /// attachment is a renderbuffer and whose `resolve` blits into the caller's texture.
 #[derive(Debug)]

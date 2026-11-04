@@ -250,7 +250,10 @@ impl Texture {
         if pixels.len() != expected {
             return Err(Error::budget(
                 self.label,
-                format!("{} bytes for a {width}x{height} region, which needs {expected}", pixels.len()),
+                format!(
+                    "{} bytes for a {width}x{height} region, which needs {expected}",
+                    pixels.len()
+                ),
             ));
         }
         let gl = ctx.gl();

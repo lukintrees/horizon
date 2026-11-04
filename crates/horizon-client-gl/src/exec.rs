@@ -275,7 +275,9 @@ impl Executor {
                     }
                 }
             }
-            if let Err(e) = self.begin_pass(ctx, pass.target, pass.viewport, pass.clear, resources) {
+            if let Err(e) =
+                self.begin_pass(ctx, pass.target, pass.viewport, pass.clear, resources)
+            {
                 if self.strict {
                     return Err(map(e));
                 }

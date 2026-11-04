@@ -276,7 +276,9 @@ impl Program {
 
 fn named(error: Error, purpose: &str) -> Error {
     match error {
-        Error::Budget { what, detail } => Error::budget(format!("{purpose} program's {what}"), detail),
+        Error::Budget { what, detail } => {
+            Error::budget(format!("{purpose} program's {what}"), detail)
+        }
         other => other,
     }
 }

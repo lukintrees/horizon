@@ -82,7 +82,8 @@ fn env_flag(name: &str) -> bool {
     match std::env::var(name) {
         Ok(v) => {
             let v = v.trim();
-            !(v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+            let off = v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off");
+            !(v.is_empty() || v == "0" || off)
         }
         Err(_) => false,
     }

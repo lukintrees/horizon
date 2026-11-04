@@ -27,9 +27,11 @@ X1650. That is why every limit here is a static check: the CI-visible part of
 the port is this file, and a device that is not an X1650 cannot check it for us.
 
     python3 tools/gl21_budget.py                    # report, exits 0
-    python3 tools/gl21_budget.py --check             # exits 1 when over budget
+    python3 tools/gl21_budget.py --check             # exits 1 when over budget at all
+    python3 tools/gl21_budget.py --check --baseline tools/gl21-budget-baseline.json
+                                                     # exits 1 only on a NEW finding (CI)
     python3 tools/gl21_budget.py --json out.json     # machine-readable report
-    python3 tools/gl21_budget.py --baseline base.json  # diff against a saved report
+    python3 tools/gl21_budget.py --baseline base.json  # diff against a saved report, fail on new
     python3 tools/gl21_budget.py --profile gl33      # what the current wgpu path needs
 
 `--profile gl33` describes what the renderer needs today (desktop GL 3.3, wgpu's
@@ -517,9 +519,19 @@ def main():
         if args.baseline and not args.check and added:
             pass  # --baseline alone reports, does not fail; --check decides
 
-    if args.check and rep["findings"]:
+    # --check means "fail on a finding this change introduced", not "fail while the port is
+    # unfinished": the wgpu path is over the GL 2.1 budget by definition (that is why the port
+    # exists), and 80 findings of debt would make the gate permanently red and therefore
+    # ignored. With --baseline the comparison above has already decided; without one this is
+    # the strict mode the first phase used.
+    if args.check and rep["findings"] and not args.baseline:
         print(f"\nOVER BUDGET: {len(rep['findings'])} finding(s) for {rep['profile']}")
         status = 1
+    elif args.check and args.baseline and status == 0:
+        print(
+            f"\nno new findings against {args.baseline} "
+            f"({len(rep['findings'])} known, the port's remaining work)"
+        )
     return status
 
 

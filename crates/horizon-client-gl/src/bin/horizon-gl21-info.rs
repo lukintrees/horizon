@@ -48,7 +48,13 @@ fn main() -> ExitCode {
         .filter(|a| {
             !matches!(
                 *a,
-                "--json" | "--strict" | "--probe" | "--check-shaders" | "--context" | "--help" | "-h"
+                "--json"
+                    | "--strict"
+                    | "--probe"
+                    | "--check-shaders"
+                    | "--context"
+                    | "--help"
+                    | "-h"
             )
         })
         .collect();
