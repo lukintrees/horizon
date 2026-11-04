@@ -668,8 +668,10 @@ mod tests {
         let single = renderer.read_rgba([0, 0, 64, 64]).unwrap();
         assert!(
             single
-                .chunks_exact(4)
-                .zip(background.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(background.as_chunks::<4>().0.iter())
                 .any(|(a, b)| a[..3] != b[..3]),
             "actual seeded lightning did not draw"
         );
@@ -678,8 +680,10 @@ mod tests {
         let doubled = renderer.read_rgba([0, 0, 64, 64]).unwrap();
         assert!(
             doubled
-                .chunks_exact(4)
-                .zip(single.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(single.as_chunks::<4>().0.iter())
                 .any(|(a, b)| (0..3).any(|i| a[i] > b[i])),
             "shared seeds lost a bolt instance"
         );
@@ -703,8 +707,8 @@ mod tests {
             .extend([[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]].map(|p| {
                 TerrainVertex::new(
                     [
-                        ((camera[0] - 30_000_000.) + f64::from(p[0])) as f32,
-                        (camera[1] + f64::from(p[1])) as f32,
+                        ((camera[0] - 30_000_000.) + p[0]) as f32,
+                        (camera[1] + p[1]) as f32,
                         (camera[2] + 1.) as f32,
                     ],
                     [0.5; 2],
@@ -725,7 +729,12 @@ mod tests {
             .render_game_frame(&source, visible, options)
             .unwrap();
         let covered = renderer.read_rgba([0, 0, 64, 64]).unwrap();
-        for (actual, bolt) in covered.chunks_exact(4).zip(single.chunks_exact(4)) {
+        for (actual, bolt) in covered
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(single.as_chunks::<4>().0.iter())
+        {
             for c in 0..3 {
                 let expected = (f32::from(bolt[c]) * (127. / 255.) + if c == 2 { 128. } else { 0. })
                     .round() as u8;
