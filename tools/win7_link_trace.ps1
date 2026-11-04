@@ -16,7 +16,7 @@ $wrapper = Join-Path $env:RUNNER_TEMP 'horizon-trace-link.cmd'
 @echo off
 call "%HORIZON_VCVARS%" x86 >nul 2>&1
 if errorlevel 1 exit /b %errorlevel%
-python "%HORIZON_INPUT_INSPECTOR%" > "%HORIZON_INPUT_TRACE%" 2>&1
+python "%HORIZON_INPUT_INSPECTOR%" %* > "%HORIZON_INPUT_TRACE%" 2>&1
 link.exe /VERBOSE:LIB %* > "%HORIZON_LINK_TRACE%" 2>&1
 exit /b %errorlevel%
 '@ | Set-Content -Encoding ASCII $wrapper
@@ -37,10 +37,11 @@ if ($matches) {
     Write-Host "::notice::Link trace starts: $sample"
 }
 if (Test-Path $env:HORIZON_INPUT_TRACE) {
-    foreach ($line in (Get-Content $env:HORIZON_INPUT_TRACE | Select-Object -First 30)) {
-        $escaped = $line.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-        Write-Host "::notice::$escaped"
-    }
+    $lines = @(Get-Content $env:HORIZON_INPUT_TRACE)
+    $focus = @($lines | Where-Object { $_ -match '^(Input search roots|Linker inputs|Examined|DIRECT:|llvm-nm:|Traceback|Error)' } | Select-Object -First 20)
+    $summary = (($focus -join "`n") + "`n" + (($lines | Select-Object -Last 8) -join "`n"))
+    $escaped = $summary.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+    Write-Host "::notice::Win7 link inputs: $escaped"
 }
 if ($code -ne 0) {
     Get-Content $env:HORIZON_LINK_TRACE -Tail 60

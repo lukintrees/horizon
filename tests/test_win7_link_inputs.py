@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location(
@@ -17,6 +18,19 @@ class DirectSymbolTests(unittest.TestCase):
             "__imp__GetSystemTimePreciseAsFileTime@4",
         ):
             self.assertIsNotNone(module.DIRECT.search("foo.obj: U " + name))
+
+    def test_linker_response_files_with_spaces_and_utf16(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            obj = root / "object with spaces.obj"
+            archive = root / "archive.lib"
+            obj.write_bytes(b"object")
+            archive.write_bytes(b"archive")
+            nested = root / "nested.rsp"
+            nested.write_text(f'"{archive}"', encoding='utf-16')
+            response = root / "linker.rsp"
+            response.write_text(f'"{obj}" "@{nested}" /NOLOGO', encoding='utf-8')
+            self.assertEqual(set(module.linker_inputs([f'@{response}'])), {obj, archive})
 
     def test_mangled_compatibility_wrapper_is_not_a_direct_import(self):
         self.assertIsNone(module.DIRECT.search(
