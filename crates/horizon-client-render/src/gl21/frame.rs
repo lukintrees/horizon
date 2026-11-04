@@ -250,6 +250,8 @@ impl Frame {
                 continue;
             }
             if !self.store_section(section) {
+                // Counted once, by the attempt that ran out of room; the restart before it is not
+                // this section's fault.
                 self.dropped += 1;
                 return false;
             }
@@ -318,20 +320,22 @@ impl Frame {
         let plan = draws::plan(&draws, sky, present);
         let mut out = Vec::with_capacity(plan.calls.len());
         for (call, pass) in plan.calls.iter().zip(&plan.pass) {
-            let (section, run) = *call;
-            let (entry, visibility) = if section == SKY {
+            // The plan names a section by its place in `sections`; a draw names it by the handle the
+            // caller gave it, which is what its uniforms are looked up by.
+            let (index, run) = *call;
+            let (handle, entry, visibility) = if index == SKY {
                 let Some((entry, _)) = self.sky.as_ref() else {
                     continue;
                 };
-                (entry, 1.0)
+                (SKY, entry, 1.0)
             } else {
-                let Some(section) = sections.get(section as usize) else {
+                let Some(section) = sections.get(index as usize) else {
                     continue;
                 };
                 let Some(entry) = self.entries.get(&section.handle) else {
                     continue;
                 };
-                (entry, section.visibility)
+                (section.handle, entry, section.visibility)
             };
             let Some(run) = entry.runs.get(run as usize) else {
                 continue;
@@ -342,7 +346,7 @@ impl Frame {
                 count: run.count,
                 pass: *pass,
                 visibility,
-                section,
+                section: handle,
             });
         }
         self.draws = out;
@@ -531,6 +535,8 @@ mod tests {
             None,
             false,
         );
+        // The first attempt fills up at `big`; the second runs out again at the same place, so the
+        // frame is what fitted: the small section, drawn, and `big` missing from it.
         assert_eq!(frame.dropped(), 1);
         assert_eq!(frame.restarts(), 1, "it tried to make room once");
         assert_eq!(frame.draws().len(), 1);

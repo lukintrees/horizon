@@ -187,9 +187,18 @@ pub fn parse_version(version: &str) -> Option<(u8, u8)> {
 
 /// `"1.20"` as `120`, `"1.20 Mesa"` as `120`, `"4.60 NVIDIA"` as `460`: `GL_SHADING_LANGUAGE_VERSION`
 /// in hundreds.
+///
+/// The number after the dot is already the hundredths (`120` is written `1.20`, not `1.2`), so it is
+/// read as written rather than as a decimal: `parse_version` gives (1, 20), which would make 1.20 into
+/// 300 if it were multiplied by ten.
 pub fn parse_glsl(version: &str) -> Option<u16> {
-    let (major, minor) = parse_version(version)?;
-    Some(u16::from(major) * 100 + u16::from(minor) * 10)
+    let mut parts = version.trim().split(|c: char| !c.is_ascii_digit());
+    let major: u16 = parts.find(|part| !part.is_empty())?.parse().ok()?;
+    let minor: u16 = parts
+        .find(|part| !part.is_empty())
+        .and_then(|part| part.parse().ok())
+        .unwrap_or(0);
+    Some(major * 100 + minor)
 }
 
 /// The checklist for a context that reported `reported` and lists `extensions`.
@@ -395,6 +404,9 @@ mod tests {
         assert_eq!(parse_glsl("1.20 Mesa"), Some(120));
         assert_eq!(parse_glsl("4.60 NVIDIA"), Some(460));
         assert_eq!(parse_glsl("1.1"), Some(110));
+        assert_eq!(parse_glsl("1.50"), Some(150));
+        assert_eq!(parse_glsl("3.30"), Some(330));
+        assert_eq!(parse_glsl("100"), Some(100));
         assert_eq!(parse_glsl("nonsense"), None);
     }
 
