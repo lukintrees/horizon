@@ -375,3 +375,57 @@ horizon-client-render` прошёл прежний блокер `log`, но ос
 
 Прогресс не меняет статус приёмки: wgpu-owned `gfx::Renderer` остаётся основным,
 legacy gameplay executable, меню/HUD/entities/hand и Win7 PE32/CRT/ICD не готовы.
+
+
+## 12. Игровые адаптеры проверяются в собственной ветке через Actions
+
+Создан собственный workflow `legacy-gl-branch.yml`, выполняемый для push только
+в `arena/a7e96628-horizon`. Чужие PR/workflows/runs не использовались. Первый
+собственный run 41772458349 прошёл independent GL2 runtime и компиляцию/тест
+настоящего `render_bridge`. Второй, 41773260872, прошёл также CPU-тесты GUI bridge
+и настоящий `HudAtlas::boot` + `HudBatch` -> GL2 pixel readback. Таким образом,
+неполный локальный Cargo cache больше не блокирует проверку этих игровых типов:
+полная dependency graph render crate собирается на GitHub.
+
+Добавлены `Clear::Load/Depth/ColorDepth`, GUI passes с точными RGB/alpha blend
+factors (invert/additive/vignette), LEQUAL+depth write для GUI моделей и linear
+sampling для vignette. `gui_bridge` сохраняет GUI scale, порядок triangle-list,
+alpha coverage и top-left scissor, переводит clip Z в GL -w..w. Изолированная
+глубина очищается один раз на исходный run, а не на каждый u16 chunk. Глифы
+обновляются через настоящие `font::Patch`; POT padding на изменяемых краях атласа
+также обновляется. CPU staging имеет vertex/byte limits, неудавшийся GPU upload
+освобождает временные меши до повторной попытки.
+
+`Renderer::owned` и владеющая backend/layout `WorldScene<B>` позволяют хранить
+renderer внутри Game без self-referential struct, утечки контекста или transmute
+lifetime. В render crate появился opt-in `legacy-gl` и `TerrainHudRenderer`,
+связывающий реальные SectionMesh/HudBatch/HudAtlas с native backend: upload/unload,
+lightmap, glyph patches, HUD reload, world + GUI composition и present. Это пока
+**terrain/HUD subset, не полная замена gfx::Renderer в startup**.
+
+Локально прошли 19 standalone Rust unit tests, Clippy host/i686 MSVC и все три
+OSMesa/llvmpipe режима с **15 backend checks**. Python: 641 tests, 1 skipped в
+последнем запуске. Третий собственный run **41773789614 passed**: CPU game bridge tests, два
+реальных GPU fixtures с HudAtlas/SectionMesh/font::Patch, owning
+TerrainHudRenderer (включая HUD reload/unload) и game-bridge Clippy.
+
+Осталось: выбрать backend в Game только после реализации entities/hand/sky,
+полного GUI glint/portal/CIT, большого GUI atlas paging, scheduling/input/resize.
+Для Win7 нужны dedicated std/toolchain и PE/import/CRT checks; modern i686 ABI
+Clippy и llvmpipe не являются Win7/X1650 runtime qualification.
+
+
+Четвёртый собственный run **41774182610 passed**, code commit `85623ba`:
+
+- `cargo check --locked -p horizon-client --no-default-features --features
+  horizon-client-render/legacy-gl` — проверен весь клиент, не только render crate;
+- CPU game bridge tests, три настоящих GL2 pixel fixtures игровых типов,
+  `horizon-client-render --features legacy-gl` lib/tests Clippy;
+- independent GL2 matrix; native probe собран и слинкован для i686 MSVC на
+  современной Windows, artifact `probe-modern-windows-x86-not-win7-qualified`.
+
+Cargo check не является linking/runtime тестом игры. Feature `legacy-gl` пока
+добавляет координатор рядом с wgpu, не удаляет modern dependency graph и не
+переключает обычный startup. Поэтому готового legacy gameplay EXE/Win7 runtime
+по-прежнему нет. Новый workflow фильтрует code paths, чтобы docs-only push в этой
+ветке не запускал повторную полную компиляцию.

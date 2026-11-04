@@ -162,23 +162,33 @@ work with existing draft PR #1 rather than duplicating it.
 Native context code now lives in [`horizon-legacy-render`](../../crates/horizon-legacy-render/README.md).
 The probe borrows that context and tests the actual reusable renderer in addition
 to its independent triangle test. Its safe `RenderBackend` contract is defined in
-`horizon-render-api`; the game library has an initial CPU terrain adapter only.
+`horizon-render-api`; the game library has real terrain/GUI adapters and an opt-in terrain/HUD
+coordinator, not yet the normal Game renderer.
 
-All three llvmpipe modes now require **14 backend outcomes per mode**, including
+All three llvmpipe modes now require **15 backend outcomes per mode**, including
 real texture updates, cutout, transparency/depth write, lightmap, fog, clipped
 UI-like overlay, large-coordinate rendering, padded atlas/terrain conversion,
 context switching, resource validation and reclamation, and resident-section
-replacement/rollback/eviction through `WorldScene`. Reports include a
+replacement/rollback/eviction through `WorldScene`, GUI blend/depth compositing
+and dynamic glyph patches including POT edge updates. Reports include a
 `backend_checks` list; runner schema is 2 and old triangle-only reports fail.
-Run the 12 native/API unit tests independently (the probe itself has 2 tests):
+Run the 17 native/API unit tests independently (the probe itself has 2 tests):
 
 ```sh
 cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
 ```
 
-For this continuation, 14 Rust unit tests, host and x86 Windows Clippy, all runtime
-modes and the Python suite (641 tests, 26 skipped) passed. Full game type-checking
-remains blocked by missing registry packages (287/488 supplied by pinned GitHub
-mirrors; the opt-in vendor check stops at `cpal`);
-prepared game resources are absent. No complete legacy game or Win7-compatible
+For this continuation, 19 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
+modes and the Python suite (641 tests, 1 skipped) passed. Local full-game dependency resolution remains incomplete (287/488 exact packages
+from pinned GitHub mirrors). Our branch-only Actions now compile and test the real
+game bridges and run a real HudAtlas/HudBatch GL2 fixture. This is not a complete
+Game build or gameplay smoke; prepared game resources are absent. No complete legacy game or Win7-compatible
 EXE was built. See the renderer README for the explicit remaining integration work.
+
+
+The branch-only workflow has now also linked the ordinary i686 MSVC probe on
+modern Windows (own run 41774182610 passed). Its artifact is labelled
+`probe-modern-windows-x86-not-win7-qualified`: no Win7-specific std/import/CRT or
+real Radeon ICD qualification is inferred from that build. The same run checked
+the full client with `legacy-gl` and ran three actual-game GL2 fixtures; default
+Game renderer selection is still wgpu.

@@ -43,29 +43,29 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-14 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+15 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
-contract, plus resident-section replacement/rollback, eviction, lightmap updates,
-and cleanup after partial construction. The runner requires all 14 outcomes; a triangle-only report cannot pass.
+contract, resident-section replacement/rollback, eviction, lightmap updates,
+cleanup after partial construction, and GUI compositing/depth/glyph updates. The runner requires all 15 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
-original synthetic pixels, **not stand-in game/mesher types**. The small test in
-`horizon-client-render::render_bridge` targets actual game types but requires the
-full game dependency graph; it has not run in this environment.
+original synthetic pixels, **not stand-in game/mesher types**. The tests in `horizon-client-render::{render_bridge,gui_bridge}` target actual
+game types. They now compile/run in the branch-only GitHub workflow, including
+a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 12 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 17 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 14 backend checks per mode. Python regression suite:
-641 tests, 26 skipped. Windows is type-checked, not linked/executed. Existing
+LLVM 17.0.6, all three modes, 15 backend checks per mode. Python regression suite:
+641 tests, 1 skipped. Windows is type-checked, not linked/executed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
 and the GLSL120 reported-version workaround (shader source remains GLSL110).
 
-Full game check remains blocked. GitHub vendor mirrors now supply 287 of the
+The local game check remains blocked. GitHub vendor mirrors supply 287 of the
 488 exact registry packages in the root lock; 201 are still missing. With the
 explicit directory-source configuration, Cargo now stops at `cpal`, not `log`.
 No lock checksums were changed to accept mismatched/modified mirror packages.
@@ -80,7 +80,7 @@ No generated data, downloads or runtime libraries are checked into the repositor
 The game's `gfx::Renderer` is still concrete and wgpu-owned. Device/queue accesses,
 settings/capability policy, creation/surface recovery and game frame construction
 are not switched to `RenderBackend`. There is no legacy gameplay executable,
-playable title/world/inventory path, HUD special blend/glint support, entities/hand,
+playable title/world/inventory path, full GUI glint/portal/CIT support, entities/hand,
 CPU poses, resource animation/reload integration, streaming upload scheduler,
 resize/event-loop integration, mipmapped/repeating sprite UVs, or final culling.
 Repeating/tiled UVs are rejected explicitly. Fragment-sampled lightmaps and basic
@@ -102,7 +102,7 @@ before replacing the old section, retains failed cleanup IDs for retry, and
 reclaims resources on unload/drop. Callers supply visible solid/translucent order;
 it does not implement visibility, asynchronous scheduling or a global quad sort.
 The game bridge has `upload_section` for real `SectionMesh` data with one combined
-vertex ceiling. **The game adapter still has not been compiled/run here.**
+vertex ceiling. The actual game bridge has now been compiled/tested by our branch-only Actions.
 
 `backend_resident_sections` tests the scene against real GL uploads/readbacks,
 including a replacement that fails halfway at the byte budget. The old mesh
@@ -128,3 +128,46 @@ Downloads and reports remain ignored under `.local/`; no third-party sources or
 Mojang resources are added to this change. Eight offline Python tests cover
 installation and rejection, including changed hashes, missing files, symlinks,
 traversal and injected unlisted build scripts.
+
+
+## Terrain/HUD integration (branch-only Actions)
+
+`horizon-client-render --features legacy-gl` exports
+`legacy_gfx::TerrainHudRenderer`: an owning native-context/scene coordinator taking
+real SectionMesh, HudAtlas, HudBatch and font::Patch data. It supports section
+uploads/unloads, changing lightmaps, HUD atlas replacement, bounded glyph uploads,
+GUI scaling, top-left scissors, invert/additive/vignette blending and isolated
+LEQUAL depth previews. `Clear::Load` and `Clear::Depth` preserve world colour across
+views. Vignette uses a linear atlas sample; other draws restore nearest filtering.
+Geometry is uploaded before any GUI draw, with cleanup on a staging failure.
+
+`Renderer::owned` and the owning `WorldScene<B>` remove self-referential lifetime
+requirements for storing this coordinator in a Game. Borrowed backends still work
+through `RenderBackend for &mut B`. Every native operation remains thread-confined.
+
+This is an explicit terrain/HUD subset, **not the normal game renderer selection**.
+Portal, vanilla/CIT glint and pack-text shaders are not silently drawn as plain
+atlas quads. Large HUD atlases still need paging to meet X1650 texture/VA limits;
+POT padding is bounded and an oversized upload fails rather than shrinking assets.
+The entities/hand/sky path and input/resize integration remain separate work.
+
+Our own `.github/workflows/legacy-gl-branch.yml` triggers only on
+`arena/a7e96628-horizon`. The first two runs passed both independent GL2 readbacks
+and actual game bridge compilation/tests; the second additionally passed the
+real boot-atlas/HUD GL2 test. Run 41773789614 also passed the owning coordinator, combined real mesh/HUD
+readback, glyph patches, atlas reload and game-bridge Clippy. These are not tests on Win7/X1650.
+
+
+Latest own run: [41774182610](https://github.com/lukintrees/horizon/actions/runs/41774182610)
+(all three jobs passed, code commit `85623ba`):
+
+- `cargo check --locked -p horizon-client --no-default-features --features horizon-client-render/legacy-gl`;
+- real game bridge CPU tests, three opt-in actual-game GL2 pixel tests, and
+  `horizon-client-render --features legacy-gl` library/test Clippy;
+- independent OSMesa GL2 matrix and modern-Windows i686 probe compilation/linking.
+
+The x86 probe artifact is explicitly named `probe-modern-windows-x86-not-win7-qualified`.
+A Cargo check does not link/run the game, and the ordinary i686 target is not the
+Win7-specific std/import/CRT qualification. The `legacy-gl` feature currently
+adds a coordinator alongside wgpu; it does not yet select it at Game startup or
+remove the modern dependency graph. No playable Win7 game is claimed.
