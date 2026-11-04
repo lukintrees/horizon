@@ -540,3 +540,49 @@ independent job; положительный Python report fixture не вклю�
 outcome. Fixture исправлен, добавлен тест обязательности каждого outcome, и
 финальный run полностью зелёный. Обычный Game startup всё ещё использует wgpu;
 готовый playable Win7 EXE и FPS на X1650 не заявляются.
+
+
+## 15. Тени, water-mask лодки и мировые текстовые слои
+
+Добавлены material kinds для biased text (35), shadow (14), water mask (13) и
+отдельного `see_through` stream. Classic submission теперь соответствует
+существующему игровому `gfx`: bodies → biased text → shadows → translucent items
+→ boat masks → translucent terrain → particles → see-through text → hand → HUD.
+Внутри kind сохраняется входной порядок; сортировки по atlas page нет.
+
+Тени не используют entity cutout 0.1, поэтому слабая тень не исчезает; cull back,
+без depth writes, с camera-facing polygon offset. Text 35 использует cull back,
+собственный depth bias и depth writes. Bias bodies/text/shadows переведён со знака
+reversed-Z на обычный GL depth через glPolygonOffset; точное поведение на ATI и
+разных depth formats ещё требует проверки. Water mask пишет только depth: shader
+возвращает результат до texture/alpha sampling, RGBA writes отключены. Неиспользуемые
+UV канонизируются, GPU atlas page для mask не загружается. Color mask, polygon
+offset, culling и vertex layouts сбрасываются как внутри draw list, так и между
+views; clear восстанавливает RGBA writes после depth-only кадра.
+
+`Geometry::see_through` — настоящий мировой текстовый проход после particles,
+до hand. Он сохраняет world projection/light/fog, но не тестирует и не пишет
+depth; это не GUI overlay. Back faces отсеиваются. World-only materials в hand
+отклоняются до clear; hand item-sheet quads используют обычный hand pipeline bias.
+
+Input и clipped output всех entity/hand/name-tag streams делят один vertex budget.
+Каждый stream получает оставшийся лимит до allocation следующего. Временный
+unpaged entity/GUI scratch освобождается до GPU submission, а не удерживается
+shadowed bindings до конца функции. Driver/upload failure посреди streaming всё
+ещё не гарантирует framebuffer rollback.
+
+Собственные runs **41781489098** (`4679b61`) и **41782002701** (`d648057`) прошли
+все три jobs: полный client check, CPU bridges/game Clippy, **семь actual-game GPU
+fixtures**, independent matrix и ordinary Windows x86 probe build/link. Новый
+fixture намеренно подаёт mask/item/shadow в обратном порядке и проверяет faint
+shadow под item, water exclusion на половине кадра, text bias/culling, name tags
+за terrain, hand composition и expanded vertex budget до clear. Independent
+fixture дополнительно проверяет RGBA/depth/bias/layout transitions в одном
+смешанном draw list и world fog для see-through текста.
+
+Локально: **26 standalone Rust tests**, host/i686 Clippy, **3×18 Mesa checks**,
+**642 Python tests (1 skipped)**. GUI scratch-lifetime cleanup и исключение
+Markdown из code-path workflow filters добавлены следом; финальная проверка
+фиксируется ниже. Startup остаётся wgpu. Sky, glint/portal/crumbling/energy/dissolve,
+остальные gameplay passes, input/resize и Win7 toolchain/PE/CRT/ICD/runtime ещё
+не завершены — готовый playable Win7 EXE не заявляется.

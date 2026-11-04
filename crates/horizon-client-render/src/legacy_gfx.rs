@@ -53,6 +53,7 @@ impl Default for Limits {
 pub struct Geometry<'a> {
     pub entities: &'a [crate::mesher::Vertex],
     pub hand: &'a [crate::mesher::Vertex],
+    /// World-space name tags/text: after particles, before the first-person hand.
     pub see_through: &'a [crate::mesher::Vertex],
     pub hand_view_projection: [f32; 16],
     pub nether_lighting: bool,
@@ -242,10 +243,13 @@ impl TerrainHudRenderer {
             _ => unreachable!(),
         });
 
-        let runs = gui_bridge::runs(hud, self.size(), [1.; 2], self.limits.gui_vertices)
-            .map_err(diagnostic)?;
-        let runs = paged_gui::split(self.hud.layout(), &runs, self.limits.gui_vertices)
-            .map_err(diagnostic)?;
+        let runs = {
+            let source = gui_bridge::runs(hud, self.size(), [1.; 2], self.limits.gui_vertices)
+                .map_err(diagnostic)?;
+            // Drop unpaged scratch before patch staging and GPU submission.
+            paged_gui::split(self.hud.layout(), &source, self.limits.gui_vertices)
+                .map_err(diagnostic)?
+        };
         let changed = self
             .hud
             .patch(&hud.patches, self.limits.glyph_patch_bytes)?;

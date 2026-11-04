@@ -165,7 +165,7 @@ to its independent triangle test. Its safe `RenderBackend` contract is defined i
 `horizon-render-api`; the game library has real terrain/GUI adapters and an opt-in terrain/HUD
 coordinator, not yet the normal Game renderer.
 
-All three llvmpipe modes now require **17 backend outcomes per mode**, including
+All three llvmpipe modes now require **18 backend outcomes per mode**, including
 real texture updates, cutout, transparency/depth write, lightmap, fog, clipped
 UI-like overlay, large-coordinate rendering, padded atlas/terrain conversion,
 context switching, resource validation and reclamation, and resident-section
@@ -174,7 +174,7 @@ and dynamic glyph patches including POT edge updates. Paged GUI checks enforce
 a one-page GPU cache and verify alpha order, linear gutters, depth across
 evictions, dirty-page reload and resource release. Reports include a
 `backend_checks` list; runner schema is 2 and old triangle-only reports fail.
-Run the 22 native/API unit tests independently (the probe itself has 2 tests):
+Run the 24 native/API unit tests independently (the probe itself has 2 tests):
 
 ```sh
 cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
@@ -214,3 +214,12 @@ also draws the basic first-person hand with an independent depth/projection view
 Special entity materials, sky, startup selection and Win7 runtime qualification
 remain incomplete. The report's positive Python fixture now includes the new
 outcome; omission of any required backend outcome is explicitly tested.
+
+
+The world-layer continuation passed own runs 41781489098 and 41782002701.
+`backend_entity_layers` verifies faint shadows without depth writes, depth-only
+boat masks with transparent/unused textures, polygon-offset/cullable text,
+see-through text retaining world fog, and mask/bias/layout resets inside mixed
+draw lists and across views. The game coordinator now has seven actual-game GPU
+fixtures. Latest local totals are 26 standalone Rust tests, 3x18 llvmpipe outcomes
+and 642 Python tests (1 skipped); Win7 hardware/runtime qualification is unchanged.

@@ -43,13 +43,13 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-17 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+18 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
-paged GUI streaming with linear gutters, depth continuity and one-page eviction. The runner requires all 17 outcomes; a triangle-only report cannot pass.
+paged GUI streaming with linear gutters, depth continuity and one-page eviction. The runner requires all 18 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -59,9 +59,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 22 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 24 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 17 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 18 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -229,8 +229,8 @@ lighting (including Nether and independently shaded back faces), and bilinearly
 samples the CPU lightmap per vertex. There is **no vertex texture fetch**: GL2
 can expose zero vertex texture units. Hurt/TNT/white flashes are mixed in GLSL
 **after texture/tint and before lighting**, preserving the game's operation order.
-Supported overlays: 0, 1, 5, 15, 16..31, 32; HDR tier/OIT tags are ignored only as
-they are in classic SDR. Other flags, glint/portal/shadow/crumbling/energy/dissolve
+Supported overlays: 0, 1, 5, 13, 14, 15, 16..31, 32, 35; HDR tier/OIT tags are ignored only as
+they are in classic SDR. Other flags, glint/portal/crumbling/energy/dissolve
 materials are rejected, not flattened into a normal textured quad.
 
 Entity meshes have a checked 76-byte layout (base vertex, back colour, light
@@ -263,3 +263,42 @@ Local verification: 24 standalone Rust tests, host/i686 Clippy, 3x17 Mesa outcom
 642 Python tests (1 skipped). This remains **not a playable Win7 executable**:
 normal startup is still wgpu, full entity material/sky coverage and platform
 integration/Win7 qualification remain unfinished.
+
+
+## Shadows, depth-only boat masks and world text
+
+Classic material kinds now distinguish bodies, biased text, shadows, translucent
+items, water masks, particles and explicit see-through text. The coordinator uses
+the game's classic material order (stable within each kind), not an atlas-page
+sort: bodies -> biased text -> shadows -> items -> water masks -> translucent
+terrain -> particles -> see-through text -> hand -> HUD.
+
+Shadows accept faint coverage below the normal entity cutout, cull back faces and
+never write depth. Polygon offset pulls bodies/text/shadows towards the camera;
+its sign is mapped to conventional GL depth. These offsets still need real ATI
+qualification, not an assumed equivalence across every depth-buffer format.
+Boat masks bypass texture/alpha sampling, write depth without RGBA writes, and
+need no atlas page upload. Mask UVs are canonicalised even when the unused source
+UV is nonfinite. Polygon-offset text is back-face culled and writes depth;
+see-through text bypasses depth test/writes while retaining world projection,
+lighting and fog. World-only mask/shadow/text-pipeline materials are rejected in
+the hand view. Item hand quads use the ordinary hand pipeline's bias.
+
+Colour masks, culling, polygon offset, depth and vertex layouts are explicitly
+restored between draws; clears restore colour writes even after a depth-only
+frame. Independent readbacks check both transitions within one mixed draw list
+and across views. Entity/hand/name-tag expansion consumes one shared remaining
+vertex budget before clearing. Unpaged entity and GUI scratch is released before
+GPU submission rather than retained by shadowed local variables.
+
+Own runs [41781489098](https://github.com/lukintrees/horizon/actions/runs/41781489098)
+(`4679b61`) and [41782002701](https://github.com/lukintrees/horizon/actions/runs/41782002701)
+(`d648057`) passed all three jobs. The latter includes **seven actual-game GPU
+fixtures**, CPU bridges, game Clippy/full-client check, **3x18 backend checks**
+and ordinary Windows x86 probe build/link. The real-type fixture intentionally
+submits mask/item/shadow out of order, then checks a faint shadow beneath an item,
+water excluded from half the image, biased/cullable world text, name tags behind
+terrain, hand composition and combined expansion-budget rejection without clearing
+the previous frame. Local totals: **26 standalone Rust tests**, host/i686 Clippy,
+3x18 Mesa outcomes, 642 Python tests (1 skipped). Remaining startup/sky/special
+materials/platform/Win7 qualification limits above still apply.
