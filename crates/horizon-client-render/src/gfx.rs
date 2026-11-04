@@ -6473,15 +6473,29 @@ impl Renderer {
             self.capture_result = Some(result.map_err(|e| e.to_string()));
         }
         // This path is deliberately opt-in and still maintains wgpu's resources
-        // for fallback, captures and screenshots. All resident sections are
-        // drawn: the native backend does not yet share wgpu's visibility culler.
+        // for fallback, captures and screenshots. It uses conservative frustum
+        // culling, but not wgpu's cave/occlusion or distance visibility logic.
         #[cfg(all(
             feature = "legacy-live",
             any(target_os = "linux", target_os = "windows")
         ))]
-        let legacy_presented = if self.screenshot.is_none() && !self.suspended {
+        let legacy_presented = if self.screenshot.is_none()
+            && !self.suspended
+            && self.legacy_live.is_some()
+        {
+            let frustum = self.camera_frustum(
+                frame.fov_degrees,
+                frame.yaw,
+                frame.pitch,
+                frame.bob * frame.spin,
+                frame.depth_far,
+            );
+            let min_y = self.layout.min_y();
             if let Some(renderer) = &mut self.legacy_live {
-                let visible: Vec<_> = renderer.section_keys().collect();
+                let visible: Vec<_> = renderer
+                    .section_keys()
+                    .filter(|&key| legacy_section_in_frustum(key, min_y, frame.camera, &frustum))
+                    .collect();
                 match renderer.render(
                     frame,
                     &visible,
@@ -10780,6 +10794,27 @@ impl Frustum {
         })
     }
 }
+/// Conservative expanded section bounds in camera-relative coordinates.
+/// Compute the subtraction in f64 before converting to the f32 frustum, so
+/// visibility remains stable at large world coordinates.
+#[cfg(all(
+    feature = "legacy-live",
+    any(target_os = "linux", target_os = "windows")
+))]
+fn legacy_section_in_frustum(
+    key: SectionKey,
+    min_y: i32,
+    camera: DVec3,
+    frustum: &Frustum,
+) -> bool {
+    let origin = DVec3::new(
+        f64::from(key.0) * 16.0 - 1.0,
+        f64::from(min_y) + f64::from(key.1) * 16.0 - 1.0,
+        f64::from(key.2) * 16.0 - 1.0,
+    ) - camera;
+    frustum.intersects(origin.as_vec3(), (origin + DVec3::splat(18.0)).as_vec3())
+}
+
 /// Vanilla's `Projection`: reversed depth (near maps to 1, far to 0, tests
 /// are GREATER_THAN_OR_EQUAL), which keeps far faces a hair apart, like
 /// fire_side's 0.01 pixel in front of its block, from z-fighting.
@@ -10894,6 +10929,38 @@ fn frustum(m: Mat4) -> [Vec4; 6] {
 #[cfg(test)]
 mod tests {
     use crate::gfx::static_entity_shader;
+
+    #[cfg(all(
+        feature = "legacy-live",
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    #[test]
+    fn legacy_frustum_keeps_camera_section_at_large_coordinates() {
+        use glam::{DVec3, Vec4};
+        let frustum = super::Frustum {
+            planes: [
+                Vec4::new(1., 0., 0., 2.),
+                Vec4::new(-1., 0., 0., 2.),
+                Vec4::new(0., 1., 0., 2.),
+                Vec4::new(0., -1., 0., 2.),
+                Vec4::new(0., 0., 1., 2.),
+                Vec4::new(0., 0., -1., 2.),
+            ],
+        };
+        let camera = DVec3::new(20_000_008., -56., -19_999_992.);
+        assert!(super::legacy_section_in_frustum(
+            (1_250_000, 0, -1_250_000),
+            -64,
+            camera,
+            &frustum
+        ));
+        assert!(!super::legacy_section_in_frustum(
+            (1_250_010, 0, -1_250_000),
+            -64,
+            camera,
+            &frustum
+        ));
+    }
 
     fn adapter(device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
         wgpu::AdapterInfo {
