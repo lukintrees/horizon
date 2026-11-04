@@ -11,6 +11,7 @@ use glow::HasContext;
 
 #[cfg(not(windows))]
 use crate::egl;
+use crate::render;
 use crate::report::{Check, Report, parse_version};
 
 /// Framebuffer size: deliberately not powers of two.
@@ -60,7 +61,8 @@ const LIMITS: [(&str, u32); 9] = [
 ];
 
 /// Creates the context, gathers what it reports and runs the render check.
-pub fn run() -> Result<Report, String> {
+/// `frame_out`, when given, is where the G1 frame is written as a PNG.
+pub fn run(frame_out: Option<String>) -> Result<Report, String> {
     // Windows (Catalyst) offers OpenGL through WGL only; Linux and CI use EGL on Mesa.
     #[cfg(windows)]
     let context = crate::wgl::Context::new()?;
@@ -94,6 +96,7 @@ pub fn run() -> Result<Report, String> {
             render_check(&gl, &mut report);
         }
     }
+    frame_check(&gl, &mut report, frame_out.as_deref());
     Ok(report)
 }
 
@@ -344,4 +347,55 @@ unsafe fn draw_triangle(gl: &glow::Context, program: glow::Program) -> Outcome {
         gl.delete_buffer(buffer);
     }
     outcome
+}
+
+/// Gate G1: the offscreen frame with the textured quad. Needs OpenGL 2.1 and GLSL 1.20, so a
+/// driver below 2.1 gets a check that is not required; the floor mode still passes.
+fn frame_check(gl: &glow::Context, report: &mut Report, frame_out: Option<&str>) {
+    if matches!(parse_version(&report.gl_version), Some(found) if found < (2, 1)) {
+        report.checks.push(Check {
+            name: "gate_g1_frame",
+            required: false,
+            ok: false,
+            detail: "skipped: the renderer needs OpenGL 2.1 and GLSL 1.20".to_string(),
+        });
+        return;
+    }
+    match render::render(gl) {
+        Err(error) => report.checks.push(Check {
+            name: "gate_g1_frame",
+            required: true,
+            ok: false,
+            detail: error,
+        }),
+        Ok(frame) => {
+            report.checks.push(Check {
+                name: "gate_g1_frame",
+                required: true,
+                ok: true,
+                detail: format!("{}x{} frame rendered and read back", frame.width, frame.height),
+            });
+            report.checks.extend(render::checks(&frame));
+            if let Some(path) = frame_out {
+                let png = crate::png::encode_rgba(frame.width, frame.height, &frame.rgba);
+                let written = (|| -> std::io::Result<()> {
+                    if let Some(dir) = std::path::Path::new(path).parent() {
+                        if !dir.as_os_str().is_empty() {
+                            std::fs::create_dir_all(dir)?;
+                        }
+                    }
+                    std::fs::write(path, &png)
+                })();
+                report.checks.push(Check {
+                    name: "frame_png",
+                    required: false,
+                    ok: written.is_ok(),
+                    detail: match written {
+                        Ok(()) => format!("wrote {path} ({} bytes)", png.len()),
+                        Err(e) => format!("cannot write {path}: {e}"),
+                    },
+                });
+            }
+        }
+    }
 }

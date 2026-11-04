@@ -47,7 +47,7 @@ jobs:
         env:
           MESA_GL_VERSION_OVERRIDE: "2.1"
           MESA_GLSL_VERSION_OVERRIDE: "120"
-        run: cargo run --quiet -- --out out/gl21.json
+        run: cargo run --quiet -- --out out/gl21.json --frame out/gl21-frame.png
 
       - name: "Probe, the floor: OpenGL 2.0 and GLSL 1.10"
         continue-on-error: true
@@ -147,7 +147,7 @@ jobs:
         env:
           MESA_GL_VERSION_OVERRIDE: "2.1"
           MESA_GLSL_VERSION_OVERRIDE: "120"
-        run: .\target\release\gl2-probe.exe --out out\gl21.json
+        run: .\target\release\gl2-probe.exe --out out\gl21.json --frame out\gl21-frame.png
 
       - name: "Probe, the floor: OpenGL 2.0 and GLSL 1.10"
         continue-on-error: true

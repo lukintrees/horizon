@@ -6,7 +6,9 @@
 //! `MESA_GL_VERSION_OVERRIDE` and `MESA_GLSL_VERSION_OVERRIDE`.
 
 pub mod egl;
+pub mod png;
 pub mod probe;
+pub mod render;
 pub mod report;
 #[cfg(windows)]
 pub mod wgl;

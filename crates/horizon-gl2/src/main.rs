@@ -6,18 +6,20 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut out_path = None;
+    let mut frame_path = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--out" => out_path = args.next(),
+            "--frame" => frame_path = args.next(),
             other => {
-                eprintln!("unknown argument: {other}\nusage: gl2-probe [--out FILE]");
+                eprintln!("unknown argument: {other}\nusage: gl2-probe [--out FILE] [--frame FILE.png]");
                 return ExitCode::from(2);
             }
         }
     }
 
     // A panic is reported like a missing context, so the report file still says why.
-    let result = std::panic::catch_unwind(horizon_gl2::probe::run).unwrap_or_else(|payload| {
+    let result = std::panic::catch_unwind(move || horizon_gl2::probe::run(frame_path)).unwrap_or_else(|payload| {
         let text = payload
             .downcast_ref::<&str>()
             .map(|s| s.to_string())
