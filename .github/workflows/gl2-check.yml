@@ -1,7 +1,7 @@
 name: GL2 compile diagnostics
 # Temporary: type-checks the renderer and the game with every compiler message kept, and prints them as one
-# annotation (the only channel that survives the sandbox). When rustfmt disagrees, the formatted tree's
-# diff goes out as base64 annotations too. Removed once the OpenGL 2 path builds.
+# annotation (the only channel that survives the sandbox). The job `fmt` sends rustfmt's fix as gzip+base64
+# annotations. Removed once the OpenGL 2 path builds.
 on:
   workflow_dispatch:
   push:
@@ -41,7 +41,14 @@ jobs:
           esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print(f"::error title=gl2-check::{esc}")
           PY
-      - name: Formatting diff as base64 annotations
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: Formatting diff as base64 annotations (gzip)
         run: |
           set +e
           cargo +stable fmt --all -- --check > /dev/null 2>&1
@@ -49,13 +56,13 @@ jobs:
           echo "::error title=fmt::fmt exit=${fmt_code}"
           if [ "$fmt_code" != "0" ]; then
             cargo +stable fmt --all
-            git diff > fmt.patch
-            wc -c fmt.patch
-            base64 -w0 fmt.patch | fold -w 15000 > fmt.b64
+            git diff --stat | tail -1
+            git diff | gzip -9 | base64 -w0 | fold -w 3800 > fmt.b64
             n=$(wc -l < fmt.b64)
+            echo "::error title=fmt-chunks::chunks=${n}"
             i=0
             while read -r chunk; do
               i=$((i+1))
-              echo "::error title=fmt-patch ${i}/${n}::${chunk}"
+              echo "::error title=fmt-patch::${i}/${n} ${chunk}"
             done < fmt.b64
           fi
