@@ -913,3 +913,51 @@ workspace tests**, ordinary probe linking. Первый полный погод�
 прошёл own CI 41808013392; финальный дополнительно проверяет reuse images и
 repeated/switched sprites. Docs-only follow-up не меняет проверенный код.
 Чужие ветки, PR, workflows и Actions не читались.
+
+
+## Классическое небо целиком в Frame (2026-11-04)
+
+Добавлены atmosphere, sunrise/sunset, source celestial (sun/moon/flash), stars,
+End sky и нижний dark disc. Учитываются `sky_blocked` и внешний skybox/end_sky gate.
+Clouds и panorama остаются отдельными неготовыми passes, не скрываются автоматически.
+
+Восьмисекторные fans y=16/-4, radius=512 воспроизводят аналитический WGSL disc,
+а не подменяют его градиентом: perspective interpolation вершинных distances
+даёт тот же radial blend до сферического rim и цилиндра. Fog: (0,sky_end),
+(sky_end,sky_end), с fog-color alpha. Flatten clip z сохраняет XY/w и не даёт
+world near/far обрезать analytic discs; на следующем draw этот mode сбрасывается.
+Sunrise использует общий 16-triangle generator. Base/sunrise/dark disc — без
+bob/spin, celestial/stars — с world pose и star rotation, как исходный renderer.
+
+End переиспользует tiled generator на 6144 vertices и tint 0x282828. Celestial
+0/2/3 идут через общий unlit/CPU-lightmap additive+paging conversion, но без depth
+TEST и WRITE. Stars используют исходный seed 10842, bounded immutable CPU cache,
+finite/clamped brightness и SDR brightness². GPU star-cache и HDR alpha marks
+не выдаются за реализованные.
+
+Порядок: clear → base/sunrise → End/celestial → stars → dark disc → SolidLoad
+terrain → прежние entity/transparency/weather/hand/HUD. WorldScene до clear
+проверяет все visible keys и relative origins; sky meshes участвуют в preflight.
+Default sky limit **32768 vertices**, включая basic и paged celestial expansion;
+source celestial >8192 — error, не silent truncation. Basic mesh ≤9000 vertices,
+индексы на bounded stack; один native basic mesh одновременно. Невалидные End
+sprites/colors/rotations/fog/geometry и budgets не стирают прошлый кадр.
+
+26-й independent readback проверяет depth/flatten/fog/blend/reset/SolidLoad.
+Два CPU tests проверяют порядок, gating, shared geometry, pose/fog и rejection.
+15-й actual-game GPU fixture сверяет 25 pixels с независимым analytic ray/octagon
+oracle WGSL возле 30 млн блоков; затем sunrise, celestial/foreground terrain,
+синтетический белый End, dark disc, stars/rotation/brightness² на 512×512,
+missing keys/budgets и границу **2208 mesh bytes** для sunrise.
+Локально: **40 Rust**, host/i686 Clippy, **3×26 OSMesa**, **642 Python, 1 skipped**.
+
+Startup/input/resource wiring, clouds/panorama/lines и прочие отклоняемые passes
+ещё не завершены; playable Win7 32-bit / X1650 qualification пока нет.
+
+Финальный own CI [41811072027](https://github.com/lukintrees/horizon/actions/runs/41811072027) на `d760a9a`: **все три jobs SUCCESS**.
+Два новых CPU sky tests, **15 actual-game GPU fixtures**, full-client check/game
+Clippy, **3×26 independent readbacks**, **39 выполненных Windows x86 workspace
+tests**, ordinary probe linking. Первый запуск выявил две устаревшие предпосылки
+фикстур: sky теперь поддерживается, а full-fog terrain не обязан оставаться red.
+Финальная проверка использует panorama rejection и отделяет depth от fog; End и
+stars также пройдены. Docs-only commit не меняет код; чужие Actions/PR не читались.

@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-25 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+26 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, spherical/dual-distance fog, reversed game depth, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 25 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 26 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -62,7 +62,7 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 Verified here: stable Rust 1.88.0, 38 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 25 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 26 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -508,12 +508,13 @@ introduced. This is a flat-screen classic-SDR subset, **not a playable backend**
 The actual-frame entry point checks camera/projection arithmetic, current HUD
 size (rebuild after resize), fog and classic lightmap parameters, glint, counts,
 visibility duplicates and explicitly requested missing passes before submission.
-Unsupported: panorama, visible sky/End sky, clouds/celestial/stars,
+Unsupported: panorama, clouds,
 lines/outlines, GPU skin frames (caller must request CPU
 poses), glowing silhouettes, dynamic/colored lights, emissive layers,
 border, post/menu blur, chunk fade and water mirrors. These are **errors,
-not automatically disabled options**. Consequently normal Overworld/title frames
-are not yet accepted; a no-sky classic frame without these passes is supported.
+not automatically disabled options**. Title frames and world frames requesting
+these missing passes remain rejected. Supported classic frames may now include
+atmosphere, sunrise, celestial bodies, stars and End sky.
 Shadow/motion/pack-uniform metadata alone does not request an additional classic
 pass. Unsupported materials remain rejected by the typed bridges before clear.
 CPU rejection preserves the framebuffer; lightmap/resource state is not a
@@ -523,7 +524,7 @@ The eleventh actual-type GPU fixture calls `render_game_frame` with perspective,
 a camera at x=30,000,000.25, resident terrain, visible static and dynamic entities,
 shared half-intensity lightmap, fog override with alpha/equal ranges, independently
 projected hand after a depth clear, and HUD. It also compares the entire previous
-framebuffer after unsupported-sky, malformed-quad and missing-section failures.
+framebuffer after unsupported-panorama, malformed-quad and missing-section failures.
 Four CPU frame tests and one shared-lightmap test exercise matrices/near/far,
 pose order, f64 precision, borrowed geometry, combined limits, fallbacks,
 parameter rejection and resized/stale HUD. The independent mandatory outcome
@@ -731,3 +732,71 @@ full-client check/game Clippy, **3x25 independent runtime outcomes**,
 The initial weather implementation also passed own CI 41808013392; this final
 run additionally verifies adjacent-image reuse and repeated/switched sprites.
 The following docs-only commit changes no tested code.
+
+
+## Complete classic sky stages (2026-11-04)
+
+The actual-frame adapter now renders Overworld atmosphere, sunrise/sunset,
+source celestial quads (sun/moon/flash), seeded stars, the End's six tiled faces,
+and the low-camera dark disc. It respects `sky_blocked` and the game's outer
+`skybox || end_sky` gate; unused celestial metadata behind that gate does not
+request a draw. Clouds and title panorama remain separate unsupported passes.
+
+The atmosphere/dark disc use eight-sector fans at y=16/-4 and radius 512.
+This is not a horizon-color approximation: perspective-interpolated vertex
+spherical/cylindrical distances equal WGSL `disc_distance`'s radial interpolation.
+The sky fog ranges are (0, sky_end) and (sky_end, sky_end), multiplied by fog-color
+alpha. Basic-disc clip z is flattened while retaining XY/w, so the world's
+near/far clip cannot cut off an analytic disc. Sunrise shares the unchanged
+16-triangle generator; base/sunrise/dark disc ignore bob/spin, as the game does.
+Celestial bodies and stars retain the world's posed projection and star rotation.
+
+End faces share the original bounded 6144-vertex tiled generator and 0x282828
+color. Celestial material codes 0/2/3 use the existing CPU lightmap/unlit additive
+conversion, paging and source order, but an explicit depthless sky policy.
+There is no fog/cutout/overlay/glint on these quads. Stars reuse the original
+seed-10842 generator, with a bounded immutable CPU `OnceLock` cache; SDR adds
+brightness squared (the source brightness in RGB and alpha). Brightness is
+finite-checked/clamped as in the game. No persistent legacy GPU star cache or
+modern HDR alpha-mark equivalence is claimed.
+
+New `Pass::Sky` and `Kind::SkyCelestial` disable BOTH depth testing and writes,
+not only writes. Native flattening resets for every draw. `Phase::SolidLoad`
+loads the sky color/depth instead of clearing it again. Before the initial sky
+clear, `WorldScene::validate_visible` checks every visible key and f64-to-f32
+camera-relative origin, and all sky/paged meshes join transient mesh preflight.
+Submission order: clear → atmosphere/sunrise → End/source celestial → stars →
+dark disc → loaded opaque terrain → existing entity/transparency/weather/hand/HUD
+stages. Thus foreground terrain can overwrite sky without inheriting its depth.
+
+Default combined sky ceiling: 32768 vertices, including generated basic geometry
+and page-clipped celestial output; source celestial input over 8192 vertices is
+an explicit error, never silently truncated. Star generation is bounded to 1500
+candidate quads; a generated basic mesh has at most 9000 vertices and uses bounded
+stack indices. One native basic mesh lives at a time; source End/seed temporaries
+are bounded. Missing/invalid End sprites, nonfinite colors/rotations/fog, malformed
+quads and CPU/GPU ceilings are checked before framebuffer clear.
+
+The mandatory 26th independent readback proves depth bypass, no depth writes,
+flatten/reset, sky fog, celestial additive light, cleanup and `SolidLoad` versus
+ordinary clear. Two new actual-game CPU tests cover ordering/shared generation,
+pose/fog distinctions, gating and metadata/count rejection. The fifteenth
+actual-game GPU fixture compares 25 atmosphere pixels to an independent analytic
+WGSL ray/octagon reference at a 30-million-block camera, checks unbobbed sky,
+sunrise, unfogged celestial/foreground terrain, white synthetic End tiles,
+dark disc, seeded/rotated stars and brightness-squared blending at 512x512,
+missing-key/budget preservation and the 2208-byte sunrise mesh boundary.
+
+Local: 40 standalone Rust tests, host/i686 Clippy, 3x26 OSMesa readbacks and
+642 Python tests (one skipped). Normal Game startup/resource/input integration,
+clouds, panorama, lines/outlines and other rejected passes remain unfinished.
+The full game has not been executed on Windows 7 32-bit / Radeon X1650.
+
+Final own CI [41811072027](https://github.com/lukintrees/horizon/actions/runs/41811072027) at `d760a9a`: **all three jobs passed** — two new
+sky CPU tests, **15 actual-game GPU fixtures**, full-client check/game Clippy,
+**3x26 independent runtime outcomes**, **39 executed Windows x86 workspace tests**
+and ordinary x86 probe linking. The first run exposed two fixture assumptions:
+sky is no longer unsupported, and a full-fogged terrain quad cannot be expected
+to stay red. The final run updates the rejection to still-unsupported panorama
+and isolates terrain depth from fog; it includes all later End/star checks.
+The following docs-only commit changes no tested source.

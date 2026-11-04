@@ -413,3 +413,30 @@ instances and sprite switches), full-client check/game Clippy, 3x25 independent
 readbacks, 39 executed Windows x86 workspace tests and ordinary probe linking.
 Only this session's branch/workflow/runs were used; docs-only follow-up does not
 change verified source.
+
+
+### Real classic sky stages
+
+`backend_sky_background` raises the mandatory matrix to **3x26**: background
+geometry/celestial bypass depth without writing it, ordinary depth/clip state
+resets, fog and source-alpha additive light are correct, and `SolidLoad` retains
+background color while ordinary `Solid` still clears. Native resources clean up.
+
+Actual `gfx::Frame` now drives analytic-equivalent octagonal atmosphere/dark
+fans, the shared sunrise/End/star generators, paged celestial quads and star
+rotation/brightness. It checks every visible section/origin and sky/paged budget
+before clearing. Combined ceiling 32768 sky vertices, source celestial <=8192;
+no unbounded CPU tiling or pixel-ray work, doubles, vertex texture fetch or new
+GL extensions. Two CPU tests and the fifteenth actual-game GPU fixture cover
+analytic ray-reference pixels, pose, sunrise/End/celestial/star color/order,
+foreground terrain, gating, metadata/budget rejection and native cleanup.
+
+Local: 40 Rust tests, host/i686 Clippy, 3x26 llvmpipe checks and 642 Python tests
+(one skipped). This still does not select legacy from normal Game startup or
+qualify actual Win7/X1650 runtime. Clouds/panorama/lines and remaining explicit
+missing passes have not been silently disabled.
+
+Final own CI [41811072027](https://github.com/lukintrees/horizon/actions/runs/41811072027) at `d760a9a`: **all three jobs successful**,
+including two sky CPU tests, 15 actual-game GPU fixtures, full-client check/game
+Clippy, 3x26 independent readbacks, 39 executed Windows x86 workspace tests and
+ordinary x86 probe linking. Docs-only follow-up does not change tested code.
