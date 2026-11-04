@@ -145,6 +145,29 @@ impl<'a> RendererFacade<'a> {
             Adapter::Legacy { .. } => None,
         }
     }
+    /// Hands the window surface away before a replacement renderer takes it.
+    /// The legacy owner keeps its own native surface (G01), so asking here is
+    /// an error, not a silent no-op that would leave two owners.
+    pub fn release_surface(&mut self) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => {
+                renderer.release_surface();
+                Ok(())
+            }
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => {
+                Err("legacy GL2 surface handover belongs to the native context (G01)".into())
+            }
+        }
+    }
+    /// Re-creates the surface a failed handover set aside, or says why not.
+    pub fn recreate_surface(&mut self) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => renderer.recreate_surface(),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { .. } => Err("legacy GL2 has no wgpu surface to recreate".into()),
+        }
+    }
     pub fn resize(&mut self, size: [u32; 2]) -> Result<()> {
         match &mut self.inner {
             Adapter::Modern(renderer) => renderer.resize(size[0], size[1]),

@@ -21001,8 +21001,11 @@ impl Loading {
             return;
         };
         let offscreen = self.options.as_ref().is_some_and(|o| o.offscreen);
-        if let Some(renderer) = &mut self.renderer {
-            renderer.release_surface();
+        if let Some(renderer) = &mut self.renderer
+            && let Err(error) =
+                horizon_client::renderer_facade::RendererFacade::modern(renderer).release_surface()
+        {
+            log::warn!("Horizon: cannot hand the menu renderer's surface over: {error}");
         }
         let bundle = self.gui.as_ref().expect("the menu bundle was just set");
         let _step = startup::step("renderer.title_artwork");
@@ -21095,7 +21098,7 @@ impl Loading {
         let window = self.window.clone().ok_or("window closed")?;
         // Keep the loader's device and swap in the real textures in one step.
         if let Some(renderer) = &mut self.renderer {
-            renderer.release_surface();
+            horizon_client::renderer_facade::RendererFacade::modern(renderer).release_surface()?;
         }
         let renderer_at = Instant::now();
         let renderer = startup::time("renderer.world", || {

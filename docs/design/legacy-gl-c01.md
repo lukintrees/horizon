@@ -43,6 +43,9 @@ wgpu-free dependency graph остаётся за D01.
   `take_screenshot_result`, `restore_screenshot_result`): Game не пишет поля renderer'а напрямую, а
   device-recovery/pack-reload переносят pending request/result через них. Modern снимает кадр сам;
   legacy честно отвечает ошибкой «readback не реализован» до U01, а не молча теряет запрос.
+- Surface handover (`release_surface`/`recreate_surface`) — тоже команды фасада: modern передаёт и
+  восстанавливает wgpu surface, legacy возвращает ошибку, потому что его surface принадлежит native
+  context (G01). Молчаливый no-op оставил бы два владельца окна.
 - `capabilities()` описывает реализованные feature families, **не** фактические hardware GL limits.
   `require()` явно отклоняет GPU poses/panorama/packs на legacy; F01 ещё должен вызвать negotiation
   до geometry generation. Native driver checks/budgets продолжают проверяться существующим backend.
@@ -74,7 +77,7 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 |---|---|
 | `Game.renderer`, `Loading.renderer`, `no_resources::Missing.renderer` | R02/R03: owning facade, shared state migration — интегратор |
 | `build_renderer`, `loading_renderer`, `renderer_for`, `new_renderer`, `recover_device` | R02/R03/G01: factory, ownership, reload/recovery — интегратор |
-| `config`, `suspended`, window sizing / resize handlers | R02b: размер drawable через `renderer_facade::drawable_size`; `SurfaceConfiguration`/resize/recreate остаются P01–R02 |
+| `config`, `suspended`, window sizing / resize handlers | R02b/c: размер drawable через `renderer_facade::drawable_size`, surface handover через команды фасада; resize outcome/`SurfaceConfiguration` остаются P01 |
 | `device`, `queue`, `hud` uploads в skins/maps/UI/glint | A01/A02/E01/R02: CPU patches/resource commands; не протаскивать device/queue в общий trait |
 | `screenshot*`, capture requests/results, device recovery | R02a: facade commands `request_screenshot`/`screenshot_pending`/`take_*`/`restore_*` уже используются Game; modern capture остаётся в modern adapter, legacy readback — U01 |
 | `info`, gpu times/census, HDR calibration, shader macros/packs | Backend-neutral diagnostics; modern-only commands явно capability gated |

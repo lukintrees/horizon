@@ -385,7 +385,7 @@ impl<'a> Split<'a> {
     fn enable(&mut self) -> Result<()> {
         let window = self.host.window.clone().ok_or("no window")?;
         let mut old = self.host.renderer.take().ok_or("no renderer")?;
-        old.release_surface();
+        horizon_client::renderer_facade::RendererFacade::modern(&mut old).release_surface()?;
         let api = self.host.settings.horizon.api;
         let batching = self.host.settings.horizon.translucent_batching;
         let shader_pack = super::shader_packs::picked_pack_draws_flat(&self.host.settings);
@@ -403,7 +403,8 @@ impl<'a> Split<'a> {
         let renderer = match built {
             Ok(r) => r,
             Err(e) => {
-                old.recreate_surface()?;
+                horizon_client::renderer_facade::RendererFacade::modern(&mut old)
+                    .recreate_surface()?;
                 self.host.renderer = Some(old);
                 return Err(e);
             }
@@ -413,7 +414,8 @@ impl<'a> Split<'a> {
             Ok(c) => c,
             Err(e) => {
                 drop(renderer);
-                old.recreate_surface()?;
+                horizon_client::renderer_facade::RendererFacade::modern(&mut old)
+                    .recreate_surface()?;
                 self.host.renderer = Some(old);
                 return Err(e);
             }
