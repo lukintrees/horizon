@@ -138,7 +138,7 @@ jobs:
       - name: Inventory static PE imports (not a compatibility verdict)
         shell: pwsh
         run: |
-          python tools/pe_imports.py target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe --github-annotations | Tee-Object -FilePath wgl-static-imports.txt
+          python tools/pe_imports.py target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe --github-annotations --check-win7 | Tee-Object -FilePath wgl-static-imports.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:

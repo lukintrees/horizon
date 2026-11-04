@@ -36,6 +36,14 @@ class ImportTests(unittest.TestCase):
         for bits in (32, 64):
             self.assertEqual(pe.imports(fixture(bits)), [('KERNEL32.dll', ['ExitTest', 'ordinal:7'])])
 
+    def test_flags_known_new_imports_case_insensitively_by_dll(self):
+        result = [('KERNEL32.dll', ['ExitTest', 'GetSystemTimePreciseAsFileTime']),
+                  ('USER32.dll', ['GetDpiForWindow']),
+                  ('other.dll', ['GetDpiForWindow'])]
+        self.assertEqual(pe.win7_findings(result), [('KERNEL32.dll', 'GetSystemTimePreciseAsFileTime'),
+                                                    ('USER32.dll', 'GetDpiForWindow')])
+        self.assertEqual(pe.win7_findings([('KERNEL32.dll', ['ExitTest'])]), [])
+
     def test_rejects_malformed_input(self):
         for data in (b'', b'MZ', fixture(32)[:0x210]):
             with self.assertRaises(ValueError):

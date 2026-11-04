@@ -9,6 +9,25 @@ from pathlib import Path
 import struct
 
 
+# A deliberately incomplete list: these exports were introduced after Windows 7.
+# Absence of findings does not prove compatibility, especially with dynamic loading.
+POST_WIN7 = {
+    'kernel32.dll': {
+        'GetSystemTimePreciseAsFileTime', 'WaitOnAddress', 'WakeByAddressSingle',
+        'WakeByAddressAll', 'GetSystemTimeAdjustmentPrecise',
+    },
+    'user32.dll': {
+        'GetDpiForWindow', 'GetSystemMetricsForDpi', 'AdjustWindowRectExForDpi',
+        'SetProcessDpiAwarenessContext', 'SetThreadDpiAwarenessContext',
+    },
+}
+
+
+def win7_findings(result):
+    return [(dll, symbol) for dll, symbols in result for symbol in symbols
+            if symbol in POST_WIN7.get(dll.lower(), set())]
+
+
 def imports(data):
     def u16(offset):
         return struct.unpack_from('<H', data, offset)[0]
@@ -92,6 +111,8 @@ def main():
     parser.add_argument('path', type=Path)
     parser.add_argument('--github-annotations', action='store_true',
                         help='also publish each DLL inventory as a GitHub Actions notice')
+    parser.add_argument('--check-win7', action='store_true',
+                        help='fail on known post-Windows-7 imports (not an exhaustive audit)')
     args = parser.parse_args()
     try:
         result = imports(args.path.read_bytes())
@@ -106,6 +127,12 @@ def main():
             message = f'{dll}: ' + ', '.join(symbols)
             message = message[:3000].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
             print(f'::notice::{message}')
+    findings = win7_findings(result)
+    for dll, symbol in findings:
+        message = f'Windows 7 incompatibility: {dll}!{symbol} is a known post-Windows-7 static import'
+        print(f'::warning::{message}' if args.github_annotations else message)
+    if args.check_win7 and findings:
+        parser.exit(1, 'Known incompatible Windows 7 imports found.\n')
 
 
 if __name__ == '__main__':
