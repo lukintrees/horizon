@@ -74,7 +74,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo clippy --locked -p horizon-client-render --features legacy-scene --lib --tests -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
+          if cargo clippy --locked -p horizon-client-render --features legacy-scene,legacy-gl-window --lib --tests --example legacy_scene_replay -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
             exit 0
           fi
           python3 - <<'PY'
@@ -185,6 +185,29 @@ jobs:
           from pathlib import Path
           import re
           log = Path(os.environ['RUNNER_TEMP'], 'win7-client-check.log').read_text(errors='replace')
+          match = re.search(r'^error(?:\[[^]]+\])?:', log, re.MULTILINE)
+          text = (log[match.start():match.start() + 1800] + '\n...\n' + log[-650:]) if match else log[-2500:]
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + text)
+          PY
+          exit 1
+      - name: Compile captured-scene GL replay for Win7 x86
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_BUILD_JOBS: 2
+          CARGO_PROFILE_DEV_DEBUG: 0
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          set -o pipefail
+          if cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-client-render --no-default-features --features legacy-scene,legacy-gl-window --example legacy_scene_replay --target i686-win7-windows-msvc 2>&1 | tee "$RUNNER_TEMP/win7-replay.log"; then
+            exit 0
+          fi
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          log = Path(os.environ['RUNNER_TEMP'], 'win7-replay.log').read_text(errors='replace')
           match = re.search(r'^error(?:\[[^]]+\])?:', log, re.MULTILINE)
           text = (log[match.start():match.start() + 1800] + '\n...\n' + log[-650:]) if match else log[-2500:]
           text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')

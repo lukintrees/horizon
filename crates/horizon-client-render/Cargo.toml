@@ -94,3 +94,7 @@ naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out", "glsl-out", "msl
 [[example]]
 name = "legacy_gl_window"
 required-features = ["legacy-gl-window"]
+
+[[example]]
+name = "legacy_scene_replay"
+required-features = ["legacy-scene", "legacy-gl-window"]
