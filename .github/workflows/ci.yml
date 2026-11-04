@@ -93,7 +93,11 @@ jobs:
       - name: Check formatting and lint
         if: steps.rust.outputs.required != 'false'
         run: |
-          cargo +stable fmt --all -- --check
+          # `--check`'s complaint is a diff on stdout, and a failing step's log is a blob URL:
+          # with `::error::` GitHub makes the diff an annotation, which is what a fork without
+          # the log API can read. `pipefail` is what keeps the pipeline's exit status cargo's.
+          set -eo pipefail
+          cargo +stable fmt --all -- --check 2>&1 | sed 's/^/::error::/'
           cargo +stable clippy --workspace --all-targets -- -D warnings
           # The server build (released as horizon-engine): the game without sound or controllers.
           cargo +stable clippy -p horizon-client --all-targets --no-default-features -- -D warnings

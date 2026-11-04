@@ -371,7 +371,10 @@ mod tests {
     #[test]
     fn no_two_attributes_share_a_byte() {
         let format = VertexFormat::legacy();
-        let mut spans: Vec<(u32, u32)> = format.attributes.iter().map(|a| (a.offset, a.end())).collect();
+        let mut spans: Vec<(u32, u32)> = Vec::new();
+        for attribute in &format.attributes {
+            spans.push((attribute.offset, attribute.end()));
+        }
         spans.sort_unstable();
         for pair in spans.windows(2) {
             assert!(pair[0].1 <= pair[1].0, "{:?} overlaps {:?}", pair[0], pair[1]);

@@ -498,21 +498,19 @@ pub fn check(measured: &Measured, stage: Stage, limits: &Limits) -> Result<()> {
 /// undefined values.
 pub fn check_linked(vertex: &Measured, fragment: &Measured) -> Result<()> {
     for v in &vertex.uniforms {
-        // One `if let` chain rather than a nested `if`: clippy's `collapsible_if`, and the
-        // condition reads as one sentence.
-        if let Some(f) = fragment.uniform(&v.name)
-            && (f.ty != v.ty || f.count != v.count)
-        {
-            return Err(Error::budget(
-                "linked uniforms",
-                format!(
-                    "`{}` is {} in the vertex stage and {} in the fragment stage",
-                    v.name,
-                    describe(v),
-                    describe(f)
-                ),
-            ));
+        let Some(f) = fragment.uniform(&v.name) else { continue };
+        if f.ty == v.ty && f.count == v.count {
+            continue;
         }
+        return Err(Error::budget(
+            "linked uniforms",
+            format!(
+                "`{}` is {} in the vertex stage and {} in the fragment stage",
+                v.name,
+                describe(v),
+                describe(f)
+            ),
+        ));
     }
     Ok(())
 }

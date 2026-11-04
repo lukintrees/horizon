@@ -29,7 +29,8 @@ use crate::gl::Context;
 type MultiDrawArraysFn = unsafe extern "system" fn(u32, *const i32, *const i32, i32);
 
 /// `glMultiDrawElementsEXT(mode, count, type, indices, primcount)`.
-type MultiDrawElementsFn = unsafe extern "system" fn(u32, *const i32, u32, *const *const c_void, i32);
+type MultiDrawElementsFn =
+    unsafe extern "system" fn(u32, *const i32, u32, *const *const c_void, i32);
 
 /// Which of the extension's entry points a driver actually exports.
 ///
@@ -345,8 +346,9 @@ mod tests {
         // alternative (calling a null pointer) is a segfault with no message.
         assert!(arrays_fn(std::ptr::null()).is_none());
         assert!(elements_fn(std::ptr::null()).is_none());
-        // A real address, never called here.
-        let address = 1_usize as *const c_void;
+        // A well-aligned address that is not null -- what a non-null symbol looks like to the
+        // helpers -- and never called here.
+        let address = std::ptr::dangling::<c_void>();
         assert!(arrays_fn(address).is_some());
         assert!(elements_fn(address).is_some());
     }
