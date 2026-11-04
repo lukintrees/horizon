@@ -423,27 +423,52 @@ fn noise(x: u32, y: u32) -> i32 {
     ((h >> 8) % 17) as i32 - 8
 }
 
+/// Every level of the atlas's mipmap chain, level 0 first, each a square of `size` texels a side.
+/// The levels are made on the CPU and uploaded one by one, so no GL 3.0 call is needed.
+fn mip_chain(base: Vec<u8>, size: usize) -> Vec<(usize, Vec<u8>)> {
+    let mut levels = vec![(size, base)];
+    while levels.last().map_or(false, |(s, _)| *s > 1) {
+        let (s, prev) = levels.last().expect("the chain is never empty");
+        let s = *s;
+        let next_size = s / 2;
+        let mut next = vec![0u8; next_size * next_size * 4];
+        for y in 0..next_size {
+            for x in 0..next_size {
+                for channel in 0..4 {
+                    let at = |xx: usize, yy: usize| u32::from(prev[(yy * s + xx) * 4 + channel]);
+                    let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
+                    next[(y * next_size + x) * 4 + channel] = ((sum + 2) / 4) as u8;
+                }
+            }
+        }
+        levels.push((next_size, next));
+    }
+    levels
+}
+
 fn upload_atlas(gl: &glow::Context) -> Result<glow::Texture, String> {
-    let bytes = atlas_bytes();
+    let levels = mip_chain(atlas_bytes(), 64);
     // SAFETY: the context is current on this thread.
     unsafe {
         let texture = gl.create_texture()?;
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST_MIPMAP_LINEAR as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-        gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            glow::RGBA as i32,
-            64,
-            64,
-            0,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(Some(bytes.as_slice())),
-        );
+        for (level, (size, bytes)) in levels.iter().enumerate() {
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                level as i32,
+                glow::RGBA as i32,
+                *size as i32,
+                *size as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(bytes.as_slice())),
+            );
+        }
         Ok(texture)
     }
 }
@@ -539,6 +564,17 @@ mod tests {
         assert!(horizon_ndc(&level).abs() < 1e-6);
         let down = horizon_ndc(&Camera::orbit(0));
         assert!((0.40..0.50).contains(&down), "{down}");
+    }
+
+    #[test]
+    fn the_mip_chain_halves_down_to_one_texel_and_averages_the_texels() {
+        // Red 0, 255, 255, 255 in a 2x2 image: the average is (765 + 2) / 4 = 191.
+        let base = vec![0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255];
+        let levels = mip_chain(base, 2);
+        assert_eq!(levels.len(), 2);
+        assert_eq!((levels[1].0, levels[1].1.as_slice()), (1, &[191, 0, 0, 255][..]));
+        let atlas = mip_chain(atlas_bytes(), 64);
+        assert_eq!(atlas.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [64, 32, 16, 8, 4, 2, 1]);
     }
 
     #[test]

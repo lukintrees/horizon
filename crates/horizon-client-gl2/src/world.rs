@@ -120,6 +120,9 @@ const FACES: [(usize, i32, f32); 6] = [
     (0, -1, 0.6),
 ];
 
+/// The light of a face whose air cell has a roof somewhere above it. Open to the sky is full light.
+const COVERED_LIGHT: f32 = 0.6;
+
 /// The corners of a face, as (s, t) on its two tangent axes, in triangle order (two triangles).
 const QUAD: [(f32, f32); 4] = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
 const TRIANGLES: [usize; 6] = [0, 1, 2, 0, 2, 3];
@@ -144,14 +147,21 @@ pub fn build_section(world: &World, sx: i32, sy: i32, sz: i32) -> Mesh {
                     if world.block(neighbour[0], neighbour[1], neighbour[2]).is_solid() {
                         continue;
                     }
+                    // The light is the one of the air cell the face looks into, as in vanilla.
+                    let light = if open_to_sky(world, neighbour[0], neighbour[1], neighbour[2]) { 1.0 } else { COVERED_LIGHT };
                     let tile = tile_for(block, axis, sign);
-                    push_face(&mut vertices, [x as f32, y as f32, z as f32], axis, sign, shade, tile);
+                    push_face(&mut vertices, [x as f32, y as f32, z as f32], axis, sign, shade * light, tile);
                     faces += 1;
                 }
             }
         }
     }
     Mesh { vertices, faces }
+}
+
+/// Whether no block stands above (x, y, z) up to the top of the world.
+fn open_to_sky(world: &World, x: i32, y: i32, z: i32) -> bool {
+    (y + 1..world.size_y()).all(|above| !world.block(x, above, z).is_solid())
 }
 
 fn tile_for(block: Block, axis: usize, sign: i32) -> Tile {
@@ -224,6 +234,17 @@ mod tests {
         }
         let top = mesh.vertices.chunks(FLOATS_PER_VERTEX).filter(|v| v[5] == 1.0).count();
         assert_eq!(top, 6, "the top face is two triangles, shaded 1.0");
+    }
+
+    #[test]
+    fn a_face_that_looks_into_a_roofed_air_cell_is_darker() {
+        // The stone at (5,5,5) has air to its east at (6,5,5), and a roof of stone above that air.
+        let world = World::new(32, 16, |x, y, z| if (x, y, z) == (5, 5, 5) || (x, y, z) == (6, 6, 5) { Block::Stone } else { Block::Air });
+        let mesh = build_section(&world, 0, 0, 0);
+        let roofed = mesh.vertices.chunks(FLOATS_PER_VERTEX).filter(|v| (v[5] - 0.6 * COVERED_LIGHT).abs() < 1e-6).count();
+        assert!(roofed > 0, "the east face of (5,5,5) is shaded by the roof");
+        let lone = build_section(&single_block((5, 5, 5)), 0, 0, 0);
+        assert!(lone.vertices.chunks(FLOATS_PER_VERTEX).all(|v| v[5] != 0.6 * COVERED_LIGHT));
     }
 
     #[test]
