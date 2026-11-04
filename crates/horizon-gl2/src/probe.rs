@@ -81,7 +81,18 @@ pub fn run() -> Result<Report, String> {
     // SAFETY: `gl` belongs to the current context, which `context` keeps alive until the end.
     unsafe {
         gather(&gl, &mut report);
-        render_check(&gl, &mut report);
+        // Below OpenGL 2.0 the shader and buffer entry points are not there at all, and glow would
+        // call through a null pointer. Such a driver gets a failed check instead of the render.
+        if matches!(parse_version(&report.gl_version), Some(found) if found < (2, 0)) {
+            report.checks.push(Check {
+                name: "render_check",
+                required: true,
+                ok: false,
+                detail: "skipped: the driver reports OpenGL below 2.0".to_string(),
+            });
+        } else {
+            render_check(&gl, &mut report);
+        }
     }
     Ok(report)
 }
