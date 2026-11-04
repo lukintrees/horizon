@@ -850,16 +850,22 @@ impl Renderer {
         })
     }
 
-    pub fn run(&mut self, frames: u32) -> Result<(), RendererError> {
+    /// winit's `run_app` consumes the event loop, so running a renderer is a
+    /// one-shot operation. The game takes the renderer out of its `Option`.
+    pub fn run(mut self, frames: u32) -> Result<(), RendererError> {
         self.app.frames_left = frames.max(1);
         self.app.frames_drawn = 0;
-        self.event_loop
-            .run_app(&mut self.app)
+        let Self {
+            event_loop,
+            mut app,
+        } = self;
+        event_loop
+            .run_app(&mut app)
             .map_err(|err| io::Error::other(err.to_string()))?;
-        if let Some(message) = &self.app.error {
+        if let Some(message) = &app.error {
             return Err(io::Error::other(message.clone()).into());
         }
-        let drawn = self.app.frames_drawn;
+        let drawn = app.frames_drawn;
         let methods = unavailable_methods().len();
         println!("{}", lang::get("horizon.legacyGl.startup"));
         println!("{}", lang::tr("horizon.legacyGl.frameDrawn", &[&drawn]));
@@ -876,7 +882,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn render(&mut self, _frame: &RenderFrame) -> Result<bool, RendererError> {
+    pub fn render(self, _frame: &RenderFrame) -> Result<bool, RendererError> {
         self.run(1)?;
         Ok(false)
     }

@@ -105,7 +105,7 @@ impl Game {
     fn run(&mut self) -> Result<(), Box<dyn Error>> {
         let renderer = self
             .renderer
-            .as_mut()
+            .take()
             .ok_or_else(|| UsageError(lang::get("horizon.legacyGl.unavailable")))?;
         renderer.run(self.options.settings.frames)?;
         Ok(())
