@@ -1,0 +1,26 @@
+# The game's OpenGL 2.1 window (docs/plans/opengl21-radeon-x1650.md, phase 1). A separate workspace, like
+# crates/horizon-gl2, so its dependencies cannot change the game's Cargo.lock. Run it from this directory.
+[package]
+name = "horizon-client-gl2"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "The OpenGL 2.1 game window: a winit window with a WGL context, drawing gate G1 at any size"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "horizon-client-gl2"
+path = "src/main.rs"
+
+[dependencies]
+glow = "0.17"
+horizon-gl2 = { path = "../horizon-gl2" }
+raw-window-handle = "0.6"
+serde_json = "1"
+# The same winit as the game, so one window type runs in both.
+winit = "=0.30.13"
+
+[workspace]

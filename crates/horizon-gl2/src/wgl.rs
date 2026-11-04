@@ -148,11 +148,13 @@ fn last_error(what: &str) -> String {
     format!("{what} failed (Win32 error {})", unsafe { GetLastError() })
 }
 
-/// A current OpenGL context on a hidden window. Dropping it releases everything.
+/// A current OpenGL context on a window. Dropping it releases the context and the device context,
+/// and destroys the window only when this crate created it.
 pub struct Context {
     hwnd: Hwnd,
     hdc: Hdc,
     glrc: Hglrc,
+    owns_window: bool,
     /// Why the OpenGL 2.1 request was not honoured, when the legacy context is in use.
     pub fallback: Option<String>,
 }
@@ -172,6 +174,15 @@ impl Context {
     /// expects.
     pub fn new_window(width: i32, height: i32) -> Result<Self, String> {
         Self::create(Some((width, height)))
+    }
+
+    /// A 2.1 context on a window someone else made, such as the game's winit window.
+    ///
+    /// # Safety
+    /// `hwnd` must be a live window handle (`HWND`) on this thread. The window must outlive the
+    /// returned context, and the caller must not give it a pixel format of its own.
+    pub unsafe fn attach(hwnd: isize) -> Result<Self, String> {
+        Self::setup(hwnd as Hwnd, false)
     }
 
     fn create(window: Option<(i32, i32)>) -> Result<Self, String> {
@@ -222,9 +233,14 @@ impl Context {
         if hwnd.is_null() {
             return Err(last_error("CreateWindowExW"));
         }
-        // From here on, `ctx` owns the window and Drop cleans up whatever was created.
+        Self::setup(hwnd, true)
+    }
+
+    /// Pixel format and contexts on `hwnd`. From the first line on, the returned `Context` owns
+    /// what was created, so Drop cleans up after a failure too.
+    fn setup(hwnd: Hwnd, owns_window: bool) -> Result<Self, String> {
         let hdc = unsafe { GetDC(hwnd) };
-        let mut ctx = Context { hwnd, hdc, glrc: ptr::null_mut(), fallback: None };
+        let mut ctx = Context { hwnd, hdc, glrc: ptr::null_mut(), owns_window, fallback: None };
         if hdc.is_null() {
             return Err(last_error("GetDC"));
         }
@@ -333,7 +349,7 @@ impl Drop for Context {
             if !self.hdc.is_null() {
                 ReleaseDC(self.hwnd, self.hdc);
             }
-            if !self.hwnd.is_null() {
+            if self.owns_window && !self.hwnd.is_null() {
                 DestroyWindow(self.hwnd);
             }
         }

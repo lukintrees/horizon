@@ -1,0 +1,4 @@
+# Build output and the probe reports CI writes; the lock stays out until the probe becomes a real tool.
+/target/
+/out/
+/Cargo.lock
