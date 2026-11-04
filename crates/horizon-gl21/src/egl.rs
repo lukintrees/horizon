@@ -132,17 +132,17 @@ impl Context {
 
         // The window, as EGL takes it. An X11 window is its id passed by address, so the id lives
         // here, in `new`'s own frame, for the whole `create_window_surface` call: a struct returned
-        // by value would be free to move, and the pointer with it.
-        let mut x11_id: u64 = 0;
+        // by value would be free to move, and the pointer with it. Written by the arm that has one,
+        // and zero for every other platform, which never reads it.
+        let mut x11_id: u64 = match window {
+            RawWindowHandle::Xlib(handle) => handle.window,
+            RawWindowHandle::Xcb(handle) => u64::from(handle.window.get()),
+            _ => 0,
+        };
         #[cfg(all(unix, not(target_os = "macos")))]
         let mut wayland_window: Option<*mut c_void> = None;
         let native = match window {
-            RawWindowHandle::Xlib(handle) => {
-                x11_id = handle.window;
-                ptr::from_mut(&mut x11_id).cast::<c_void>()
-            }
-            RawWindowHandle::Xcb(handle) => {
-                x11_id = u64::from(handle.window.get());
+            RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_) => {
                 ptr::from_mut(&mut x11_id).cast::<c_void>()
             }
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -298,10 +298,10 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         frame_destroy(&self.gl, &self.frame);
-        // Safety: the context is current, and these are this `Context`'s own handles.
-        unsafe {
-            self.egl.make_current(self.display, None, None, None).ok();
-        }
+        // Nothing is current any more: the surface and the context are given back below, and a
+        // driver will not release them while they are. Unmaking them current cannot fail in a way
+        // this can act on.
+        self.egl.make_current(self.display, None, None, None).ok();
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(window) = self.wayland_window {
             // Safety: made by `wl_egl_window_create` for the surface destroyed right below.
@@ -703,8 +703,8 @@ fn reported<'a>(
 /// An empty list is not an error: `capabilities` reads the version for everything an extension would
 /// have said, and a driver that lists none still has what its version made core.
 fn extension_list(gl: &glow::Context) -> Vec<&'static str> {
-    // Safety: the context is current, and `glow` caches the list it read when it was made.
-    let listed = unsafe { gl.supported_extensions() };
+    // `glow` caches the list it read when it was made: no GL call here.
+    let listed = gl.supported_extensions();
     const WANTED: [&str; 5] = [
         "GL_ARB_framebuffer_object",
         "GL_ARB_draw_buffers",
@@ -771,7 +771,7 @@ fn gl_proc(name: &str) -> Option<extern "C" fn()> {
                 }
             }
         }
-        return None;
+        None
     }
     #[cfg(windows)]
     {

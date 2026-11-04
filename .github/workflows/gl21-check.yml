@@ -64,13 +64,16 @@ jobs:
         if: steps.clippy.outputs.status != '0'
         continue-on-error: true
         run: python tools/gl21_annotate.py clippy /tmp/clippy.txt
-      # The crates' own tests, which is where `checks` fails next: a failed assertion is a line in a
-      # file, and `gl21_annotate.py test` puts it back on the file.
+      # The GL 2.1 tests, and only those: a failed assertion is a line in a file, and
+      # `gl21_annotate.py test` puts it back on the file. The other tests of
+      # `horizon-client-render` take a wgpu device, and a runner without one has them panicking
+      # inside `request_device` — noise about the runner, not about this branch (`checks` runs the
+      # whole workspace anyway).
       - name: Tests
         id: tests
         run: |
           set +e
-          cargo +stable test --locked -p horizon-client-render -p horizon-gl21 > /tmp/test.txt 2>&1
+          cargo +stable test --locked -p horizon-client-render -p horizon-gl21 gl21 > /tmp/test.txt 2>&1
           status=$?
           grep -E "^(error|test result|failures:)" /tmp/test.txt | head -40
           grep -A7 "panicked at" /tmp/test.txt | head -160
