@@ -395,7 +395,8 @@ mod tests {
         let missing_attributes = problems
             .iter()
             .filter(|p| p.contains("declared by no shader"));
-        assert_eq!(missing_attributes.count(), TERRAIN.len() + TERRAIN_UNIFORMS.len());
+        let silent = TERRAIN.len() + TERRAIN_UNIFORMS.len();
+        assert_eq!(missing_attributes.count(), silent);
 
         // The same slot with the wrong width: a driver would bind it and read garbage.
         let narrow = [(

@@ -1233,7 +1233,8 @@ mod tests {
 
         records.clear();
         assert_eq!((records.ids(), records.live()), (0, 0));
-        assert!(records.page_sections().is_empty() && records.dirty.is_empty());
+        let fresh = records.page_sections().is_empty() && records.dirty.is_empty();
+        assert!(fresh);
         for x in 0..DIRTY_LIMIT as i32 {
             records.insert(Record::new((x, 0, 0), 0, 0, 1, 0));
         }

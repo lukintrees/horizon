@@ -11700,7 +11700,8 @@ mod sprite_upload_tests {
         assert_eq!(layer_split(256, false, None, 256 * SPRITE_ARRAYS), Ok(256));
         let err = layer_split(128, false, None, 1291).unwrap_err();
         assert!(err.contains("128 texture layers per array"), "{err}");
-        assert!(layer_split(512, false, None, 512 * SPRITE_ARRAYS + 1).is_err());
+        let too_many = 512 * SPRITE_ARRAYS + 1;
+        assert!(layer_split(512, false, None, too_many).is_err());
     }
 
     #[test]

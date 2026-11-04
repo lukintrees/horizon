@@ -92,6 +92,35 @@ def code_is_long(line):
     return len(bare) > MAX_WIDTH
 
 
+def call_widths(line):
+    """The argument widths of the `assert`-family macros on `line` that rustfmt would break.
+
+    `assert_eq!(a, b)` is a call to rustfmt: past 60 columns of arguments it goes one argument a
+    line, which is how a one-line equality came back from CI as four. Only these macros are judged:
+    `#[derive(..)]` at 64 columns, and calls whose arguments are themselves chains, are kept as
+    written, so judging every call would send people to reformat code CI accepts.
+    """
+    code = code_of(line).rstrip()
+    out = []
+    for match in MACRO.finditer(code):
+        depth = 0
+        close = None
+        for i in range(match.end() - 1, len(code)):
+            if code[i] == "(":
+                depth += 1
+            elif code[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    close = i
+                    break
+        if close is None:
+            continue
+        width = close - match.end()
+        if width > CHAIN_WIDTH:
+            out.append((match.group(1), width))
+    return out
+
+
 def chain_width(line):
     """The width of a method chain inside an `assert!`-family macro, or None.
 
@@ -196,6 +225,14 @@ def check_text(text, name="<memory>"):
                     number,
                     f"this method chain is {width} columns; rustfmt breaks one past "
                     f"{CHAIN_WIDTH}: bind a step to a name",
+                )
+            )
+        for called, width in call_widths(raw):
+            problems.append(
+                (
+                    number,
+                    f"`{called}!(..)` has {width} columns of arguments; rustfmt breaks a macro "
+                    f"call past {CHAIN_WIDTH}: bind a value to a name first",
                 )
             )
         names = unsorted_use(code)

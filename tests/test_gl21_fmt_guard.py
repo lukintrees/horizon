@@ -33,6 +33,20 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(found(statement), [])
 
 
+class MacroWidthTests(unittest.TestCase):
+    def test_a_macro_call_with_too_many_argument_columns_goes_a_line_each(self):
+        # CI turned this one-line equality into four lines.
+        line = "        assert_eq!(missing_attributes.count(), TERRAIN.len() + TERRAIN_UNIFORMS.len());\n"
+        self.assertTrue(any("assert_eq!" in message for message in found(line)))
+
+    def test_a_derive_or_a_plain_call_is_left_alone(self):
+        # 64 columns in a derive and 65 in a call: rustfmt keeps both as written.
+        derive = "#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]\n"
+        self.assertEqual(found(derive), [])
+        call = "pub fn plan(sections: &[SectionDraw], sky: Option<SectionRuns>, present: bool) -> Plan {\n"
+        self.assertEqual(found(call), [])
+
+
 class LiteralTests(unittest.TestCase):
     def test_a_long_string_over_several_lines_is_not_reformatted(self):
         text = (
