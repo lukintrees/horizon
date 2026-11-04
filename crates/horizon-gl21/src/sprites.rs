@@ -58,11 +58,6 @@ impl AtlasLevels {
         out
     }
 
-    /// The whole thing as one upload, named `TextureId::SpriteAtlas`.
-    pub fn upload(&self) -> Upload<'_> {
-        upload(&self.levels())
-    }
-
     /// How many levels there are: `Atlas::mip_levels` of the atlas this was made for.
     pub fn depth(&self) -> u32 {
         self.sides.len() as u32
@@ -168,7 +163,14 @@ fn levels_of(atlas: &Atlas, pixels: &[u8]) -> AtlasLevels {
     }
 }
 
-/// `levels` as the sprite atlas's upload: the same breadcrumbs, with the texture's own name.
+/// `levels` as the sprite atlas's upload: the breadcrumbs `AtlasLevels::levels` just made, with the
+/// texture's own name. Bound to a name first, because the `Upload` borrows them:
+///
+/// ```ignore
+/// let breadcrumbs = atlas_levels.levels();
+/// driver.upload(sprites::upload(&breadcrumbs))?;
+/// ```
+///
 pub fn upload<'a>(levels: &'a [Level<'a>]) -> Upload<'a> {
     Upload {
         texture: TextureId::SpriteAtlas,
@@ -229,7 +231,8 @@ mod tests {
             assert!(made.fits());
         }
         // And an upload of them is a valid one: the check that stops a driver reading past a level.
-        let problems = atlas_levels.upload().problems();
+        let breadcrumbs = atlas_levels.levels();
+        let problems = upload(&breadcrumbs).problems();
         assert_eq!(problems, Vec::<String>::new());
     }
 
