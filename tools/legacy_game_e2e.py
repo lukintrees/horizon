@@ -77,7 +77,7 @@ def run_game(command: Sequence[str], *, timeout: float, home: Path | None = None
         env["HORIZON_NO_AUDIO"] = "1"
         started = time.monotonic()
         try:
-            proc = subprocess.Popen(list(command), cwd=root, env=env, text=True,
+            proc = subprocess.Popen(list(command), env=env, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     start_new_session=True)
             try:
