@@ -91,7 +91,7 @@ jobs:
           PY
           exit 1
       - name: Test legacy adapters in the real crate
-        if: github.event_name == 'workflow_dispatch' && !inputs.trace_link
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
           CARGO_TERM_COLOR: never

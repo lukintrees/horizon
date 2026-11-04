@@ -723,15 +723,8 @@ fn main() {
             }
         }
         let mut gui_atlas = legacy::hud::Atlas::new(8, 4, &gui_pixels, 4).unwrap();
-        let mut gui = horizon_legacy_gl::Renderer::new(|name| {
-            let p = getproc(name.as_ptr());
-            if p.is_null() {
-                dlsym(handle, name.as_ptr())
-            } else {
-                p
-            }
-        })
-        .unwrap();
+        gpu.select_atlas(gui_set).unwrap();
+        let gui = &mut gpu;
         let pages: Vec<_> = gui_atlas
             .pages()
             .iter()
@@ -834,7 +827,7 @@ fn main() {
             gui.draw_ordered(&gui_mesh.vertices, &gui_mesh.draws(), &identity)
                 .unwrap();
         };
-        gui_draw(&mut gui);
+        gui_draw(gui);
         assert_eq!(rgb(sample(5)), [200, 0, 0]);
         assert_eq!(rgb(sample(26)), [0, 200, 0]);
         let dirty = gui_atlas
@@ -891,7 +884,7 @@ fn main() {
             )
             .is_err()
         );
-        gui_draw(&mut gui);
+        gui_draw(gui);
         assert_eq!(rgb(sample(14)), [0, 0, 200]);
         assert_eq!(rgb(sample(18)), [0, 0, 200]);
         assert_eq!(rgb(sample(5)), [200, 0, 0]);
@@ -1029,7 +1022,7 @@ fn main() {
         gui.draw_ordered(&gui_mesh.vertices, &gui_mesh.draws(), &identity)
             .unwrap();
         assert_eq!(rgb(sample(4)), [200, 0, 0], "scissor leaked");
-        gui.destroy();
+        gpu.select_atlas(terrain_set).unwrap();
 
         // Real tiled UV encoding on a merged face: a two-texel stripe must
         // repeat twice rather than stretching over the whole quad.

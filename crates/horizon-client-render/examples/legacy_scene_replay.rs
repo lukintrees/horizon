@@ -12,7 +12,7 @@ mod app {
         legacy::{
             animation::SpriteAnimator,
             atlas::Atlas,
-            scene,
+            hud as legacy_hud, scene,
             world::{SectionKey, World},
         },
     };
@@ -39,6 +39,7 @@ mod app {
         window: Arc<Window>,
         scene: Scene,
         world: World,
+        gui: legacy_hud::PatchAtlas,
         animator: SpriteAnimator,
         started: Instant,
         next_frame: Instant,
@@ -151,19 +152,31 @@ mod app {
                     .map_err(|e| format!("sprite upload: {e:?}"))?;
                 state.animator.uploaded(page).map_err(|e| e.to_string())?;
             }
-            let fog = scene::frame_fog(&frame);
-            viewport(0, 0, size.width as i32, size.height as i32);
-            clear_color(fog.color[0], fog.color[1], fog.color[2], 1.0);
-            clear(0x4000 | 0x0100);
-            let draws = scene::plan(
+            let prepared = scene::prepare_frame(
                 &mut state.world,
+                &mut state.gui,
                 &frame,
                 [size.width, size.height],
                 state.scene.renderer.min_y,
                 &state.visible,
+                state.scene.renderer.gamma,
+                state.scene.renderer.fullbright,
             )
-            .map_err(|e| format!("world plan: {e:?}"))?;
-            for draw in draws {
+            .map_err(|e| format!("frame plan: {e:?}"))?;
+            // Captures deliberately omit entities and HUD. The placeholder GUI
+            // atlas is only for preparing their empty passes, never rendered.
+            if !prepared.entities.vertices.is_empty() || !prepared.hud.vertices.is_empty() {
+                return Err("capture unexpectedly contains entity or HUD geometry".into());
+            }
+            viewport(0, 0, size.width as i32, size.height as i32);
+            clear_color(
+                prepared.fog.color[0],
+                prepared.fog.color[1],
+                prepared.fog.color[2],
+                1.0,
+            );
+            clear(0x4000 | 0x0100);
+            for draw in prepared.terrain {
                 if let Some(fog) = draw.fog {
                     renderer.draw_ordered_with_fog(draw.vertices, &draw.draws, &draw.transform, fog)
                 } else {
@@ -208,48 +221,55 @@ mod app {
                 // SAFETY: the context is current and remains on this event-loop thread.
                 let mut renderer = unsafe { Renderer::new(|name| context.resolve(name)) }
                     .map_err(|e| format!("GL init: {e:?}"))?;
-                let result = (|| -> Result<(World, Vec<SectionKey>), String> {
-                    let atlas = Atlas::new(
-                        assets.sprite_size,
-                        assets.texture_layers,
-                        renderer.max_texture_size().min(2048),
-                        &assets.pixels,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    let pages: Vec<_> = atlas
-                        .pages()
-                        .iter()
-                        .map(|p| Page {
-                            side: p.side,
-                            pixels: &p.pixels,
-                        })
-                        .collect();
-                    // SAFETY: the context remains current and page bytes are alive for the call.
-                    unsafe { renderer.upload_pages(&pages) }
-                        .map_err(|e| format!("atlas upload: {e:?}"))?;
-                    let hud = HudBatch::new(scene.renderer.size);
-                    let frame = scene.frame(&hud);
-                    let lightmap =
-                        scene::lightmap(&frame, scene.renderer.gamma, scene.renderer.fullbright);
-                    let mut world = World::new(atlas, lightmap);
-                    let mut visible = Vec::new();
-                    let mut failure = None;
-                    capture::read_meshes(&self.capture, "sections", |key, mesh| {
-                        if failure.is_none() {
-                            let key = (key[0], key[1], key[2]);
-                            match world.upload(key, &mesh) {
-                                Ok(()) => visible.push(key),
-                                Err(e) => failure = Some(format!("section {key:?}: {e:?}")),
+                let result =
+                    (|| -> Result<(World, Vec<SectionKey>, legacy_hud::PatchAtlas), String> {
+                        let atlas = Atlas::new(
+                            assets.sprite_size,
+                            assets.texture_layers,
+                            renderer.max_texture_size().min(2048),
+                            &assets.pixels,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        let pages: Vec<_> = atlas
+                            .pages()
+                            .iter()
+                            .map(|p| Page {
+                                side: p.side,
+                                pixels: &p.pixels,
+                            })
+                            .collect();
+                        // SAFETY: the context remains current and page bytes are alive for the call.
+                        unsafe { renderer.upload_pages(&pages) }
+                            .map_err(|e| format!("atlas upload: {e:?}"))?;
+                        let hud = HudBatch::new(scene.renderer.size);
+                        let frame = scene.frame(&hud);
+                        let lightmap = scene::lightmap(
+                            &frame,
+                            scene.renderer.gamma,
+                            scene.renderer.fullbright,
+                        );
+                        let mut world = World::new(atlas, lightmap);
+                        let mut visible = Vec::new();
+                        let mut failure = None;
+                        capture::read_meshes(&self.capture, "sections", |key, mesh| {
+                            if failure.is_none() {
+                                let key = (key[0], key[1], key[2]);
+                                match world.upload(key, &mesh) {
+                                    Ok(()) => visible.push(key),
+                                    Err(e) => failure = Some(format!("section {key:?}: {e:?}")),
+                                }
                             }
+                        })
+                        .map_err(|e| format!("read sections: {e}"))?;
+                        if let Some(error) = failure {
+                            return Err(error);
                         }
-                    })
-                    .map_err(|e| format!("read sections: {e}"))?;
-                    if let Some(error) = failure {
-                        return Err(error);
-                    }
-                    Ok((world, visible))
-                })();
-                let (world, visible) = match result {
+                        let gui =
+                            legacy_hud::Atlas::new(1, 1, &[255; 4], renderer.max_texture_size())
+                                .map_err(|e| format!("placeholder GUI atlas: {e:?}"))?;
+                        Ok((world, visible, legacy_hud::PatchAtlas::new(gui)))
+                    })();
+                let (world, visible, gui) = match result {
                     Ok(value) => value,
                     Err(error) => {
                         // SAFETY: still on the owning thread with the context current.
@@ -270,6 +290,7 @@ mod app {
                     window,
                     scene,
                     world,
+                    gui,
                     animator,
                     started,
                     next_frame: started + Duration::from_millis(50),

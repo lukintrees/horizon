@@ -315,6 +315,8 @@ fn sort_translucent(
 /// `Renderer::draw_ordered_with_fog` (or `draw_ordered` without fog), in order.
 pub struct SectionDraw<'a> {
     pub key: SectionKey,
+    /// True for the back-to-front terrain pass, false for solid/cutout.
+    pub translucent: bool,
     pub vertices: &'a [horizon_legacy_gl::Vertex],
     pub draws: Vec<Draw>,
     pub transform: [f32; 16],
@@ -346,6 +348,7 @@ impl<'a> SectionDraw<'a> {
             .collect();
         Self {
             key,
+            translucent,
             vertices: &mesh.vertices,
             draws,
             transform,

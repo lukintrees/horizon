@@ -2,7 +2,7 @@
 //! world draw planner. This does not yet install the backend in the game loop.
 use super::{
     entity,
-    hud::Atlas,
+    hud::{self, Atlas, PatchAtlas},
     world::{PlanError, SectionDraw, SectionKey, World},
 };
 use crate::gfx::{Frame, View};
@@ -141,9 +141,241 @@ pub fn plan<'a>(
     )
 }
 
+/// Errors in the partial native frame bridge. Unsupported entity and HUD
+/// materials are returned explicitly instead of silently drawing them wrong.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FrameError {
+    World(PlanError),
+    Entity(entity::Error),
+    Hud(hud::Error),
+}
+
+/// CPU data for a partial frame: solid terrain, ordinary entities, translucent
+/// terrain, then HUD. The caller selects the corresponding resident terrain or
+/// GUI atlas before each pass and uploads any pending GUI patches. This leaves
+/// sky, hand, particles, special materials, LOD, dynamic lights and other
+/// `Frame` fields unrendered; it is not a complete game renderer.
+pub struct FramePlan<'a> {
+    pub terrain: Vec<SectionDraw<'a>>,
+    pub solid_count: usize,
+    pub entities: entity::Mesh,
+    pub hud: hud::Mesh,
+    pub view_projection: [f32; 16],
+    pub fog: Fog,
+}
+
+/// Prepare ordinary passes directly from the game's `Frame`. HUD atlas patches
+/// are applied first, even when a later conversion fails, and remain dirty
+/// until the caller confirms their GPU upload. The caller owns visibility,
+/// texture animation, GL context, framebuffer clear and presentation.
+pub fn prepare_frame<'a>(
+    world: &'a mut World,
+    gui: &mut PatchAtlas,
+    frame: &Frame<'_>,
+    viewport: [u32; 2],
+    min_y: i32,
+    visible: &[SectionKey],
+    gamma: f32,
+    fullbright: bool,
+) -> Result<FramePlan<'a>, FrameError> {
+    gui.apply(&frame.hud.patches).map_err(FrameError::Hud)?;
+    let view_projection = frame_view_projection(frame, viewport).map_err(FrameError::World)?;
+    let lights = lightmap(frame, gamma, fullbright);
+    let entities = if frame.title {
+        entity::Mesh::default()
+    } else {
+        entities(gui.atlas(), frame, &lights).map_err(FrameError::Entity)?
+    };
+    let hud = hud::build(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?;
+    world.set_lightmap(lights);
+    let terrain = if frame.title {
+        Vec::new()
+    } else {
+        world
+            .plan(
+                visible,
+                frame.camera.to_array(),
+                min_y,
+                view_projection,
+                Some(frame_fog(frame)),
+            )
+            .map_err(FrameError::World)?
+    };
+    let solid_count = terrain
+        .iter()
+        .position(|draw| draw.translucent)
+        .unwrap_or(terrain.len());
+    Ok(FramePlan {
+        terrain,
+        solid_count,
+        entities,
+        hud,
+        view_projection,
+        fog: frame_fog(frame),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_frame(hud: &crate::hud::HudBatch) -> Frame<'_> {
+        Frame {
+            weather: &[],
+            weather_time: crate::weather::Time::new(0, 0.0),
+            camera: glam::DVec3::new(0.5, 100.0, 0.5),
+            yaw: 0.0,
+            pitch: 10.0,
+            fov_degrees: 85.0,
+            eye: glam::DVec3::new(0.5, 100.0, 0.5),
+            eye_rotation: [0.0, 10.0],
+            first_person: true,
+            bob: glam::Mat4::IDENTITY,
+            spin: glam::Mat4::IDENTITY,
+            sky: crate::environment::Sky::default(),
+            shadow_scene_revision: (0, 0),
+            shadow_cache: false,
+            distance: 12.0,
+            detail_distance: 12.0,
+            depth_far: 1000.0,
+            underwater: false,
+            water_plane: None,
+            cave_culling: false,
+            title: false,
+            sky_blocked: false,
+            skybox: false,
+            end_sky: false,
+            end_sky_sprite: None,
+            environment_fog: None,
+            water_fog: [0.0; 3],
+            fog: None,
+            dark_disc: false,
+            outline: Vec::new(),
+            outline_after_terrain: false,
+            outline_high_contrast: false,
+            debug_lines: &[],
+            debug_lines_on_top: &[],
+            debug_crosshair: &[],
+            hud,
+            glint_alpha: 0.75,
+            glint_ticks: 0.0,
+            nether_lighting: false,
+            entities: &[],
+            static_block_entities: &[],
+            visible_static_block_entity_sections: &[],
+            static_block_entity_stats: Default::default(),
+            entity_motion: &[],
+            entity_spans: &[],
+            skin: None,
+            glowing: &[],
+            dynamic_lights: &[],
+            colored_lights: &[],
+            emissive_layers: &[],
+            clouds: None,
+            lightning: Default::default(),
+            additive: &[],
+            see_through: &[],
+            shadow_only: &[],
+            celestial: &[],
+            stars: None,
+            hand: &[],
+            hand_fov_degrees: 70.0,
+            screen: &[],
+            pack: Default::default(),
+            border: None,
+            game_time: 0.0,
+            shader_game_time: 0.0,
+            end_portal_sprites: [[0.0; 4]; 2],
+            crumbling_sprite: [0.0; 4],
+            ticks: 0,
+            darkness: (0.0, 0.0),
+            night_vision: 0.0,
+            block_flicker: 0.0,
+            boss_darken: 0.0,
+            chunk_fade: 0.0,
+            post_effects: crate::post_chain::Request::none(),
+            menu_blur: None,
+        }
+    }
+
+    #[test]
+    fn game_frame_prepares_ordered_passes_and_retains_patches_on_error() {
+        let block_atlas = super::super::atlas::Atlas::new(1, 1, 4, &[255; 4]).unwrap();
+        let mut world = World::new(block_atlas, [255; 1024]);
+        let quad = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]
+            .map(|uv| crate::mesher::TerrainVertex::new([uv[0], uv[1], 0.], uv, 0, u32::MAX, 0));
+        let mut section = crate::mesher::SectionMesh::default();
+        section.solid.extend_from_slice(&quad);
+        section.translucent.extend_from_slice(&quad);
+        world.upload((0, 0, 0), &section).unwrap();
+        let gui_atlas = hud::Atlas::new(1, 1, &[255; 4], 4).unwrap();
+        let mut gui = PatchAtlas::new(gui_atlas);
+        let mut hud_batch = crate::hud::HudBatch::new([32, 32]);
+        hud_batch.patches.push(crate::font::Patch {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![128; 4],
+        });
+        hud_batch.quad(
+            [[0., 0.], [16., 0.], [16., 16.], [0., 16.]],
+            [[0.5, 0.5]; 4],
+            u32::MAX,
+        );
+        let entities = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|uv| crate::mesher::Vertex {
+            pos: [uv[0], uv[1], 0.],
+            uv,
+            layer: 0,
+            color: u32::MAX,
+            light: 0,
+            normal: [0; 4],
+            glint_uv: [0.; 2],
+        });
+        let mut frame = test_frame(&hud_batch);
+        frame.entities = &entities;
+        let plan = prepare_frame(
+            &mut world,
+            &mut gui,
+            &frame,
+            [32, 32],
+            0,
+            &[(0, 0, 0)],
+            0.,
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.terrain.len(), 2);
+        assert_eq!(plan.solid_count, 1);
+        assert!(!plan.terrain[0].translucent);
+        assert!(plan.terrain[1].translucent);
+        assert!(!plan.entities.vertices.is_empty());
+        assert!(!plan.hud.vertices.is_empty());
+        assert_eq!(gui.dirty().count(), 1);
+        drop(plan);
+        gui.uploaded(0).unwrap();
+        assert!(matches!(
+            prepare_frame(&mut world, &mut gui, &frame, [0, 32], 0, &[], 0., false),
+            Err(FrameError::World(PlanError::InvalidTransform))
+        ));
+        assert_eq!(gui.dirty().count(), 1); // glyphs survive a skipped frame
+        frame.title = true;
+        let title = prepare_frame(
+            &mut world,
+            &mut gui,
+            &frame,
+            [32, 32],
+            0,
+            &[(0, 0, 0)],
+            0.,
+            false,
+        )
+        .unwrap();
+        assert!(title.terrain.is_empty());
+        assert!(title.entities.vertices.is_empty());
+        assert!(!title.hud.vertices.is_empty());
+    }
+
     #[test]
     fn reversed_wgpu_depth_becomes_normal_gl_depth() {
         let view = View::screen(0.0, 0.0, 70.0, 1.0, 512.0);
