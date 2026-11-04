@@ -198,6 +198,8 @@ pub fn parse_glsl(version: &str) -> Option<u16> {
         .find(|part| !part.is_empty())
         .and_then(|part| part.parse().ok())
         .unwrap_or(0);
+    // `1.20` writes the hundredths, `1.1` writes a tenth: one digit is a tenth of a version.
+    let minor = if minor < 10 { minor * 10 } else { minor };
     Some(major * 100 + minor)
 }
 
@@ -307,10 +309,13 @@ mod tests {
         max_texture_units: 16,
     };
 
-    const X1650_EXTENSIONS: [&str; 3] = [
+    // What r300g under Mesa 7.11 lists: the R500 has `GL_ARB_texture_non_power_of_two` without the
+    // mipmapping half of it (`LimitedNPOT`), which is why every atlas here is a power of two anyway.
+    const X1650_EXTENSIONS: [&str; 4] = [
         "GL_ARB_framebuffer_object",
         "GL_ARB_occlusion_query",
         "GL_ARB_draw_buffers",
+        "GL_ARB_texture_non_power_of_two",
     ];
 
     #[test]
@@ -406,7 +411,8 @@ mod tests {
         assert_eq!(parse_glsl("1.1"), Some(110));
         assert_eq!(parse_glsl("1.50"), Some(150));
         assert_eq!(parse_glsl("3.30"), Some(330));
-        assert_eq!(parse_glsl("100"), Some(100));
+        // A driver that names only a major version: 1 is 1.00.
+        assert_eq!(parse_glsl("1"), Some(100));
         assert_eq!(parse_glsl("nonsense"), None);
     }
 
