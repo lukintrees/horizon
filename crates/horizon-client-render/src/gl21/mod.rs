@@ -19,7 +19,9 @@
 //! has to pass and the sentences to show a player whose does not, `atlas` packs the sprites into a
 //! power-of-two texture GL 2.1 can clamp, `vertex` inlines the sprite layer into a per-sprite run
 //! and lays a vertex out in what GLSL 1.20 can read, `draws` works out the frame's calls and their
-//! order. `*.vert` and `*.frag` here are that renderer's shaders.
+//! order, and `program` holds the attribute and uniform tables the driver binds the shaders by, next
+//! to the shaders' own declarations, so a renamed attribute is a test failure and not a picture no
+//! one can explain. `*.vert` and `*.frag` here are that renderer's shaders.
 //!
 //! The switches are read on every call rather than cached: the game reads them when it opens the
 //! device, which is long after anything could have set them, and a typo must not be lost.
@@ -32,12 +34,14 @@
 pub mod atlas;
 pub mod context;
 pub mod draws;
+pub mod program;
 mod profile;
 pub mod vertex;
 
 pub use atlas::Atlas;
 pub use context::{glsl_name, Capabilities};
 pub use draws::{draw_calls, plan, section_runs, Pass, Plan, SectionDraw, SectionRuns};
+pub use program::{Attribute, AttributeKind, Uniform};
 pub use profile::Profile;
 pub use vertex::{Batches, GlVertex};
 
