@@ -4,6 +4,11 @@
 Срез кода: `d092519` (проверенный код `d760a9a`, затем только документация).
 Это актуальный план следующих работ; предыдущий [дизайн и журнал этапов](opengl2-win7-x86.md) сохраняет историю.
 
+**Правила интеграции и владения:** [legacy-gl-integration.md](legacy-gl-integration.md).
+Пользователь назначил главным интегратором координирующего Arena.ai Agent от имени `lukintrees`.
+Общий facade/contracts и центральные manifests/lockfiles пишет **только интегратор**;
+другие исполнители направляют запросы и работают в согласованных modules.
+
 ## 1. Главное решение
 
 **Следующий приоритет — вертикальный запуск настоящего `Game`, а не завершение всех эффектов по очереди.**
@@ -120,6 +125,7 @@ PR `a/b/c`, сохраняя критерий приёмки строки и з�
 | ID | Приоритет | Работа и основной участок | Зависит от | Проверяемая приёмка |
 |---|---|---|---|---|
 | **C01** | P0 | Инвентаризация всех вызовов/полей renderer в Game; контракты §4, минимальные типы/скелеты, список запрещённых прямых доступов | — | Согласованный API и карта call sites; не осталось «потом решим», кто владеет окном/ресурсами/sections; default build не меняет поведения |
+| **CI01** | P0 | PR-triggered/reusable и aggregate CI, scope/ownership gate, modern/legacy/GL2/x86 matrix; [спецификация](legacy-gl-integration.md#6-ci01--praggregate-ci-для-параллельной-разработки) | design сразу; C01 для policy/contract paths | Task diff с facade/manifest/lockfile/workflow блокируется; exact base/head/merge SHA и expected jobs проверены; Win7 hardware gate отдельно; required checks не пропускаются. Пока запланирован, не реализован |
 | **R01** | P0 | Вынести CPU Frame/visibility/resource descriptors из monolithic gfx; совместимые re-exports | C01 | Общий слой компилируется без wgpu handle types; старые CPU/GPU тесты и public call sites сохраняются |
 | **R02** | P0 | Adapter существующего modern Renderer за facade; заменить прямые поля getter/commands | R01 | Обычный modern loading/menu/world/reload продолжает работать; новый API проверен на существующем backend |
 | **R03** | P0 | Adapter `TerrainHudRenderer` за тем же facade, native factory, render/present outcomes, budgets | R01, A01 | Общий вызов создаёт legacy, принимает resources/frame/sections; не вызывает wgpu initialization; ошибки не маскируются |
@@ -176,7 +182,7 @@ live Game часть критериев совместно закрываетс�
 
 ### После C01 — первая широкая волна кодовых PR
 
-Параллельно: **R01**, **A01**, **P01**, **F01**, **V01/V02 CPU modules**, **O01**, **T01**.
+Параллельно: **R01**, **A01**, **P01**, **F01**, **V01/V02 CPU modules**, **O01**, **T01**, **CI01**.
 D01 начинает с измеримого dependency inventory/feature design, а не массового `cfg` всего workspace.
 
 После R01/A01/P01: **R02**, **R03**, **P02**, **P03**, **E01**, **U01** (по своим зависимостям).
@@ -236,22 +242,23 @@ frame-time p50/p95, memory peaks и upload pressure; затем утвердит
 
 ## 8. Как не превратить параллельные PR в merge bottleneck
 
-- **Один владелец интеграции:** `game.rs`, `entry.rs`, общий facade/frame contract и центральные manifests.
+- **Один владелец интеграции — координирующий Arena.ai Agent `lukintrees`:** `game.rs`, `entry.rs`, общий facade/frame contract и центральные manifests.
   Остальные PR добавляют отдельные modules/adapters/tests; общий wiring интегратор переносит малыми изменениями.
 - **Низкоуровневый GL coordinator/shaders — тоже общая зона.** V01–V06 заранее согласуют pass slots,
   blend/depth/sampling contracts; не редактируют одновременно весь `renderer.rs` и shader dispatcher.
   CPU preparation и independent fixtures можно ревьюить раньше последнего wiring patch.
 - **Один API PR — несколько adapters:** не выносить тысячу GPU методов в общий trait. Общими остаются
   Game-facing операции; modern diagnostics/pack internals остаются у modern adapter.
-- **Manifest/lockfile coordination:** D01 владеет dependency edits; остальные заранее перечисляют запросы.
+- **Manifest/lockfile coordination:** D01 готовит dependency inventory/feature requests; **центральные edits делает только интегратор**, остальные заранее перечисляют запросы.
   Не обновлять dependency versions «заодно» и не удалять lockfiles/`CLAUDE.md`.
 - Каждый PR указывает ID, Depends-on, own scope/files, negotiated capability, тесты, признаки готовности
   и ожидаемый способ merge. Небольшие dependency-stacked PR допустимы; не копировать реализации в ответвления.
 - **Green after each merge:** modern compile/tests, affected legacy CPU/native/GPU checks. У render PR —
   реальные readbacks и invalid-input/resource tests; у platform/build — реальные OS/runtime gates отдельно.
 - Существующий `.github/workflows/legacy-gl-branch.yml` привязан к текущей ветке. Он **не обеспечивает**
-  CI будущих параллельных PR автоматически. До первой широкой волны согласовать reusable/PR-triggered
-  вариант только для своих рабочих PR; legacy GPU job и modern job должны быть проверяемыми независимо.
+  CI будущих параллельных PR автоматически. Эту проблему закрывает **CI01 (P0)**: reusable/PR-triggered
+  matrix для согласованных task PR и aggregate integration head; scope/ownership gate и проверки
+  точного кандидата. Пока CI01 не реализован, enforcement ручной; широкую волну не объявлять merge-ready.
 - App/asset preparation не публикует Mojang assets/jars/decompiled files; fixtures — собственные synthetic
   данные либо разрешённая локальная подготовка. Пользовательские строки — через существующую локализацию.
 
@@ -261,6 +268,8 @@ frame-time p50/p95, memory peaks и upload pressure; затем утвердит
 ID / цель / рубеж:
 Depends-on:
 Owner + reviewer:
+Base / head / exact tested SHA / contract version:
+Central files changed: none (shared changes requested from integrator):
 Изменяемые modules / общие файлы, которые НЕ трогаем:
 Contract version / capability:
 Acceptance: наблюдаемый игровой или runtime результат:
@@ -271,7 +280,7 @@ Merge order / интеграционный patch:
 
 ## 9. Что делать следующим, в порядке отдачи
 
-1. **C01 + T01:** зафиксировать API/владение и первый реальный acceptance scenario.
+1. **C01 + CI01 + T01:** зафиксировать API/владение, проверки параллельных PR и первый реальный acceptance scenario.
 2. **Сразу параллельно O01, M01 и resource/platform audits.** Не откладывать Win7 и каталог материалов.
 3. **Первая кодовая волна R01/A01/P01/F01**, затем adapters. Не продолжать только декоративные pass'ы.
 4. **G01 + W01 + E01 + U01/P04:** вывести настоящий Game к интерактивному миру.
