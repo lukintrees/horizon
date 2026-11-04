@@ -40,6 +40,9 @@ jobs:
       # through the checks API as well as the runner's downloadable logs.
       - name: Check the client-render crate
         shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
           if cargo clippy --locked -p horizon-client-render --lib --tests -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
@@ -48,7 +51,7 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
-          text = Path(os.environ['RUNNER_TEMP'], 'legacy-clippy.log').read_text(errors='replace')[-12000:]
+          text = Path(os.environ['RUNNER_TEMP'], 'legacy-clippy.log').read_text(errors='replace')[-2500:]
           text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           print('::error::' + text)
           PY
