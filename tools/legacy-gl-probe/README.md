@@ -165,7 +165,7 @@ to its independent triangle test. Its safe `RenderBackend` contract is defined i
 `horizon-render-api`; the game library has real terrain/GUI adapters and an opt-in terrain/HUD
 coordinator, not yet the normal Game renderer.
 
-All three llvmpipe modes now require **16 backend outcomes per mode**, including
+All three llvmpipe modes now require **17 backend outcomes per mode**, including
 real texture updates, cutout, transparency/depth write, lightmap, fog, clipped
 UI-like overlay, large-coordinate rendering, padded atlas/terrain conversion,
 context switching, resource validation and reclamation, and resident-section
@@ -174,14 +174,14 @@ and dynamic glyph patches including POT edge updates. Paged GUI checks enforce
 a one-page GPU cache and verify alpha order, linear gutters, depth across
 evictions, dirty-page reload and resource release. Reports include a
 `backend_checks` list; runner schema is 2 and old triangle-only reports fail.
-Run the 20 native/API unit tests independently (the probe itself has 2 tests):
+Run the 22 native/API unit tests independently (the probe itself has 2 tests):
 
 ```sh
 cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
 ```
 
-For this continuation, 22 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
-modes and the Python suite (641 tests, 1 skipped) passed. Local full-game dependency resolution remains incomplete (287/488 exact packages
+For this continuation, 24 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
+modes and the Python suite (642 tests, 1 skipped) passed. Local full-game dependency resolution remains incomplete (287/488 exact packages
 from pinned GitHub mirrors). Our branch-only Actions now compile and test the real
 game bridges and run a real HudAtlas/HudBatch GL2 fixture. This is not a complete
 Game build or gameplay smoke; prepared game resources are absent. No complete legacy game or Win7-compatible
@@ -201,3 +201,16 @@ full-client checking, CPU compressed-backing tests and actual-game large-atlas
 readbacks. Run 41776564666 covers five opt-in actual-game GPU fixtures; a 16385x2
 source atlas is addressed through one 512x512 resident GPU page. Backend selection,
 upstream CPU atlas peak memory and real Win7/X1650 qualification remain unfinished.
+
+
+The classic-entity continuation is verified by own run
+[41779419733](https://github.com/lukintrees/horizon/actions/runs/41779419733)
+at `7dd78a8`: all jobs passed, including six actual-game GPU fixtures and the
+full-client check. `backend_paged_entities` adds real readbacks for two-sided
+lighting/culling, hurt overlay before lightmap, interpolated per-vertex light,
+constant-X 3D clipping, item/particle depth policy, camera-relative world-border
+precision, typed-buffer/overlay rejection and transient cleanup. The coordinator
+also draws the basic first-person hand with an independent depth/projection view.
+Special entity materials, sky, startup selection and Win7 runtime qualification
+remain incomplete. The report's positive Python fixture now includes the new
+outcome; omission of any required backend outcome is explicitly tested.

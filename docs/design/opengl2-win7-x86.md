@@ -485,3 +485,58 @@ playable Win7 EXE этот этап не предоставляет.
 writes сверх work budget отклоняются без изменения backing. Полный client check,
 game Clippy, пять actual-game GL2 fixtures, independent matrix и Windows x86
 probe linking повторно прошли. Это последний проверенный code commit этапа.
+
+
+## 14. Общий мировой проход entities/items/particles и первый план руки
+
+Добавлен `entity_bridge` на настоящих `mesher::Vertex`, без wgpu/GL handles на
+границе CPU. API `entity::runs` сохраняет coverage alpha, декодирует SNORM normals,
+считает cardinal lighting (включая Nether и отдельно front/back) и bilinear
+lightmap per vertex. Vertex texture fetch не нужен: GL2 не гарантирует его наличие.
+Hurt/TNT/white overlay смешивается в GLSL после texture×tint и перед lightmap,
+как в существующем `entity.wgsl`, а не запекается неверным RGB multiplier.
+
+Entity mesh имеет проверенный stride 76 bytes: обычный Vertex + back colour +
+light colour. Terrain/GUI сохраняют stride 44. Native backend проверяет совпадение
+typed mesh/pass до clear; использует шесть attributes, GLSL110, back-face culling,
+LEQUAL и alpha blend. Bodies и translucent items пишут depth; translucent particles
+не пишут. CPU clipper интерполирует дополнительные атрибуты и учитывает 3D area:
+мировая плоскость с постоянным X больше не исчезает при повороте камеры.
+
+`TerrainHudRenderer::render_geometry` выполняет последовательность:
+
+1. solid/cutout terrain;
+2. обычные entity/item bodies;
+3. translucent terrain;
+4. translucent particles;
+5. hand — собственная GL projection, clear только depth, без world fog;
+6. HUD.
+
+Все textured passes используют один ограниченный atlas LRU. Порядок внутри фаз
+не меняется. Entity/hand inputs уже camera-relative и CPU-posed; f64 camera не
+прибавляется к их f32 positions. Общие vertex ceilings и transient mesh payload
+проверяются до очистки мира. Retired transient meshes сохраняют ID для cleanup
+retry. GPU/driver failure посреди streaming всё ещё может оставить частичный кадр.
+
+Поддержаны overlay codes 0, 1, 5, 15, 16..31, 32. Glint, portals, shadows,
+crumbling, energy swirl, dissolve и неизвестные flags пока отклоняются явно.
+Это не полный entity material coverage и не адаптер всего `gfx::Frame`:
+visibility/sorting, skin-frame CPU fallback, дополнительные passes, sky,
+startup/input/resize и Win7-specific std/PE/import/CRT/ICD/runtime остаются работой.
+Проекция caller должна иметь обычный GL depth, не reversed-Z современного gfx.
+
+Собственный run **41779419733** (code `7dd78a8`) прошёл все три jobs: полный client
+Cargo check, game CPU bridges/Clippy, **шесть actual-game GL2 fixtures**, independent
+matrix и modern Windows i686 probe build/link. Новый combined fixture проводит
+terrain/entities/particles/hand/HUD через одну resident page 4×4, проверяет
+alpha/depth порядок, lightmap update, unsupported-material failure до clear,
+сохранение кадра при нехватке transient budget и освобождение временных meshes.
+Independent readbacks проверяют обе стороны normals/culling, hurt overlay order,
+интерполяцию light через seams, 3D clipping и typed-buffer rejection.
+
+Локально прошли **24 standalone Rust tests**, host/i686 Clippy, **3×17 Mesa checks**
+и **642 Python tests (1 skipped)**. Первый run этапа 41779016236 имел failure в
+independent job; положительный Python report fixture не включал новый backend
+outcome. Fixture исправлен, добавлен тест обязательности каждого outcome, и
+финальный run полностью зелёный. Обычный Game startup всё ещё использует wgpu;
+готовый playable Win7 EXE и FPS на X1650 не заявляются.

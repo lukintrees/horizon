@@ -43,13 +43,13 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-16 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+17 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
-paged GUI streaming with linear gutters, depth continuity and one-page eviction. The runner requires all 16 outcomes; a triangle-only report cannot pass.
+paged GUI streaming with linear gutters, depth continuity and one-page eviction. The runner requires all 17 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -59,10 +59,10 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 20 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 22 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 16 backend checks per mode. Python regression suite:
-641 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
+LLVM 17.0.6, all three modes, 17 backend checks per mode. Python regression suite:
+642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
 and the GLSL120 reported-version workaround (shader source remains GLSL110).
@@ -155,7 +155,8 @@ Portal, vanilla/CIT glint and pack-text shaders are not silently drawn as plain
 atlas quads. Large HUD atlases now use bounded POT pages rather than a single
 oversized texture; the upstream full-image CPU atlas construction still needs
 Win7 address-space qualification.
-The entities/hand/sky path and input/resize integration remain separate work.
+Ordinary entity/item/particle and hand paths are now integrated (below); sky,
+remaining special entity materials and input/resize integration remain work.
 
 Our own `.github/workflows/legacy-gl-branch.yml` triggers only on
 `arena/a7e96628-horizon`. The first two runs passed both independent GL2 readbacks
@@ -218,3 +219,47 @@ all 90 rectangles of a 5x3 source against complete page rebuilds and checks atom
 rejection of repeated tiny edge writes exceeding the work budget. Full-client
 check, game Clippy, all five actual-game GL2 fixtures, independent runtime matrix
 and ordinary Windows x86 probe linking passed again.
+
+
+## Classic entities, particles and hand
+
+`entity_bridge` consumes the **actual `mesher::Vertex`** stream. Neutral
+`entity::runs` expands quad indices, decodes RGBA/SNORM normals, computes cardinal
+lighting (including Nether and independently shaded back faces), and bilinearly
+samples the CPU lightmap per vertex. There is **no vertex texture fetch**: GL2
+can expose zero vertex texture units. Hurt/TNT/white flashes are mixed in GLSL
+**after texture/tint and before lighting**, preserving the game's operation order.
+Supported overlays: 0, 1, 5, 15, 16..31, 32; HDR tier/OIT tags are ignored only as
+they are in classic SDR. Other flags, glint/portal/shadow/crumbling/energy/dissolve
+materials are rejected, not flattened into a normal textured quad.
+
+Entity meshes have a checked 76-byte layout (base vertex, back colour, light
+colour); ordinary terrain/GUI meshes stay 44 bytes. Typed mesh/pass mismatches
+and malformed overlays are rejected before clears. Six attributes and GLSL110
+varyings fit desktop GL2 minima. Back-face culling, LEQUAL depth and alpha blending
+are selected per material. Ordinary entities and translucent items write depth;
+translucent particles do not. CPU clipping interpolates the extra lighting data
+and checks 3D area, so camera-rotated constant-X walls are not discarded.
+
+`TerrainHudRenderer::render_geometry` uses the same bounded atlas cache for:
+solid/cutout terrain -> entity/item bodies -> translucent terrain -> particles ->
+hand (separate GL projection, depth clear, no world fog) -> HUD. Inputs are already
+camera-relative and CPU-posed. Order is stable within each phase; caller-side
+visibility/sorting and GPU skin-frame fallback are not implemented here. Combined
+entity+hand input/output vertices and transient payloads are bounded before the
+world clear. CPU lightmap copies update only after successful texture updates.
+Failures during streamed GPU work still do not provide full-frame rollback.
+
+Final own validation: [41779419733](https://github.com/lukintrees/horizon/actions/runs/41779419733),
+code `7dd78a8`, **all three jobs passed**: full-client check, game CPU bridges,
+Clippy, **six actual-game GPU fixtures**, independent 3x17 llvmpipe matrix and
+modern Windows x86 probe build/link. A combined real-type fixture puts terrain,
+entities, particles, hand and HUD through a single resident 4x4 atlas page and
+checks their alpha/depth ordering, lightmap updates, unsupported-material failure
+isolation and transient cleanup. Independent readbacks additionally verify both
+face colours/culling, hurt overlay order, interpolated light across page seams,
+3D UV clipping, world-border-relative positions and typed-buffer rejection.
+Local verification: 24 standalone Rust tests, host/i686 Clippy, 3x17 Mesa outcomes,
+642 Python tests (1 skipped). This remains **not a playable Win7 executable**:
+normal startup is still wgpu, full entity material/sky coverage and platform
+integration/Win7 qualification remain unfinished.
