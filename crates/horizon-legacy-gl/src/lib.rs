@@ -77,6 +77,8 @@ pub enum Pass {
     HudAlpha,
     HudInvert,
     HudAdditive,
+    /// Multiply destination RGB by one minus source RGB, preserving alpha.
+    HudVignette,
     /// GUI preview using the current framebuffer's depth buffer. `scissor` is
     /// in OpenGL bottom-left pixel coordinates. `clear` starts a new preview and
     /// clears depth within that rectangle. This destroys scene depth there: use
@@ -640,9 +642,19 @@ impl Renderer {
                         if fog.is_some() && terrain { 1.0 } else { 0.0 },
                     );
                     current_pass = Some(draw.pass);
+                    // The vignette's linear sampler and other passes' nearest
+                    // sampler share texture objects in GL 2.0.
+                    current_page = None;
                 }
                 if current_page != Some(draw.batch.page) {
                     (gl.bind_texture)(GL_TEXTURE_2D, self.textures[draw.batch.page]);
+                    let filter = if matches!(draw.pass, Pass::HudVignette) {
+                        0x2601
+                    } else {
+                        0x2600
+                    };
+                    (gl.tex_parameter)(GL_TEXTURE_2D, 0x2801, filter); // MIN_FILTER
+                    (gl.tex_parameter)(GL_TEXTURE_2D, 0x2800, filter); // MAG_FILTER
                     current_page = Some(draw.batch.page);
                 }
                 (gl.draw_arrays)(0x0004, draw.batch.first as i32, draw.batch.count as i32);
@@ -683,6 +695,7 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
         let cutoff = match pass {
             Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
             Pass::HudInvert => 0.0001,
+            Pass::HudVignette => 0.0,
             Pass::HudAlpha | Pass::HudAdditive | Pass::HudDepth { .. } => 0.004,
         };
         (gl.uniform_1f)(uniform, cutoff);
@@ -706,6 +719,13 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
                 (gl.enable)(0x0be2);
                 (gl.blend_equation)(0x8006);
                 (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
+                (gl.depth_mask)(0);
+            }
+            Pass::HudVignette => {
+                (gl.disable)(0x0b71);
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(0, 0x0301, 0, 1); // zero, one-minus-src-color; preserve alpha
                 (gl.depth_mask)(0);
             }
             Pass::HudInvert => {

@@ -237,6 +237,11 @@ fn main() {
             unsafe extern "system" fn(f32, f32, f32, f32)
         );
         let clear = function!(handle, c"glClear", unsafe extern "system" fn(u32));
+        let get_tex_parameter = function!(
+            handle,
+            c"glGetTexParameteriv",
+            unsafe extern "system" fn(u32, u32, *mut i32)
+        );
         let pixel_store = function!(
             handle,
             c"glPixelStorei",
@@ -423,16 +428,35 @@ fn main() {
         let world_atlas = legacy::atlas::Atlas::new(1, 1, 4, &[0, 0, 200, 30]).unwrap();
         let mut world = legacy::world::World::new(world_atlas, [255; 1024]);
         let mut source = mesher::SectionMesh::default();
-        source.solid.extend(quad(-0.95, -0.05, 0., mesher::OPAQUE_LAYER));
+        source
+            .solid
+            .extend(quad(-0.95, -0.05, 0., mesher::OPAQUE_LAYER));
         source.solid.extend(quad(0.05, 0.95, 0., 0));
         world.upload((0, 0, 0), &source).unwrap();
         upload(&mut gpu, world.atlas());
         clear(0x4000 | 0x0100);
-        let no_fog = horizon_legacy_gl::Fog { color: [1.; 4], ranges: [100., 101., 100., 101.], section_offset: [0.; 3] };
-        for section in world.plan(&[(0, 0, 0)], [0.; 3], 0, identity, Some(no_fog)).unwrap() {
-            gpu.draw_ordered_with_fog(section.vertices, &section.draws, &section.transform, section.fog.unwrap()).unwrap();
+        let no_fog = horizon_legacy_gl::Fog {
+            color: [1.; 4],
+            ranges: [100., 101., 100., 101.],
+            section_offset: [0.; 3],
+        };
+        for section in world
+            .plan(&[(0, 0, 0)], [0.; 3], 0, identity, Some(no_fog))
+            .unwrap()
+        {
+            gpu.draw_ordered_with_fog(
+                section.vertices,
+                &section.draws,
+                &section.transform,
+                section.fog.unwrap(),
+            )
+            .unwrap();
         }
-        assert_eq!(rgb(sample(7)), [0, 0, 200], "opaque quad must ignore sprite alpha");
+        assert_eq!(
+            rgb(sample(7)),
+            [0, 0, 200],
+            "opaque quad must ignore sprite alpha"
+        );
         assert_eq!(rgb(sample(24)), [0, 0, 0], "ordinary cutout must discard");
         upload(&mut gpu, &atlas);
 
@@ -657,7 +681,35 @@ fn main() {
                 && inverted[2].abs_diff(64) <= 1,
             "HUD invert {inverted:?}"
         );
+        // Vignette uses source RGB even at alpha zero, and preserves destination alpha.
+        let mut vignette_batch = hud::HudBatch::new([32, 32]);
+        vignette_batch.quad(
+            [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
+            [[0.0625, 0.125]; 4],
+            0x0000_00ff,
+        );
+        vignette_batch.blends.push((0..6, hud::Blend::Vignette));
+        let vignette = legacy::hud::build(&gui_atlas, &vignette_batch, [32, 32]).unwrap();
+        clear_color(0.25, 0.5, 0.75, 0.5);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&vignette.vertices, &vignette.draws(), &identity)
+            .unwrap();
+        let mut filter = 0;
+        get_tex_parameter(0x0de1, 0x2801, &mut filter);
+        assert_eq!(filter, 0x2601, "vignette uses linear filtering");
+        let darkened = sample(16);
+        assert!(
+            darkened[0] <= 1
+                && darkened[1].abs_diff(128) <= 1
+                && darkened[2].abs_diff(191) <= 1
+                && darkened[3].abs_diff(128) <= 1,
+            "HUD vignette {darkened:?}"
+        );
         // Different blend modes share one upload and must remain in input order.
+        gui.draw_ordered(&invert.vertices, &invert.draws(), &identity)
+            .unwrap();
+        get_tex_parameter(0x0de1, 0x2801, &mut filter);
+        assert_eq!(filter, 0x2600, "ordinary HUD restores nearest filtering");
         let mut mixed = hud::HudBatch::new([32, 32]);
         let positions = [[0., 0.], [32., 0.], [32., 32.], [0., 32.]];
         let uvs = [[0.0625, 0.125]; 4];

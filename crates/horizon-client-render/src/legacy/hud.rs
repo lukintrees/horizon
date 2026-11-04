@@ -166,6 +166,9 @@ pub enum UiBlend {
     Alpha,
     Invert,
     Additive,
+    /// Linear vignette blend. Adjacent atlas pages lack filtering gutters, so
+    /// samples near a page boundary can differ from the unpaged HUD atlas.
+    Vignette,
     Depth([i32; 4]),
 }
 impl UiBlend {
@@ -174,6 +177,7 @@ impl UiBlend {
             Self::Alpha => Pass::HudAlpha,
             Self::Invert => Pass::HudInvert,
             Self::Additive => Pass::HudAdditive,
+            Self::Vignette => Pass::HudVignette,
             Self::Depth(scissor) => Pass::HudDepth {
                 scissor,
                 clear: clear_depth,
@@ -274,6 +278,7 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
             Blend::Alpha => UiBlend::Alpha,
             Blend::Invert => UiBlend::Invert,
             Blend::Additive => UiBlend::Additive,
+            Blend::Vignette => UiBlend::Vignette,
             Blend::Depth([x, y, w, h]) => {
                 let x = x.min(window[0]);
                 let y = y.min(window[1]);
