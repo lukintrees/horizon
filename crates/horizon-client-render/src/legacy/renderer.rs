@@ -245,41 +245,43 @@ impl Renderer {
             .select_atlas(self.terrain_atlas)
             .map_err(|e| e.to_string())?;
         let mut star_vertices = 0;
-        if let Some((transform, brightness)) = plan.stars {
-            if brightness > 0.0 {
-                if self.stars.is_none() {
-                    let triangles = crate::gfx::stars::star_triangles();
-                    let mut vertices = Vec::new();
-                    vertices
-                        .try_reserve_exact(triangles.len())
-                        .map_err(|_| "star allocation failed")?;
-                    vertices.extend(triangles.into_iter().map(|position| {
-                        horizon_legacy_gl::Vertex {
+        if let Some((transform, brightness)) = plan.stars
+            && brightness > 0.0
+        {
+            if self.stars.is_none() {
+                let triangles = crate::gfx::stars::star_triangles();
+                let mut vertices = Vec::new();
+                vertices
+                    .try_reserve_exact(triangles.len())
+                    .map_err(|_| "star allocation failed")?;
+                vertices.extend(
+                    triangles
+                        .into_iter()
+                        .map(|position| horizon_legacy_gl::Vertex {
                             position,
                             sprite_uv: [0.; 2],
                             atlas_rect: [0.; 4],
                             color: [1.; 4],
-                        }
-                    }));
-                    self.stars = Some(vertices);
-                }
-                let vertices = self.stars.as_mut().expect("star geometry was just created");
-                for vertex in vertices.iter_mut() {
-                    vertex.color = [brightness; 4];
-                }
-                star_vertices = vertices.len();
-                let draw = horizon_legacy_gl::Draw {
-                    batch: horizon_legacy_gl::Batch {
-                        page: 0,
-                        first: 0,
-                        count: vertices.len(),
-                    },
-                    pass: horizon_legacy_gl::Pass::Stars,
-                };
-                self.surface
-                    .draw_ordered(vertices, &[draw], &transform, None)
-                    .map_err(|e| format!("stars: {e}"))?;
+                        }),
+                );
+                self.stars = Some(vertices);
             }
+            let vertices = self.stars.as_mut().expect("star geometry was just created");
+            for vertex in vertices.iter_mut() {
+                vertex.color = [brightness; 4];
+            }
+            star_vertices = vertices.len();
+            let draw = horizon_legacy_gl::Draw {
+                batch: horizon_legacy_gl::Batch {
+                    page: 0,
+                    first: 0,
+                    count: vertices.len(),
+                },
+                pass: horizon_legacy_gl::Pass::Stars,
+            };
+            self.surface
+                .draw_ordered(vertices, &[draw], &transform, None)
+                .map_err(|e| format!("stars: {e}"))?;
         }
         if let Some(sky) = &plan.sky {
             self.surface
