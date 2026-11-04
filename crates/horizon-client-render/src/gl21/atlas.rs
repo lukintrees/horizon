@@ -110,9 +110,11 @@ impl Atlas {
         self.pad.trailing_zeros().min(self.tile.trailing_zeros()) + 1
     }
 
-    /// The side of the texture at `level`: half of the level before, as a mip chain is.
+    /// The side of the texture at `level`: half of the level before, as a mip chain is. Past the
+    /// last level `mip_levels` allows, the last level's side.
     pub fn level_size(&self, level: u32) -> u32 {
-        (self.size >> level.min(self.mip_levels() - 1)).max(1)
+        let last = self.mip_levels().saturating_sub(1);
+        (self.size >> level.min(last)).max(1)
     }
 
     /// Where `layer`'s sprite sits, padding excluded: (u0, v0, u1, v1) in the atlas's `[0, 1]`, or

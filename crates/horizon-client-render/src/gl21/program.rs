@@ -326,10 +326,10 @@ mod tests {
         assert_eq!(
             TERRAIN.map(|a| a.offset),
             [
-                std::mem::offset_of!(GlVertex, pos),
-                std::mem::offset_of!(GlVertex, uv),
-                std::mem::offset_of!(GlVertex, light),
-                std::mem::offset_of!(GlVertex, color),
+                std::mem::offset_of!(GlVertex, pos) as u32,
+                std::mem::offset_of!(GlVertex, uv) as u32,
+                std::mem::offset_of!(GlVertex, light) as u32,
+                std::mem::offset_of!(GlVertex, color) as u32,
             ]
         );
     }

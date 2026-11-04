@@ -56,9 +56,9 @@ impl GlVertex {
                 (vertex.light >> 8) * 257,
             ],
             color: [
-                (color & 0xff) as u8,
-                ((color >> 8) & 0xff) as u8,
-                ((color >> 16) & 0xff) as u8,
+                color as u8,
+                (color >> 8) as u8,
+                (color >> 16) as u8,
                 if (vertex.layer & crate::mesher::OPAQUE_LAYER) != 0 {
                     0xff
                 } else {
