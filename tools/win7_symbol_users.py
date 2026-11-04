@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find undefined references to one symbol in compiled COFF libraries.
+"""Find undefined references to one symbol in compiled COFF libraries and object files.
 
 Pass the Rust LLVM nm and directories containing .rlib/.lib files. Output is
 an investigation aid, not proof that an object was selected by the linker.
@@ -21,7 +21,7 @@ def main():
         if not directory.exists():
             continue
         for path in directory.rglob('*'):
-            if path.suffix.lower() not in ('.lib', '.rlib') or path in scanned:
+            if path.suffix.lower() not in ('.lib', '.rlib', '.o', '.obj') or path in scanned:
                 continue
             scanned.add(path)
             try:
@@ -29,6 +29,9 @@ def main():
                     continue
                 result = subprocess.run([str(args.nm), '--undefined-only', '--print-file-name', str(path)],
                                         capture_output=True, text=True, errors='replace', check=False)
+                if result.returncode and result.stderr:
+                    detail = result.stderr.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')[:1500]
+                    print(f'::notice::llvm-nm could not inspect {path}: {detail}')
                 for line in result.stdout.splitlines():
                     if args.symbol in line:
                         # An annotation can otherwise be truncated by the runner.
