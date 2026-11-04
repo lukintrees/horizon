@@ -54,14 +54,6 @@ struct Rect {
 }
 
 #[repr(C)]
-struct MinMaxInfo {
-    reserved: [i32; 2],
-    max_size: [i32; 2],
-    max_position: [i32; 2],
-    min_track: [i32; 2],
-    max_track: [i32; 2],
-}
-#[repr(C)]
 struct CreateStruct {
     parameter: *mut c_void,
     instance: Handle,
@@ -99,14 +91,6 @@ unsafe extern "system" fn window_proc(
     // The stable Box<State> is passed at creation and outlives DestroyWindow.
     // No State queue borrow is held across any native call/reentrant callback.
     unsafe {
-        if message == 0x0024 && lparam != 0 {
-            // WM_GETMINMAXINFO
-            // The system's default caption minimum silently expands small test
-            // drawables (and makes a 1x1 client resize impossible). Keep native
-            // max bounds, but let the caller enforce its own GUI minimum.
-            (*(lparam as *mut MinMaxInfo)).min_track = [1, 1];
-            return 0;
-        }
         if message == 0x0081 {
             // WM_NCCREATE
             let create = &*(lparam as *const CreateStruct);
@@ -121,6 +105,13 @@ unsafe extern "system" fn window_proc(
         let pointer = get_window_pointer(window, 0) as *const State;
         if !pointer.is_null() {
             let state = &*pointer;
+            // WM_WINDOWPOSCHANGING's default caption constraint also clamps
+            // programmatic sizes, independently of WM_GETMINMAXINFO. Only our
+            // validated resize transaction bypasses it; interactive tracking
+            // retains Windows' normal limits.
+            if message == 0x0046 && state.programmatic_resize.get() {
+                return 0;
+            }
             let result = state.message(message, wparam, lparam);
             if matches!(message, 0x0201 | 0x0204 | 0x0207 | 0x020b) {
                 SetCapture(window);
@@ -145,7 +136,6 @@ unsafe extern "system" fn window_proc(
 // ABI layout guards, evaluated by cargo check for each Windows target as well.
 const _: () = {
     assert!(size_of::<PixelFormat>() == 40);
-    assert!(size_of::<MinMaxInfo>() == 40);
     assert!(size_of::<CreateStruct>() == if size_of::<usize>() == 4 { 48 } else { 80 });
     assert!(std::mem::offset_of!(Message, wparam) == if size_of::<usize>() == 4 { 8 } else { 16 });
     assert!(size_of::<Message>() == if size_of::<usize>() == 4 { 32 } else { 48 });
@@ -329,7 +319,9 @@ impl Context {
                 return Err(failure("GetDC"));
             }
         }
-        this.refresh_size()?;
+        // Initial creation may impose a caption minimum. Apply the explicit
+        // client request through the same bounded programmatic transaction.
+        <Self as crate::ContextImpl>::resize(&this, size)?;
         Ok(this)
     }
     pub fn new(size: [u32; 2]) -> Result<Self, String> {
@@ -449,16 +441,18 @@ impl crate::ContextImpl for Context {
             if AdjustWindowRect(&mut rect, 0x00CF0000, 0) == 0 {
                 return Err(failure("AdjustWindowRect"));
             }
-            if SetWindowPos(
+            let previous = self.state.programmatic_resize.replace(true);
+            let result = SetWindowPos(
                 self.window,
                 ptr::null_mut(),
                 0,
                 0,
                 rect.right - rect.left,
                 rect.bottom - rect.top,
-                0x0002 | 0x0004 | 0x0010, // SWP_NOMOVE | NOZORDER | NOACTIVATE; NOT NOSIZE
-            ) == 0
-            {
+                0x0002 | 0x0004 | 0x0010,
+            );
+            self.state.programmatic_resize.set(previous);
+            if result == 0 {
                 return Err(failure("SetWindowPos"));
             }
         }

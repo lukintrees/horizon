@@ -64,6 +64,8 @@ mod state {
     const CAPACITY: usize = 256;
     pub(crate) struct State {
         pub size: Cell<[u32; 2]>,
+        #[cfg(windows)]
+        pub programmatic_resize: Cell<bool>,
         pub buttons: Cell<u8>,
         queue: RefCell<VecDeque<WindowEvent>>,
         lost: Cell<u64>,
@@ -74,6 +76,8 @@ mod state {
         pub fn new(size: [u32; 2]) -> Self {
             Self {
                 size: Cell::new(size),
+                #[cfg(windows)]
+                programmatic_resize: Cell::new(false),
                 buttons: Cell::new(0),
                 queue: RefCell::new(VecDeque::with_capacity(CAPACITY)),
                 lost: Cell::new(0),
