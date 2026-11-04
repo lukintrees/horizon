@@ -56,3 +56,21 @@ jobs:
           print('::error::' + text)
           PY
           exit 1
+      - name: Test legacy adapters in the real crate
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -o pipefail
+          if cargo test --locked -p horizon-client-render --lib legacy:: 2>&1 | tee "$RUNNER_TEMP/legacy-test.log"; then
+            exit 0
+          fi
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text = Path(os.environ['RUNNER_TEMP'], 'legacy-test.log').read_text(errors='replace')[-2500:]
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + text)
+          PY
+          exit 1
