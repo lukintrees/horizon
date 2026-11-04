@@ -21,21 +21,34 @@ DIRECT = re.compile(r'(?:^|\s)(?:__imp_+|_+)?' + SYMBOL + r'(?:@\d+)?(?:\s|$)')
 def main():
     nm = os.environ['HORIZON_LLVM_NM']
     root = Path(tempfile.gettempdir())
-    directories = list(root.glob('rustc*'))
-    print(f'Temporary directories: {len(directories)}', flush=True)
+    directories = [p for p in root.glob('rustc*') if p.is_dir()]
+    # cargo rustc can place its link intermediates under the target tree rather
+    # than the OS temp directory. The normal .rlib dependencies were already
+    # inspected separately; avoid rereading those potentially multi-GB archives.
+    build = Path('target/i686-win7-windows-msvc/debug/build')
+    if build.is_dir():
+        directories.append(build)
+    print(f'Input search roots: {directories}', flush=True)
     examined = matches = 0
     for directory in directories:
-        if not directory.is_dir():
-            continue
         for path in directory.rglob('*'):
-            if path.suffix.lower() not in ('.o', '.obj', '.lib', '.rlib') or not path.is_file():
+            if path.suffix.lower() not in ('.o', '.obj', '.lib', '.a') or not path.is_file():
                 continue
+            needle = SYMBOL.encode()
             try:
-                data = path.read_bytes()
+                found = False
+                tail = b''
+                with path.open('rb') as stream:
+                    while block := stream.read(1024 * 1024):
+                        data = tail + block
+                        if needle in data:
+                            found = True
+                            break
+                        tail = data[-len(needle):]
             except OSError:
                 continue
             examined += 1
-            if SYMBOL.encode() not in data:
+            if not found:
                 continue
             result = subprocess.run([nm, '--print-file-name', str(path)], capture_output=True, text=True, errors='replace', check=False)
             direct = [line for line in result.stdout.splitlines() if DIRECT.search(line)]
