@@ -1,7 +1,7 @@
 //! C01 common submission boundary. Intentionally borrowed during R02 migration:
 //! Game still owns its modern renderer; no Deref or public GPU fields here.
-//! The real Frame is temporarily gfx::Frame (R01 extraction remains separate).
-use crate::{Result, gfx, mesher::SectionMesh};
+//! Submissions use the CPU Frame contract; gfx::Frame remains a compatibility export.
+use crate::{Result, frame::Frame, gfx, mesher::SectionMesh};
 use horizon_render_api::{
     render_contract::{Backend, Capabilities, Feature, FrameOutcome},
     scene::SectionKey,
@@ -65,7 +65,7 @@ impl<'a> RendererFacade<'a> {
     }
     /// Modern render already presents internally. Legacy submits then presents
     /// once; offscreen success is distinct from a displayed window frame.
-    pub fn render(&mut self, frame: &gfx::Frame<'_>) -> Result<FrameOutcome> {
+    pub fn render(&mut self, frame: &Frame<'_>) -> Result<FrameOutcome> {
         match &mut self.inner {
             Adapter::Modern(renderer) => renderer.render(frame).map(|drawn| {
                 if drawn && renderer.is_offscreen() {
@@ -120,7 +120,7 @@ impl<'a> RendererFacade<'a> {
 
 /// Compatibility seam while Game still owns concrete modern state. Keeps
 /// modern errors intact and its existing offscreen/frame_drawn bool semantics.
-pub fn render_modern(renderer: &mut gfx::Renderer, frame: &gfx::Frame<'_>) -> Result<bool> {
+pub fn render_modern(renderer: &mut gfx::Renderer, frame: &Frame<'_>) -> Result<bool> {
     RendererFacade::modern(renderer)
         .render(frame)
         .map(|outcome| outcome != FrameOutcome::Deferred)

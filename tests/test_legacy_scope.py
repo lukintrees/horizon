@@ -55,9 +55,10 @@ class ScopeTests(unittest.TestCase):
     def test_protected_changes_including_new_manifests_are_rejected(self):
         for path in ["Cargo.toml", "Cargo.lock", "crates/new/Cargo.toml", "new/Cargo.lock",
                      ".github/workflows/fake.yml", ".github/legacy-gl-policy.json",
-                     "tools/ci/legacy_scope.py", "AGENTS.md",
-                     "crates/horizon-client-render/src/renderer_facade.rs",
-                     "crates/horizon-render-api/src/platform_contract.rs",
+                      "tools/ci/legacy_scope.py", "AGENTS.md",
+                      "crates/horizon-client-render/src/renderer_facade.rs",
+                      "crates/horizon-client-render/src/frame/skin.rs",
+                      "crates/horizon-render-api/src/platform_contract.rs",
                      "crates/horizon-client/src/game.rs",
                      "crates/horizon-legacy-render/src/terrain.frag"]:
             with self.subTest(path=path), self.assertRaises(scope.Rejected):

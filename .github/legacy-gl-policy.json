@@ -25,6 +25,8 @@
     "crates/horizon-client/src/game/event_loop.rs",
     "crates/horizon-client-render/src/lib.rs",
     "crates/horizon-client-render/src/gfx.rs",
+    "crates/horizon-client-render/src/frame.rs",
+    "crates/horizon-client-render/src/frame/**",
     "crates/horizon-client-render/src/legacy_gfx.rs",
     "crates/horizon-client-render/src/legacy_gfx/frame.rs",
     "crates/horizon-client-render/src/renderer_facade.rs",

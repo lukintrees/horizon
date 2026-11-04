@@ -12,8 +12,10 @@ Game переведённым на legacy. `CONTRACT_VERSION = 1`; текущи�
 | `crates/horizon-render-api/src/render_contract.rs` | `Backend`, `FrameOutcome`, generations/stamps, feature negotiation, `VisibleSections`, `FrameOptions`, CPU `ScreenshotRequest` |
 | `crates/horizon-render-api/src/resource_contract.rs` | Borrowed `Resources`/`TextureLayers`, exact-length/overflow/aggregate base-pixel budget validation; ownership/peak staging остаются у A01 |
 | `crates/horizon-render-api/src/platform_contract.rs` | `WakePolicy`, normalized event vocabulary/USB HID usages, pointer mode и `PlatformWindow` producer seam |
-| `crates/horizon-client-render/src/renderer_facade.rs` | Borrowed modern/legacy adapter; common render/size/resize/upload/capabilities; **без Deref и GPU-полей** |
-| `crates/horizon-client-render/src/gfx.rs` | `ScreenshotRequest` compatibility re-export; modern internals пока здесь |
+| `crates/horizon-client-render/src/renderer_facade.rs` | Borrowed modern/legacy adapter; common render/size/resize/upload/capabilities через CPU `frame::Frame`; **без Deref и GPU-полей** |
+| `crates/horizon-client-render/src/frame/` | R01a CPU `Frame`/`BorderDraw` и DTO для lightning, GPU-pose jobs и shader-pack inputs; в этом дереве нет `wgpu` handle types |
+| `crates/horizon-client-render/src/gfx.rs` | Compatibility re-export `Frame`/`BorderDraw` и `ScreenshotRequest`; modern internals пока здесь |
+| `crates/horizon-client-render/src/gfx/{entity_skin,lightning,pack_draw,pack_uniforms}.rs` | Прежние public пути re-export CPU DTO из `frame/`; GPU pipelines/buffers остаются modern-owned |
 | `crates/horizon-client-render/src/legacy_gfx/frame.rs` | `Options`/`VisibleSections` compatibility re-exports из CPU contract; прежний preflight сохранён |
 | `crates/horizon-client/src/client_lib.rs` | Общие модули доступны Game через прежний client re-export chain, без новой Cargo dependency |
 | `crates/horizon-client/src/game/event_loop.rs` | Game-facing `EventLoopCtl` принимает **нейтральный** `WakePolicy`; преобразование в winit только в adapter impl |
@@ -72,13 +74,13 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 | `upload`, section membership/removals, `take_dropped_sections`, LOD / culling / static entities | W01/R02: neutral section keys/stamps, bounded queues, CPU visibility; modern GPU paths isolated |
 | `skins_entities`, `skinned_models`, GPU posing storage | E01: настоящее CPU posing, не только `skin=None` |
 | `gamma`, fullbright, animation/filtering, fog/lightmap | F01/A02: policy/settings commands, не публичные GPU-owned поля |
-| `gfx::Frame`, `entity_skin`, `pack_draw`, `pack_uniforms` payloads | R01: common CPU DTO extraction; пока Frame всё ещё gfx-specific |
+| `frame::Frame` и DTO `skin`/`lightning`/`pack` | R01a вынесены в общий CPU-модуль; старые `gfx::*` пути совместимы. Остаток R01: visibility/resource descriptors и отделение dependency graph, а не второй Frame |
 | winit `Arc<Window>`, WindowEvent/KeyCode handlers | P01/P02/P03/P04/G01: platform adapters; `WakePolicy` уже вынесен, остальной loop ещё нет |
 
 ## 4. Что не замораживаем ложным обещанием
 
-В этой ступени **ещё не реализованы** common menu request/static menu path, full CPU Frame extraction,
-resource reload completion API, owning factory/renderer selection, screenshot result facade, полноценный
+В этой ступени **ещё не реализованы** common menu request/static menu path, оставшиеся visibility/resource
+descriptors и wgpu-free dependency graph, resource reload completion API, owning factory/renderer selection, screenshot result facade, полноценный
 platform adapter и Game legacy startup. Их точные новые signatures согласует и внесёт интегратор;
 нельзя самостоятельно добавлять конкурирующие common types в task PR.
 

@@ -31,9 +31,25 @@ def scan(text, members):
     return records
 
 
+# Renderer-owned declarations live in `gfx.rs` and, since R01a, in the CPU
+# `frame/` contract. Scan both so moving a type between them cannot silently
+# drop candidate-member coverage for the fields it declares.
+DECLARATION_FILES = (
+    Path("crates/horizon-client-render/src/gfx.rs"),
+    Path("crates/horizon-client-render/src/frame/mod.rs"),
+)
+
+
+def declarations(root):
+    members = set()
+    for relative in DECLARATION_FILES:
+        text = (root / relative).read_text()
+        members |= set(re.findall(r"pub (?:fn )?(\w+)\s*(?:[(:])", text))
+    return members
+
+
 def inventory(root):
-    gfx = (root / "crates/horizon-client-render/src/gfx.rs").read_text()
-    members = set(re.findall(r"pub (?:fn )?(\w+)\s*(?:[(:])", gfx))
+    members = declarations(root)
     game = root / "crates/horizon-client/src/game.rs"
     sources = []
     for path in [game, *sorted(game.with_suffix("").rglob("*.rs"))]:

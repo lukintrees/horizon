@@ -1,32 +1,10 @@
 //! Seeded, bolt-local lightning meshes retained until their last active bolt disappears.
+pub use crate::frame::lightning::{Bolt, Input, white_uv};
 use crate::{gfx::upload::Uploads, mesher::Vertex};
 use glam::DVec3;
 use horizon_core::random::{LegacyRandom, RandomSource};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
-
-/// A bolt's render state. Simulation lifetime and flashes stay in the game.
-#[derive(Clone, Copy)]
-pub struct Bolt {
-    pub at: [f64; 3],
-    pub seed: i64,
-}
-
-#[derive(Default)]
-pub struct Input<'a> {
-    pub bolts: &'a [Bolt],
-    /// Current atlas white texel ([`white_uv`]); a changed rect invalidates
-    /// retained vertices.
-    pub uv: [f32; 2],
-}
-
-/// The atlas point an untextured quad (`RenderTypes.lightning` has no
-/// texture) samples: the middle of the white sprite. Its corner (`u0`, `v0`)
-/// is on the sprite's border, where the atlas's nearest sampling picks the
-/// neighbouring, transparent texels for most fragments.
-pub fn white_uv(white: &crate::hud::Rect) -> [f32; 2] {
-    [(white.u0 + white.u1) / 2.0, (white.v0 + white.v1) / 2.0]
-}
 
 // Four layers, fourteen segments (eight trunk, two branches of three), four quads.
 pub(crate) const QUADS: u32 = 4 * 14 * 4;

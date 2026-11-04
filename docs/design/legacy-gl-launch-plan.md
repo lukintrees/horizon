@@ -9,9 +9,10 @@
 Общий facade/contracts и центральные manifests/lockfiles пишет **только интегратор**;
 другие исполнители направляют запросы и работают в согласованных modules.
 
-**Начальный кодовый baseline C01/CI01:** [C01 v1](legacy-gl-c01.md). Submission/scheduling wiring
-и CI01a/b/c уже добавлены; owning facade, общий CPU Frame и настоящий legacy startup ещё не завершены.
-CI01d/branch protection/main-side trusted gate bootstrap не выдаются за выполненные.
+**Начальный кодовый baseline C01/CI01:** [C01 v1](legacy-gl-c01.md). Submission/scheduling wiring,
+CI01a/b/c и R01a CPU Frame/related DTO extraction уже добавлены; owning facade, remaining
+visibility/resource split и настоящий legacy startup ещё не завершены. CI01d/branch
+protection/main-side trusted gate bootstrap не выдаются за выполненные.
 
 ## 1. Главное решение
 
@@ -103,16 +104,16 @@ CI01d/branch protection/main-side trusted gate bootstrap не выдаются �
 | **Capabilities/profile** | Реальные capabilities отдельно от выбранной policy; negotiation до geometry generation; explicit errors и локализованные настройки | Не заменять producer fields пустыми внутри renderer; не выдавать обычный wgpu OpenGL за GL2 |
 | **Streaming** | Section key + world/resource generation, mesh revision, visible order, replace/unload, bounded upload queue | Не принимать stale job после teleport/reload/unload; не отключать CPU simulation при GPU backpressure |
 
-Начальные `render_contract`, `resource_contract`, `platform_contract` и borrowed `renderer_facade`
-уже добавлены в [C01 v1](legacy-gl-c01.md); `legacy_resources` и полная Frame/owning facade миграция
-ещё не реализованы. C01 утверждает имена/владение; исполнители
+Начальные `render_contract`, `resource_contract`, `platform_contract`, borrowed `renderer_facade`
+и R01a `frame::Frame`/CPU DTO уже добавлены в [C01 v1](legacy-gl-c01.md); `legacy_resources`,
+visibility/resource descriptors и owning facade миграция ещё не реализованы. C01 утверждает имена/владение; исполнители
 не должны независимо придумывать несовместимые версии этих типов.
 
 Зацепка `game/event_loop.rs::EventLoopCtl` уже принимает нейтральный `WakePolicy` вместо winit
-`ControlFlow`; native handlers/window ownership ещё требуют P01–P04. Новая симуляция не нужна. Из `gfx::Frame`/связанных CPU типов
-необходимо убрать зависимость общего слоя от modern `entity_skin`, `pack_draw`, `pack_uniforms` и т. п.,
-оставив modern-only данные в отдельном пути. `Frame` уже CPU-ориентирован, но одного переноса объявления
-для legacy-only dependency graph недостаточно.
+`ControlFlow`; native handlers/window ownership ещё требуют P01–P04. Новая симуляция не нужна.
+`Frame`, `SkinFrame`, lightning inputs и shader-pack input/span DTO теперь объявлены в общем
+wgpu-handle-free `frame/` и совместимо re-exported из прежних `gfx::*` путей. Modern GPU state остался
+в `gfx`; одного переноса DTO для legacy-only dependency graph всё равно недостаточно.
 
 Решение v1 для ownership: сохранить существующий native owner окна/context на legacy-пути,
 modern window/loop оставить winit-adapter. Общий Game не должен требовать `Arc<winit::Window>`
