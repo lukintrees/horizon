@@ -211,7 +211,7 @@ pub fn capabilities(reported: Reported<'_>, extensions: &[&str]) -> Result<Capab
             reported.glsl_version
         )
     })?;
-    let has = |name: &str| extensions.iter().any(|list| *list == name);
+    let has = |name: &str| extensions.contains(&name);
     Ok(Capabilities {
         gl: version,
         glsl,

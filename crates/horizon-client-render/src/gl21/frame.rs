@@ -204,6 +204,11 @@ impl Frame {
         self.arena.stored()
     }
 
+    /// Where a section is in the buffer, which is also how a caller finds the vertices of a draw.
+    pub fn slot(&self, handle: u32) -> Option<Slot> {
+        self.entries.get(&handle).map(|entry| entry.slot)
+    }
+
     /// How many sections this frame could not fit; 0 in a frame with room.
     pub fn dropped(&self) -> u32 {
         self.dropped
@@ -528,6 +533,19 @@ mod tests {
         assert_eq!(frame.restarts(), 1, "it tried to make room once");
         assert_eq!(frame.draws().len(), 1);
         assert_eq!(frame.draws()[0].section, 1);
+    }
+
+    #[test]
+    fn a_section_s_slot_says_where_its_vertices_are() {
+        let solid = vertices(6, 3);
+        let translucent = vertices(3, 4);
+        let mut frame = Frame::new(1024);
+        frame.build(&[section(5, 1.0, &solid, &translucent)], None, false);
+        let slot = frame.slot(5).expect("stored");
+        assert_eq!((slot.begin, slot.len, slot.runs), (0, 9, 2));
+        // The range is the section's vertices, solid faces first.
+        assert_eq!(frame.vertices(Upload::at(slot.begin, slot.len)).len(), 9);
+        assert_eq!(frame.slot(6), None);
     }
 
     #[test]
