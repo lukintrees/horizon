@@ -14,6 +14,7 @@ on:
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
       - 'tools/win7_symbol_users.py'
+      - 'tools/win7_link_trace.ps1'
       - 'tests/test_pe_imports.py'
       - '.github/workflows/legacy-opengl.yml'
   pull_request:
@@ -30,9 +31,15 @@ on:
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
       - 'tools/win7_symbol_users.py'
+      - 'tools/win7_link_trace.ps1'
       - 'tests/test_pe_imports.py'
       - '.github/workflows/legacy-opengl.yml'
   workflow_dispatch:
+    inputs:
+      trace_link:
+        description: Trace the Win7 link instead of running optional window tests
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -77,7 +84,7 @@ jobs:
           PY
           exit 1
       - name: Test legacy adapters in the real crate
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.trace_link
         shell: bash
         env:
           CARGO_TERM_COLOR: never
@@ -96,7 +103,7 @@ jobs:
           PY
           exit 1
       - name: Build and test an X11 GL window
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.trace_link
         shell: bash
         env:
           CARGO_TERM_COLOR: never
@@ -118,7 +125,7 @@ jobs:
           PY
           exit 1
   windows-i686:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.trace_link
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -147,7 +154,7 @@ jobs:
       - name: Build probe with Windows 7 standard library
         run: cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-legacy-gl --features window-context --target i686-win7-windows-msvc --example wgl_probe
       - name: Run Win7-targeted probe on hosted Windows
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.trace_link
         run: ./target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
       - name: Inventory static PE imports (not a compatibility verdict)
         shell: pwsh
@@ -193,7 +200,7 @@ jobs:
           path: win7-client-static-imports.txt
           retention-days: 7
       - name: Locate libraries using the Windows 8 time API
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.trace_link
         shell: pwsh
         run: |
           $sysroot = rustc +nightly --print sysroot
@@ -203,3 +210,17 @@ jobs:
           $msvc = Join-Path $vs 'VC/Tools/MSVC'
           python tools/win7_symbol_users.py --nm "$nm" --symbol GetSystemTimePreciseAsFileTime target/i686-win7-windows-msvc/debug "$kits" "$msvc"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Trace the final Win7 client link
+        if: github.event_name == 'workflow_dispatch' && inputs.trace_link
+        shell: pwsh
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: ./tools/win7_link_trace.ps1
+      - name: Upload linker trace
+        if: github.event_name == 'workflow_dispatch' && inputs.trace_link && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win7-link-trace
+          path: ${{ runner.temp }}/win7-link-trace.txt
+          if-no-files-found: ignore
+          retention-days: 2
