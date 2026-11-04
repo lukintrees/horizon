@@ -36,16 +36,16 @@ pub mod arena;
 pub mod atlas;
 pub mod context;
 pub mod draws;
-pub mod program;
 mod profile;
+pub mod program;
 pub mod vertex;
 
 pub use arena::{Arena, Slot, Upload};
 pub use atlas::Atlas;
-pub use context::{glsl_name, Capabilities};
-pub use draws::{draw_calls, plan, section_runs, Pass, Plan, SectionDraw, SectionRuns};
-pub use program::{Attribute, AttributeKind, Uniform};
+pub use context::{Capabilities, glsl_name};
+pub use draws::{Pass, Plan, SectionDraw, SectionRuns, draw_calls, plan, section_runs};
 pub use profile::Profile;
+pub use program::{Attribute, AttributeKind, Uniform};
 pub use vertex::{Batches, GlVertex};
 
 /// The profile named by `HORIZON_GL_PROFILE`, if the variable is set and names one. `x1650` is

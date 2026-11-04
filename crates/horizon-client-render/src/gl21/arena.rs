@@ -47,7 +47,11 @@ pub struct Upload {
 impl Slot {
     /// A section at `begin`, `len` vertices long, in `runs` draw calls.
     pub const fn at(begin: u32, len: u32, runs: u32) -> Slot {
-        Slot { begin, len, runs }
+        Slot {
+            begin,
+            len,
+            runs,
+        }
     }
 }
 
@@ -136,7 +140,7 @@ impl Arena {
         }
         let begin = self.vertices.len() as u32;
         self.vertices.extend_from_slice(vertices);
-        let slot = Slot { begin, len, runs };
+        let slot = Slot::at(begin, len, runs);
         self.claim(handle, slot);
         self.pending.push(Upload { begin, len });
         self.written += len;

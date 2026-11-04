@@ -78,6 +78,7 @@ impl Profile {
     /// core, texture arrays, uniform and storage buffers and instancing. Always false for the
     /// X1650: that card needs the renderer `docs/opengl21-plan.md` describes.
     pub fn runs_horizons_renderer(&self) -> bool {
-        self.gl >= (3, 3) && self.texture_arrays && self.uniform_buffers && self.instancing
+        let modern = self.texture_arrays && self.uniform_buffers && self.instancing;
+        self.gl >= (3, 3) && modern
     }
 }

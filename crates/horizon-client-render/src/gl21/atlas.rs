@@ -179,7 +179,8 @@ impl Atlas {
                 let source_col = (col as i32 - self.pad as i32).clamp(0, last) as u32;
                 let from = (source_row * self.tile + source_col) as usize * 4;
                 let at = to + col as usize * 4;
-                self.pixels[at..at + 4].copy_from_slice(&source[from..from + 4]);
+                let texel = &source[from..from + 4];
+                self.pixels[at..at + 4].copy_from_slice(texel);
             }
         }
         Ok(())
@@ -260,7 +261,8 @@ mod tests {
         assert!(refusal(1, 24, 0, 4096).contains("power of two"));
         assert!(refusal(1, 0, 0, 4096).contains("power of two"));
         assert!(refusal(1, 16, 3, 4096).contains("padding"));
-        assert!(refusal(1, 16, 32, 4096).contains("wider than the sprite"));
+        let wide = refusal(1, 16, 32, 4096);
+        assert!(wide.contains("wider than the sprite"), "{wide}");
         assert!(refusal(1, 8192, 0, 4096).contains("does not fit"));
     }
 
@@ -342,7 +344,9 @@ mod tests {
         assert_eq!(atlas.capacity(), 1);
         assert!(atlas.blit(0, &sheet(2), 2).is_ok());
         assert!(blit_refusal(&mut atlas, 0, &[0; 8], 2).contains("bytes"));
-        assert!(blit_refusal(&mut atlas, 0, &sheet(4), 4).contains("texel sprite"));
-        assert!(blit_refusal(&mut atlas, 1, &sheet(2), 2).contains("past the atlas"));
+        let wide = blit_refusal(&mut atlas, 0, &sheet(4), 4);
+        assert!(wide.contains("texel sprite"), "{wide}");
+        let past = blit_refusal(&mut atlas, 1, &sheet(2), 2);
+        assert!(past.contains("past the atlas"), "{past}");
     }
 }

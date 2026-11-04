@@ -277,7 +277,8 @@ pub fn mismatches(
     }
     for uniform in uniforms {
         if !found_uniforms.iter().any(|name| name == uniform.name) {
-            problems.push(format!("uniform `{}` is declared by no shader", uniform.name));
+            let message = format!("uniform `{}` is declared by no shader", uniform.name);
+            problems.push(message);
         }
     }
     problems
@@ -382,8 +383,11 @@ mod tests {
     fn a_renamed_or_narrowed_attribute_is_caught() {
         let renamed = [("terrain.vert", "#version 120\nattribute vec3 a_position;\n")];
         let problems = mismatches(&renamed, &TERRAIN, &TERRAIN_UNIFORMS);
-        assert!(problems.iter().any(|p| p.contains("a_position")), "{problems:?}");
-        assert!(problems.iter().any(|p| p.contains("`a_pos`")), "{problems:?}");
+        let names_position = problems.iter().any(|p| p.contains("a_position"));
+        let wants_pos = problems.iter().any(|p| p.contains("`a_pos`"));
+        assert!(names_position, "{problems:?}");
+        assert!(wants_pos, "{problems:?}");
+        assert_eq!(problems.len(), 2, "the renamed slot and the missing one");
 
         // The same slot with the wrong width: a driver would bind it and read garbage.
         let narrow = [(
@@ -391,30 +395,28 @@ mod tests {
             "#version 120\nattribute vec3 a_pos;\nattribute vec3 a_uv;\n",
         )];
         let problems = mismatches(&narrow, &TERRAIN, &TERRAIN_UNIFORMS);
-        assert!(
-            problems.iter().any(|p| p.contains("a_uv") && p.contains("vec2")),
-            "{problems:?}"
-        );
+        let width = problems.iter().any(|p| p.contains("a_uv") && p.contains("vec2"));
+        assert!(width, "{problems:?}");
     }
 
     #[test]
     fn a_uniform_nobody_sets_or_of_the_wrong_type_is_caught() {
         let extra = [("terrain.frag", "#version 120\nuniform vec3 u_fog_colour;\n")];
         let problems = mismatches(&extra, &TERRAIN, &TERRAIN_UNIFORMS);
-        assert!(problems.iter().any(|p| p.contains("u_fog_colour")), "{problems:?}");
+        let named = problems.iter().any(|p| p.contains("u_fog_colour"));
+        assert!(named, "{problems:?}");
 
         // A uniform the code uploads as a vec3 while the shader reads a vec4.
         let wrong = [("terrain.vert", "#version 120\nuniform vec4 u_origin;\n")];
         let problems = mismatches(&wrong, &TERRAIN, &TERRAIN_UNIFORMS);
-        assert!(
-            problems.iter().any(|p| p.contains("u_origin") && p.contains("vec4")),
-            "{problems:?}"
-        );
+        let typed = |p: &String| p.contains("u_origin") && p.contains("vec4");
+        assert!(problems.iter().any(typed), "{problems:?}");
     }
 
     #[test]
     fn comments_about_declarations_are_not_declarations() {
         let found = declarations("// uniform vec3 u_nothing;\nuniform vec3 u_fog;\n");
-        assert_eq!(found.uniforms, vec![("vec3".to_string(), "u_fog".to_string())]);
+        let fog = ("vec3".to_string(), "u_fog".to_string());
+        assert_eq!(found.uniforms, vec![fog]);
     }
 }

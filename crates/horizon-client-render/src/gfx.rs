@@ -11304,17 +11304,19 @@ mod tests {
         assert!(super::translucent_batchable_with(&capable, true, false));
         assert!(!super::translucent_batchable_with(&capable, true, true));
         // The split is the one the CPU mip chains were cut by, not the adapter's 2048.
-        assert_eq!(
-            super::layer_split_with(2048, false, None, 64, true),
-            Ok(super::SPRITE_SPLIT)
-        );
-        assert_eq!(super::layer_split_with(2048, false, None, 64, false), Ok(2048));
-        // The same split the adapter asked for, one line each way.
-        assert_eq!(super::layer_split_with(512, false, None, 8, false), Ok(512));
+        let poorest = super::layer_split_with(2048, false, None, 64, true);
+        assert_eq!(poorest, Ok(super::SPRITE_SPLIT));
+        let adapter = super::layer_split_with(2048, false, None, 64, false);
+        assert_eq!(adapter, Ok(2048));
+        // The split follows the adapter's limit, not the profile's.
+        let small = super::layer_split_with(512, false, None, 8, false);
+        assert_eq!(small, Ok(512));
         // A card that cannot name SPRITE_SPLIT layers still gets the largest split that fits, as
         // before: the profile does not override the adapter's limit.
-        assert_eq!(super::layer_split_with(1024, false, None, 64, true), Ok(1024));
-        assert_eq!(super::layer_split_with(256, false, None, 8, true), Ok(256));
+        let limit = super::layer_split_with(1024, false, None, 64, true);
+        assert_eq!(limit, Ok(1024));
+        let tiny = super::layer_split_with(256, false, None, 8, true);
+        assert_eq!(tiny, Ok(256));
     }
     #[test]
     fn entity_shader_validates_with_its_overlay_constants() {

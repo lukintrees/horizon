@@ -146,7 +146,8 @@ impl Capabilities {
             );
         }
         if !self.draw_buffers && self.gl < (2, 0) {
-            wanted.push("no draw buffers: post-processing is limited to one target".to_string());
+            let line = "no draw buffers: post-processing is limited to one target";
+            wanted.push(line.to_string());
         }
         if !self.texture_lod_bias && self.gl < (1, 4) {
             wanted.push("no texture LOD bias (GL_EXT_texture_lod_bias)".to_string());

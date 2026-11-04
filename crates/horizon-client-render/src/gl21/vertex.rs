@@ -29,7 +29,8 @@ pub const LAYER_MASK: u16 = 0x7fff;
 pub const STRIDE: u32 = 28;
 
 /// One vertex, 28 bytes.
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod)]
+#[derive(bytemuck::Zeroable)]
 #[repr(C)]
 pub struct GlVertex {
     pub pos: [f32; 3],
@@ -129,12 +130,14 @@ mod tests {
         // 240 of 255 is what the shader reads as `240 / 255`, and 240 * 257 of 65535 is the same.
         assert_eq!(v.light, [240 * 257, 64 * 257]);
         assert_eq!(v.light[0], 61680, "240 * 257 fits a u16");
-        assert!((f32::from(v.light[0]) / 65535.0 - 240.0 / 255.0).abs() < 1e-6);
+        let sky = f32::from(v.light[0]) / 65535.0;
+        assert!((sky - 240.0 / 255.0).abs() < 1e-6);
         // Not a force-opaque sprite: the alpha is the flag, 0.
         assert_eq!(v.color, [0x20, 0x40, 0x80, 0]);
 
         // The same vertex on a layer marked force-opaque.
-        let opaque = GlVertex::of(&vertex(0.0, [0.0, 0.0], 7 | crate::mesher::OPAQUE_LAYER, 0, 0));
+        let marked = 7 | crate::mesher::OPAQUE_LAYER;
+        let opaque = GlVertex::of(&vertex(0.0, [0.0, 0.0], marked, 0, 0));
         assert_eq!(opaque.color[3], 0xff);
         // And the HDR emission the wgpu path keeps in that byte is not carried: 0xFF as an ordinary
         // opaque colour still says "alpha test me".
@@ -162,7 +165,7 @@ mod tests {
             vertex(1.0, [1.0, 1.0], 5, 0, 0xFF00_0000),
             vertex(0.0, [0.0, 1.0], 3, 0, 0xFF00_0000),
             // The opaque-leaves mark is not a sprite of its own.
-            vertex(0.0, [0.0, 1.0], 3 | crate::mesher::OPAQUE_LAYER, 0, 0xFF00_0000),
+            vertex(0.0, [0.0, 1.0], marked, 0, 0xFF00_0000),
         ];
         let (out, batches) = Batches::of(&vertices);
         assert_eq!(out.len(), 5);

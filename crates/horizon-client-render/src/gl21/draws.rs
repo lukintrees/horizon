@@ -62,8 +62,16 @@ pub struct SectionRuns {
 }
 
 impl SectionRuns {
+    /// The run indices this range names, for a loop over them.
+    pub fn runs(&self) -> std::ops::Range<u32> {
+        self.first_run..self.first_run + self.runs
+    }
+
     pub const fn new(first_run: u32, runs: u32) -> Self {
-        SectionRuns { first_run, runs }
+        SectionRuns {
+            first_run,
+            runs,
+        }
     }
 }
 
@@ -99,25 +107,27 @@ pub const SKY: u32 = u32::MAX;
 
 /// `plan` from the sections in view: their solid faces in the order given, then their see-through
 /// faces farthest first. `sky`'s runs, when the frame draws any, come first.
-pub fn plan(sections: &[SectionDraw], sky: Option<SectionRuns>, present: bool) -> Plan {
+pub fn plan(
+    sections: &[SectionDraw],
+    sky: Option<SectionRuns>,
+    present: bool,
+) -> Plan {
     let mut plan = Plan::default();
     if let Some(sky) = sky {
-        for run in sky.first_run..sky.first_run + sky.runs {
+        for run in sky.runs() {
             plan.calls.push((SKY, run));
             plan.pass.push(Pass::Sky);
         }
     }
     for (index, section) in sections.iter().enumerate() {
-        for run in section.solid.first_run..section.solid.first_run + section.solid.runs {
+        for run in section.solid.runs() {
             plan.calls.push((index as u32, run));
             plan.pass.push(Pass::Solid);
         }
     }
     let mut translucent: Vec<(usize, u32)> = Vec::new();
     for (index, section) in sections.iter().enumerate() {
-        let runs = section.translucent.first_run..section.translucent.first_run
-            + section.translucent.runs;
-        translucent.extend(runs.map(|run| (index, run)));
+        translucent.extend(section.translucent.runs().map(|run| (index, run)));
     }
     translucent.sort_by(|(a, _), (b, _)| {
         sections[*b]
@@ -189,7 +199,8 @@ mod tests {
         assert_eq!(plan.calls.first(), Some(&(SKY, 0)));
         assert_eq!(plan.pass.last(), Some(&Pass::Solid));
         assert!(plan.present);
-        assert_eq!(draw_calls(&plan), 4, "sky, two solid runs, the present quad");
+        let calls = draw_calls(&plan);
+        assert_eq!(calls, 4, "sky, two solid runs, the present quad");
     }
 
     #[test]
