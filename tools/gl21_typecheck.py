@@ -682,14 +682,25 @@ def glow_from_cargo() -> Path | None:
     import json
     import subprocess
 
-    try:
-        raw = subprocess.check_output(
-            ["cargo", "metadata", "--format-version", "1", "--all-features"],
-            stderr=subprocess.STDOUT,
-            timeout=300,
+    # `--offline` first: CI has run `cargo fetch`, so every source is in the cache and the
+    # metadata comes from it without touching the network. The online attempt is the fallback
+    # for a developer who has not fetched yet, not the other way round.
+    raw = None
+    for extra in (["--offline"], []):
+        try:
+            raw = subprocess.check_output(
+                ["cargo", "metadata", "--format-version", "1", *extra],
+                stderr=subprocess.DEVNULL,
+                timeout=300,
+            )
+            break
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            continue
+    if raw is None:
+        print(
+            "gl21_typecheck: cargo metadata failed (is cargo installed, and has cargo fetch run?)",
+            file=sys.stderr,
         )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        print(f"gl21_typecheck: cargo metadata failed: {error}", file=sys.stderr)
         return None
     try:
         metadata = json.loads(raw)

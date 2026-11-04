@@ -125,6 +125,11 @@ jobs:
         if: runner.environment == 'github-hosted'
         with:
           python-version: '3.12'
+      # The Rust syntax gate parses the crate with tree-sitter, which the runner's Python does
+      # not have: pinned to the versions tools/gl21_preflight.sh installs, so the gate is the
+      # same one a developer runs.
+      - name: Install the syntax gate's grammar
+        run: python3 -m pip install --quiet 'tree-sitter==0.26.0' 'tree-sitter-rust==0.24.2'
       # The GPU-free half of the path's testing: source checks, no toolchain needed, so this
       # step catches a bad shader or a wrong call even when the build below is broken.
       - name: OpenGL 2.1 static checks
