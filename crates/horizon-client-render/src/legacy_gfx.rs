@@ -616,7 +616,7 @@ mod tests {
                 screen_bytes: 96,
                 gpu: Budget {
                     texture_bytes: 1156,
-                    mesh_bytes: 348,
+                    mesh_bytes: 516,
                 },
                 ..Limits::default()
             },
