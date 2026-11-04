@@ -119,7 +119,8 @@ mod tests {
     #[test]
     fn light_is_sky_in_the_low_byte_and_block_in_the_high_byte_in_levels() {
         let atlas = two_pages();
-        let batch = solid(&quad(0, 0x0F30, 0xFF_FFFF), &atlas);
+        // The mesher stores 16x fixed point in each byte: sky 3 in the low byte (0x30), block 15 in the high one (0xF0).
+        let batch = solid(&quad(0, 0xF030, 0xFF_FFFF), &atlas);
         assert_eq!(batch.vertices[0].light, [3.0, 15.0]);
     }
 
