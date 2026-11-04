@@ -1,28 +1,117 @@
-name: Legacy GL branch validation
-# This session's branch only. No shared workflow or other branch is changed.
+name: Legacy GL integration validation
+# CI01: same jobs for scoped PR candidates and aggregate integration heads.
 on:
   push:
     branches: ['arena/a7e96628-horizon']
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/horizon-render-api/**'
-      - 'crates/horizon-legacy-render/**'
-      - 'crates/horizon-client-render/**'
-      - 'tools/legacy-gl-probe/**'
-      - 'tools/legacy_gl_smoke.py'
-      - 'tests/test_legacy_gl_smoke.py'
-      - '.github/workflows/legacy-gl-branch.yml'
-      # Crate-wide globs above also include READMEs: omit docs-only pushes.
-      - '!**/*.md'
+  pull_request:
+    branches: ['main', 'arena/a7e96628-horizon']
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: legacy-gl-branch-${{ github.ref }}
+  group: legacy-gl-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  scope:
+    name: legacy/candidate-scope
+    if: >-
+      github.repository == 'lukintrees/horizon' &&
+      (github.event_name != 'pull_request' ||
+       github.base_ref == 'arena/a7e96628-horizon' ||
+       github.head_ref == 'arena/a7e96628-horizon')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.scope.outputs.mode }}
+      report: ${{ steps.scope.outputs.report }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check candidate with policy and checker from trusted base
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted="$RUNNER_TEMP/legacy-trusted"
+          mkdir -p "$trusted"
+          # Task PRs may not supply their own checker/policy. Integration draft
+          # bootstrap and aggregate pushes are the designated integrator lane.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$BASE_REF" = arena/a7e96628-horizon ]; then
+            git show "$BASE_SHA:tools/ci/legacy_scope.py" > "$trusted/legacy_scope.py"
+            git show "$BASE_SHA:.github/legacy-gl-policy.json" > "$trusted/policy.json"
+          else
+            cp tools/ci/legacy_scope.py "$trusted/legacy_scope.py"
+            cp .github/legacy-gl-policy.json "$trusted/policy.json"
+          fi
+          python3 "$trusted/legacy_scope.py" --policy "$trusted/policy.json" --report target/legacy-ci/scope.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('target/legacy-ci/scope.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('report=' + json.dumps(report, separators=(',', ':')) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-candidate-evidence
+          path: target/legacy-ci/
+
+  policy-tests:
+    name: legacy/policy-tests
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          python3 -m unittest discover -s tests -p 'test_legacy_scope.py'
+          python3 -m unittest discover -s tests -p 'test_legacy_required.py'
+          python3 -m unittest discover -s tests -p 'test_legacy_renderer_inventory.py'
+          python3 tools/ci/legacy_renderer_inventory.py --check
+          python3 tools/check_public_tree.py
+
+  modern:
+    name: legacy/modern
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      HORIZON_TELEMETRY_URL: 'off'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: legacy-modern
+      - name: Check unchanged default modern feature graph
+        run: cargo check --locked -p horizon-client
+      - name: Test neutral scheduling and headless loop through actual Game
+        run: |
+          cargo test --locked -p horizon-client --no-default-features --lib game::event_loop::tests::
+          cargo test --locked -p horizon-client --no-default-features --lib game::headless::tests::
+
   terrain-integration:
+    name: legacy/cpu-game
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -47,7 +136,7 @@ jobs:
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
-          for filter in legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: lightmap::tests::; do
+          for filter in legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: renderer_facade::tests:: lightmap::tests::; do
             if [ "$status" -eq 0 ]; then
               cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
               status=$?
@@ -99,7 +188,7 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          for filter in gui_bridge:: legacy_gfx::tests::; do
+          for filter in gui_bridge:: legacy_gfx::tests:: renderer_facade::tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
             else
@@ -147,6 +236,9 @@ jobs:
           name: legacy-branch-game-check
           path: target/legacy-branch/
   gl2-runtime:
+    name: legacy/gl2
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -176,6 +268,9 @@ jobs:
           path: target/legacy-gl-probe/report.json
 
   windows-x86-abi:
+    name: legacy/windows-x86
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -210,3 +305,21 @@ jobs:
           name: probe-modern-windows-x86-not-win7-qualified
           path: tools/legacy-gl-probe/target/i686-pc-windows-msvc/release/horizon-legacy-gl-probe.exe
           if-no-files-found: error
+
+  required:
+    name: legacy/required
+    needs: [scope, policy-tests, modern, terrain-integration, gl2-runtime, windows-x86-abi]
+    if: always() && needs.scope.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Final gate is also base-owned for task PRs.
+          ref: ${{ github.event_name == 'pull_request' && github.base_ref == 'arena/a7e96628-horizon' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - name: Reject missing, skipped, cancelled or stale candidate results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/legacy_required.py

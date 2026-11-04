@@ -830,15 +830,8 @@ struct BorderUniform {
 }
 /// A frame to save as a PNG: F2's screenshot, an agent's `game_screenshot`,
 /// or the icon the Select World list shows.
-pub struct ScreenshotRequest {
-    pub path: PathBuf,
-    /// `GameRenderer.takeAutoScreenshot`: centre-crop the frame to a square
-    /// and average it down to this size. `None` saves the frame as drawn.
-    pub size: Option<[u32; 2]>,
-    /// F2's: drawn at the game's resolution (Resolution Scale above 100%) times
-    /// `Renderer::screenshot_quality`, not the window's.
-    pub scaled: bool,
-}
+pub use horizon_render_api::render_contract::ScreenshotRequest;
+
 pub struct Renderer {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -6318,6 +6311,10 @@ impl Renderer {
                 self.animations.changed().iter().copied(),
             );
         }
+    }
+    /// Adapter query; does not expose a surface/device to the common facade.
+    pub(crate) fn is_offscreen(&self) -> bool {
+        self.offscreen.is_some()
     }
     pub fn render(&mut self, frame: &Frame) -> Result<bool> {
         // A lost device cannot accept uploads either. Leave recovery to the

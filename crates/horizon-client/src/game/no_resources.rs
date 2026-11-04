@@ -65,7 +65,7 @@ impl Missing {
         let Some(renderer) = &mut self.renderer else {
             return;
         };
-        match renderer.render(&loading_frame(&batch)) {
+        match horizon_client::renderer_facade::render_modern(renderer, &loading_frame(&batch)) {
             Ok(true) => return,
             Ok(false) => {}
             Err(e) => log::warn!("Horizon: frame failed: {e}"),
@@ -163,8 +163,9 @@ impl ApplicationHandler for Missing {
             return;
         }
         // Wake now and then for Ctrl+C in the console; redraws come with events.
-        event_loop.set_control_flow(ControlFlow::WaitUntil(
-            Instant::now() + Duration::from_millis(250),
-        ));
+        EventLoopCtl::set_control_flow(
+            event_loop,
+            ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250)),
+        );
     }
 }
