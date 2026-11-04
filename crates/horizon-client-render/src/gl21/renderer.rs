@@ -571,8 +571,12 @@ mod tests {
             Some(&hud),
             true,
         );
-        let hud_states = device
-            .calls
+        // Only the HUD's own states: the present quad's reset is a state call too, after `program
+        // Present`, which is where the HUD's section ends.
+        let present = device
+            .index_of("program Present")
+            .expect("the present program");
+        let hud_states = device.calls[..present]
             .iter()
             .filter(|call| call.starts_with("state"))
             .count();
@@ -650,6 +654,8 @@ mod tests {
         assert!(line.contains("1 solid"), "{line}");
         assert!(line.contains("1 see-through"), "{line}");
         assert!(line.contains("1 sky"), "{line}");
+        // The present quad makes the calls four: sky, solid, see-through, present.
+        assert!(line.contains("4 draw call(s)"), "{line}");
         assert!(line.contains("1 section(s) stored"), "{line}");
         assert!(line.contains("dropped 0"), "{line}");
     }
