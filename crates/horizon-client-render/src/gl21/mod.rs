@@ -16,7 +16,8 @@
 //!
 //! The pieces of the renderer itself are pure data so that they can be tested without a GPU, and so
 //! that CI — which has no OpenGL 2.1 driver — still holds them: `context` is the checklist a driver
-//! has to pass and the sentences to show a player whose does not, `atlas` packs the sprites into a
+//! has to pass and the sentences to show a player whose does not, `arena` is the one vertex buffer
+//! every section shares and the ranges to upload each frame, `atlas` packs the sprites into a
 //! power-of-two texture GL 2.1 can clamp, `vertex` inlines the sprite layer into a per-sprite run
 //! and lays a vertex out in what GLSL 1.20 can read, `draws` works out the frame's calls and their
 //! order, and `program` holds the attribute and uniform tables the driver binds the shaders by, next
@@ -31,6 +32,7 @@
 //! no `in`/`out`, no `layout`, no `texture()`, no bit arithmetic, no vertex texture fetch. Writing
 //! one that needs a newer OpenGL is a test failure, not a surprise on a player's 2006 driver.
 
+pub mod arena;
 pub mod atlas;
 pub mod context;
 pub mod draws;
@@ -38,6 +40,7 @@ pub mod program;
 mod profile;
 pub mod vertex;
 
+pub use arena::{Arena, Slot, Upload};
 pub use atlas::Atlas;
 pub use context::{glsl_name, Capabilities};
 pub use draws::{draw_calls, plan, section_runs, Pass, Plan, SectionDraw, SectionRuns};
