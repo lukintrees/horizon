@@ -8,8 +8,10 @@
 //!
 //! - **The vertex layout.** `HudVertex` is `bytemuck::Pod` over seven fields, 32 bytes, and a
 //!   `@location` per field. GL 2.1 takes it as it is *if* the colour is a `vec4` and not an integer
-//!   (`glVertexAttribIPointer` is GL 3.0): the `u32` colour is unpacked on the CPU into four
-//!   normalized bytes, exactly as `vertex.rs` does for the terrain.
+//!   (`glVertexAttribIPointer` is GL 3.0): the `u32` colour is read as four normalized bytes,
+//!   exactly as `vertex.rs` does for the terrain. The bytes are already in red-first order on either
+//!   endianness (`HudVertex`'s own note: red in the low byte, which is byte zero of a little-endian
+//!   word, hence `color.to_le_bytes()` on a big-endian machine).
 //! - **Sampler objects.** The wgpu shader samples the sprite atlas and the glint texture, and its
 //!   linear sampler is a separate object for the vignette's blur. GL 2.1 binds filtering with the
 //!   texture, so a run that wants the blur needs its own texture unit and its own `u_linear` sampler
@@ -54,17 +56,16 @@ pub const HUD_GLINT_UV: u32 = 24;
 
 impl GlHudVertex {
     /// `vertex` in the GL 2.1 layout: the colour unpacked, everything else as it is.
+    ///
+    /// `u32::to_le_bytes` is how the four channels come out red first on either endianness:
+    /// `HudVertex` stores the colour with red in the low byte, which is byte zero of a little-endian
+    /// word and the shader's `a_color.x`, and `to_le_bytes` writes that word in that order wherever
+    /// it runs.
     pub fn of(vertex: &HudVertex) -> GlHudVertex {
-        let color = vertex.color;
         GlHudVertex {
             pos: vertex.pos,
             uv: vertex.uv,
-            color: [
-                color as u8,
-                (color >> 8) as u8,
-                (color >> 16) as u8,
-                (color >> 24) as u8,
-            ],
+            color: vertex.color.to_le_bytes(),
             depth: vertex.depth,
             glint_uv: vertex.glint_uv,
         }
@@ -215,6 +216,9 @@ pub struct HudDraws {
     /// GUI pixels per window pixel (`HudBatch::scale`), which `hud.vert` needs to place a vertex in
     /// the window.
     pub scale: f32,
+    /// The tick's fraction, which the glint's animation reads (`u_hud.w`, `hud.wgsl`'s
+    /// `hud.time`), from `HudBatch::game_time`.
+    pub time: f32,
     /// The GUI's size in pixels, as `hud.wgsl`'s `hud.size`.
     pub size: [f32; 2],
 }
@@ -261,6 +265,7 @@ impl HudDraws {
             vertices,
             runs,
             scale: batch.scale,
+            time: batch.game_time,
             size: [batch.width, batch.height],
         }
     }

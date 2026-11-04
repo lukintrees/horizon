@@ -8,10 +8,13 @@
 //! - **State leaks between passes.** `glDepthMask` stays off after the see-through pass, so the next
 //!   frame's solid faces write no depth and the world is drawn inside out — a bug that looks like a
 //!   driver's. Every pass lists every piece of state it depends on, not only what it changes.
-//! - **The alpha test is not a shader.** GLSL 1.20 has `discard`, but a *cut-out* face is
-//!   vanilla's 0.5 threshold applied after the lightmap and the fog, so it is `glAlphaFunc` with
-//!   `GL_GREATER`: the same comparison, decided by fixed-function hardware that on R500 costs
-//!   nothing, where a branch per fragment costs a quarter of the frame.
+//! - **The alpha test is a uniform here.** Vanilla's 0.5 threshold is applied after the lightmap and
+//!   the fog, so in principle it is `glAlphaFunc(GL_GREATER, 0.5)`, decided by fixed-function
+//!   hardware. `glow` binds no `glAlphaFunc` (it is gone from GL 3.0's core, and the bindings stop
+//!   at what a core profile can call), so the same comparison lives in `terrain.frag` as
+//!   `color.a < u_alpha_test`, which the driver passes here as `State::AlphaTest`'s value: same
+//!   threshold, same place in the fragment stage. A driver implements this state by setting that
+//!   uniform, and `state::describe` still writes it down so a log says what the pass asked for.
 //!
 //! The lists are compared with `Pass`'s own answers in `tests`, so the two cannot drift: a pass that
 //! says it writes depth and a state list that disables `glDepthMask` is a test failure.
@@ -29,7 +32,8 @@ pub enum State {
     Blend(bool),
     /// `glBlendFunc(src, dst)`, applied only when blending is on.
     BlendFunc(Factor, Factor),
-    /// `glEnable/glDisable(GL_ALPHA_TEST)` with `glAlphaFunc(GL_GREATER, threshold)`.
+    /// The alpha test: the threshold `terrain.frag`'s `discard` compares against (`Some`), or none
+    /// at all. There is no `glAlphaFunc` in `glow`, so this is a uniform rather than a GL state.
     AlphaTest(Option<f32>),
     /// `glEnable`/`glDisable(GL_CULL_FACE)`: vanilla's chunk renderer culls back faces, and the sky
     /// quad is seen from the inside, so it does not.

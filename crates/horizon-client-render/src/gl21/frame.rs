@@ -42,6 +42,10 @@ pub struct Section<'a> {
     /// Which version of the mesh this is. Equal to the one in the last frame that stored this
     /// handle, the vertices are not stored again and the frame reuses the range it had.
     pub revision: u32,
+    /// The section's origin relative to the camera, which `u_origin` adds to every vertex: the
+    /// mesher writes section-relative positions, and a camera-relative section origin keeps the
+    /// floats small enough for the 24-bit mantissa the R500 multiplies with.
+    pub origin: [f32; 3],
     /// The square of the distance from the camera to the section's centre (see-through faces are
     /// sorted by it).
     pub distance_sq: f32,
@@ -58,12 +62,14 @@ impl<'a> Section<'a> {
     pub fn solid_only(
         handle: u32,
         revision: u32,
+        origin: [f32; 3],
         distance_sq: f32,
         solid: &'a [TerrainVertex],
     ) -> Section<'a> {
         Section {
             handle,
             revision,
+            origin,
             distance_sq,
             visibility: 1.0,
             solid,
@@ -93,6 +99,9 @@ pub struct Draw {
     pub pass: Pass,
     /// The section's shade-in for `u_fade`. The sky's and the present quad's calls carry 1.
     pub visibility: f32,
+    /// The section's origin relative to the camera: the draw's `u_origin`. The sky's calls carry
+    /// zeros, because the sky is drawn where the camera is.
+    pub origin: [f32; 3],
     /// Which section this is, or `SKY`: for a log line and for a caller that wants to group its
     /// uniforms per section.
     pub section: u32,
@@ -323,11 +332,11 @@ impl Frame {
             // The plan names a section by its place in `sections`; a draw names it by the handle the
             // caller gave it, which is what its uniforms are looked up by.
             let (index, run) = *call;
-            let (handle, entry, visibility) = if index == SKY {
+            let (handle, entry, visibility, origin) = if index == SKY {
                 let Some((entry, _)) = self.sky.as_ref() else {
                     continue;
                 };
-                (SKY, entry, 1.0)
+                (SKY, entry, 1.0, [0.0; 3])
             } else {
                 let Some(section) = sections.get(index as usize) else {
                     continue;
@@ -335,7 +344,7 @@ impl Frame {
                 let Some(entry) = self.entries.get(&section.handle) else {
                     continue;
                 };
-                (section.handle, entry, section.visibility)
+                (section.handle, entry, section.visibility, section.origin)
             };
             let Some(run) = entry.runs.get(run as usize) else {
                 continue;
@@ -346,6 +355,7 @@ impl Frame {
                 count: run.count,
                 pass: *pass,
                 visibility,
+                origin,
                 section: handle,
             });
         }
@@ -428,6 +438,7 @@ mod tests {
         Section {
             handle,
             revision: 1,
+            origin: [0.0; 3],
             distance_sq,
             visibility: 1.0,
             solid,

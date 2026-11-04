@@ -6,6 +6,8 @@ members = [
     "crates/horizon-narrator",
     "crates/horizon-threads",
     "crates/horizon-hdr",
+    # The GL 2.1 renderer's context, surface and `glow` calls (docs/opengl21-plan.md).
+    "crates/horizon-gl21",
     "crates/horizon-world",
     "crates/horizon-client",
     "crates/horizon-client-lib",

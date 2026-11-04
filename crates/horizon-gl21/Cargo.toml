@@ -1,0 +1,23 @@
+[package]
+name = "horizon-gl21"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.85"
+description = "Horizon's OpenGL 2.1 renderer on a real driver: the EGL context, the window surface and the glow calls the crates that forbid unsafe code can't make"
+
+[dependencies]
+horizon-client-render = { path = "../horizon-client-render" }
+# The GL entry points the GL 2.1 renderer calls, as the version wgpu-hal already loads.
+glow = { version = "0.17", default-features = false }
+log = "0.4"
+# The vertex layout and the HUD's: `gl21::GlVertex` and `gl21::GlHudVertex` are `Pod`.
+bytemuck = { version = "1.24", features = ["derive"] }
+raw-window-handle = { version = "0.6.2", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The context and the window surface, on every platform EGL is on.
+khronos-egl = { version = "6", default-features = false, features = ["dynamic", "1_4"] }
+
+[lints]
+workspace = true

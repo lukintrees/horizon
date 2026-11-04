@@ -54,7 +54,7 @@ pub use frame::{Draw, Frame, Run, Section};
 pub use hud::{GlHudVertex, HudDraws, HudRun};
 pub use profile::Profile;
 pub use program::{Attribute, AttributeKind, Uniform};
-pub use renderer::{Device, Program, Renderer, Texture, Viewport};
+pub use renderer::{Device, FrameUniforms, HudFrame, Program, Renderer, Texture, View, Viewport};
 pub use state::State;
 pub use vertex::{Batches, GlVertex};
 

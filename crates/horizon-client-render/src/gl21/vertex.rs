@@ -55,16 +55,14 @@ impl GlVertex {
                 (vertex.light & 0xff) * 257,
                 (vertex.light >> 8) * 257,
             ],
-            color: [
-                color as u8,
-                (color >> 8) as u8,
-                (color >> 16) as u8,
-                if (vertex.layer & crate::mesher::OPAQUE_LAYER) != 0 {
-                    0xff
-                } else {
-                    0
-                },
-            ],
+            color: {
+                // Red first on both endiannesses, as `HudVertex`'s colour is: the mesher packs the
+                // colour with red in the low byte, and `to_le_bytes` writes the word in that order
+                // wherever this runs.
+                let [r, g, b, _] = color.to_le_bytes();
+                let opaque = u8::from((vertex.layer & crate::mesher::OPAQUE_LAYER) != 0) * 0xff;
+                [r, g, b, opaque]
+            },
         }
     }
 

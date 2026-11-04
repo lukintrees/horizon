@@ -62,17 +62,77 @@ impl Texture {
 }
 
 /// What one draw of the terrain program needs besides its vertices: the section's place and the
-/// frame's shared values.
+/// sprite it shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerrainUniforms {
     /// `u_origin`: the section's origin relative to the camera.
     pub origin: [f32; 3],
     /// `u_fade`: the section's shade-in.
     pub visibility: f32,
-    /// `u_sprite`: the sprite's atlas rectangle (`Atlas::rect`).
-    pub sprite: [f32; 4],
+    /// The sprite the run draws, as a layer of the atlas. The device turns it into `u_sprite` with
+    /// `Atlas::rect`, because the atlas (its side, its padding) is the device's, not the frame's.
+    pub layer: u32,
     /// `u_alpha_test`, from `Pass::alpha_test`.
     pub alpha_test: f32,
+}
+
+/// The values a frame shares between its draws: the camera, the fog, the sampler bias.
+///
+/// One call a frame, right after `use_program(Program::Terrain)`: a driver keeps a program's
+/// uniforms, so setting them once costs a few dozen `glUniform` calls per frame rather than per
+/// draw, which on a 2006 CPU is the difference between drawing and stuttering.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameUniforms {
+    /// `u_view_proj`: the camera's view-projection, column major, as GLSL reads a `mat4`.
+    pub view_proj: [f32; 16],
+    /// `u_fog_color`: the fog colour, its strength in the alpha.
+    pub fog_color: [f32; 4],
+    /// `u_fog`: environmental start/end, then the render distance's start/end.
+    pub fog: [f32; 4],
+    /// `u_bias`: the LOD bias `texture2D` is passed, which GL 2.1 drivers do not apply themselves.
+    pub bias: f32,
+}
+
+/// A frame's camera, window and clear colour: everything the same for every draw in it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct View {
+    /// The window the frame draws into, in pixels.
+    pub viewport: Viewport,
+    /// The colour the frame starts at, as `glClearColor` takes it.
+    pub clear: [f32; 4],
+    /// The camera's view-projection (`FrameUniforms::view_proj`).
+    pub view_proj: [f32; 16],
+    /// The fog's colour and strength (`FrameUniforms::fog_color`).
+    pub fog_color: [f32; 4],
+    /// The fog's two distance pairs (`FrameUniforms::fog`).
+    pub fog: [f32; 4],
+    /// The sampler's LOD bias (`FrameUniforms::bias`).
+    pub bias: f32,
+}
+
+impl View {
+    /// A view of `viewport` cleared to `clear`, with `view_proj` as the camera: no fog, no bias.
+    /// What a caller without a camera yet (a loading screen, a test) draws with.
+    pub fn new(viewport: Viewport, clear: [f32; 4], view_proj: [f32; 16]) -> View {
+        View {
+            viewport,
+            clear,
+            view_proj,
+            fog_color: [0.0, 0.0, 0.0, 0.0],
+            fog: [0.0; 4],
+            bias: 0.0,
+        }
+    }
+
+    /// The uniforms this view sets once a frame.
+    pub fn uniforms(&self) -> FrameUniforms {
+        FrameUniforms {
+            view_proj: self.view_proj,
+            fog_color: self.fog_color,
+            fog: self.fog,
+            bias: self.bias,
+        }
+    }
 }
 
 /// The window a frame draws into.
@@ -96,6 +156,8 @@ impl Viewport {
 pub trait Device {
     /// `glViewport` and `glClear` at the start of the frame.
     fn begin_frame(&mut self, viewport: Viewport, clear: [f32; 4]);
+    /// The frame's shared uniforms, once, before its first draw.
+    fn frame_uniforms(&mut self, uniforms: FrameUniforms);
     /// `glBufferSubData`: `vertices` go to `upload`'s range of the one vertex buffer.
     fn upload(&mut self, upload: Upload, vertices: &[GlVertex]);
     /// `glUseProgram` and its vertex attributes.
@@ -112,10 +174,33 @@ pub trait Device {
     fn draw_hud(&mut self, begin: u32, count: u32);
     /// The HUD's vertices for this frame: one upload, as `HudBatch` is rebuilt every frame anyway.
     fn upload_hud(&mut self, vertices: &[crate::gl21::GlHudVertex]);
+    /// The HUD's own uniforms: the window, the GUI scale, the atlas's place in a pixel.
+    fn hud_frame(&mut self, hud: &HudFrame);
     /// `glUniform1f(u_use_linear, ..)` before a HUD run.
     fn hud_linear(&mut self, linear: bool);
+    /// The full-screen quad that shows the frame texture in the window: the device's own four
+    /// vertices, its own attribute layout and its own `glDrawArrays`. A call of its own rather than
+    /// `draw(0, 4)` because the world's buffer is read with the terrain program's layout, which is
+    /// not the present quad's.
+    fn present(&mut self);
     /// `SwapBuffers`: the frame is done.
     fn end_frame(&mut self);
+}
+
+/// What the HUD program needs of the frame: `hud.vert`'s two uniforms and where the sprite atlas
+/// begins, which a GL 2.1 driver has to be told because its glyphs are uploaded into the atlas
+/// rather than into an atlas of their own (`GlHudVertex::uv`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HudFrame {
+    /// The window in pixels, and the GUI scale: `u_hud.xy` and `u_hud.z`.
+    pub window: [f32; 2],
+    /// The GUI scale: pixels per GUI pixel.
+    pub scale: f32,
+    /// The tick's fraction, which the glint's animation reads (`u_hud.w`).
+    pub time: f32,
+    /// `u_aspect.x`: 1 for a target whose origin is the top left (the window), -1 for one whose
+    /// origin is the bottom left (a frame texture on a GL 2.1 driver).
+    pub flip: f32,
 }
 
 /// The frame's vertex buffer, and the sequence that draws it.
@@ -158,15 +243,14 @@ impl Renderer {
     pub fn draw(
         &mut self,
         device: &mut dyn Device,
-        viewport: Viewport,
-        clear: [f32; 4],
+        view: View,
         sections: &[Section<'_>],
         sky: Option<Sky<'_>>,
         hud: Option<&HudDraws>,
         present: bool,
     ) {
         self.frame.build(sections, sky, present);
-        device.begin_frame(viewport, clear);
+        device.begin_frame(view.viewport, view.clear);
         // The ranges the GPU has not seen, before anything is drawn out of them.
         for upload in self.frame.uploads() {
             let vertices = self.frame.vertices(upload).to_vec();
@@ -174,6 +258,8 @@ impl Renderer {
         }
         self.last_pass = None;
         device.use_program(Program::Terrain);
+        // The camera and the fog, once: a program keeps its uniforms from one draw to the next.
+        device.frame_uniforms(view.uniforms());
         device.bind_texture(Texture::SpriteAtlas);
         device.bind_texture(Texture::Lightmap);
         // The frame's draws are read while `last_pass` is written: both fields at once, so that the
@@ -182,32 +268,39 @@ impl Renderer {
         for draw in frame.draws() {
             begin_pass(last_pass, device, draw);
             let uniforms = TerrainUniforms {
-                origin: [0.0; 3],
+                origin: draw.origin,
                 visibility: draw.visibility,
-                sprite: [0.0; 4],
+                layer: u32::from(draw.sprite),
                 alpha_test: draw.pass.alpha_test(),
             };
             device.terrain(uniforms);
             device.draw(draw.begin, draw.count);
         }
         if let Some(hud) = hud {
-            self.draw_hud(device, hud);
+            self.draw_hud(device, view.viewport, hud);
         }
         if self.frame.present() {
             device.use_program(Program::Present);
             device.bind_texture(Texture::Frame);
             device.set_state(&state::reset());
-            device.draw(0, 4);
+            device.present();
         }
         device.end_frame();
         self.frames += 1;
     }
 
     /// The overlay: its whole vertex buffer, then one draw per run of blending state.
-    fn draw_hud(&mut self, device: &mut dyn Device, hud: &HudDraws) {
+    fn draw_hud(&mut self, device: &mut dyn Device, viewport: Viewport, hud: &HudDraws) {
         device.use_program(Program::Hud);
         device.bind_texture(Texture::Glyphs);
         device.upload_hud(&hud.vertices);
+        let window = [viewport.width as f32, viewport.height as f32];
+        device.hud_frame(&HudFrame {
+            window,
+            scale: hud.scale,
+            time: hud.time,
+            flip: 1.0,
+        });
         let mut last: Option<(bool, bool, bool, bool)> = None;
         for run in &hud.runs {
             if run.count == 0 {
@@ -277,6 +370,11 @@ mod tests {
     use crate::gl21::hud::{Blend, HudDraws};
     use crate::mesher::TerrainVertex;
 
+    /// A camera that leaves every vertex where it is, column major.
+    const IDENTITY: [f32; 16] = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+
     /// A device that writes down every call, so that the sequence is what a test checks.
     #[derive(Default)]
     struct Recording {
@@ -301,6 +399,13 @@ mod tests {
             ));
         }
 
+        fn frame_uniforms(&mut self, uniforms: FrameUniforms) {
+            self.push(format!(
+                "frame camera {:?} fog {:?} bias {}",
+                uniforms.view_proj, uniforms.fog, uniforms.bias
+            ));
+        }
+
         fn upload(&mut self, upload: Upload, vertices: &[GlVertex]) {
             self.push(format!(
                 "upload {}..{} ({})",
@@ -316,8 +421,8 @@ mod tests {
 
         fn terrain(&mut self, uniforms: TerrainUniforms) {
             self.push(format!(
-                "terrain fade {} test {}",
-                uniforms.visibility, uniforms.alpha_test
+                "terrain origin {:?} fade {} sprite {} test {}",
+                uniforms.origin, uniforms.visibility, uniforms.layer, uniforms.alpha_test
             ));
         }
 
@@ -341,8 +446,19 @@ mod tests {
             self.push(format!("upload hud ({})", vertices.len()));
         }
 
+        fn hud_frame(&mut self, hud: &HudFrame) {
+            self.push(format!(
+                "hud frame {:?} scale {} time {} flip {}",
+                hud.window, hud.scale, hud.time, hud.flip
+            ));
+        }
+
         fn hud_linear(&mut self, linear: bool) {
             self.push(format!("hud linear {linear}"));
+        }
+
+        fn present(&mut self) {
+            self.push("present".to_string());
         }
 
         fn end_frame(&mut self) {
@@ -382,15 +498,8 @@ mod tests {
 
     /// `renderer.draw` for a frame of sections only: every test below wants that shape.
     fn draw_world(renderer: &mut Renderer, device: &mut Recording, sections: &[Section<'_>]) {
-        renderer.draw(
-            device,
-            Viewport::new(320, 240),
-            [0.0; 4],
-            sections,
-            None,
-            None,
-            true,
-        );
+        let view = View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY);
+        renderer.draw(device, view, sections, None, None, true);
     }
 
     fn hud_batch(verts: usize, blend: Blend) -> HudDraws {
@@ -421,8 +530,7 @@ mod tests {
         let hud = hud_batch(6, Blend::Alpha);
         renderer.draw(
             &mut device,
-            Viewport::new(800, 600),
-            [0.1, 0.2, 0.3, 1.0],
+            View::new(Viewport::new(800, 600), [0.1, 0.2, 0.3, 1.0], IDENTITY),
             &[section(1, &solid, &[])],
             None,
             Some(&hud),
@@ -445,12 +553,15 @@ mod tests {
         let hud_upload = device.index_of("upload hud").expect("the hud's vertices");
         let hud_draw = device.index_of("draw hud").expect("the hud's draw");
         assert!(draw < hud_upload && hud_upload < hud_draw, "{calls:?}");
-        // And the frame ends with the present quad, which is a draw of four vertices.
+        // And the frame ends with the present quad, which the device draws from its own buffer.
         let present = device
             .index_of("program Present")
             .expect("the present program");
         assert!(hud_draw < present, "{calls:?}");
-        assert!(calls.contains(&"draw 0+4".to_string()), "{calls:?}");
+        assert!(calls.contains(&"present".to_string()), "{calls:?}");
+        // The camera's uniforms are set once, after the program and before the first draw.
+        let camera = device.index_of("frame camera").expect("the camera");
+        assert!(program < camera && camera < state, "{calls:?}");
         assert_eq!(renderer.frames(), 1);
     }
 
@@ -463,8 +574,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.0; 4],
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
             &[section(1, &a, &[]), section(2, &b, &[])],
             None,
             None,
@@ -494,8 +604,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.0; 4],
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
             &[section(1, &solid, &translucent)],
             Some((&sky, 7)),
             None,
@@ -564,8 +673,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.0; 4],
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
             &[],
             None,
             Some(&hud),
@@ -598,8 +706,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.5; 4],
+            View::new(Viewport::new(320, 240), [0.5; 4], IDENTITY),
             &[],
             None,
             None,
@@ -613,7 +720,8 @@ mod tests {
             .iter()
             .filter(|c| c.starts_with("draw "))
             .count();
-        assert_eq!(world, 1);
+        assert_eq!(world, 0, "{:?}", device.calls);
+        assert!(device.calls.iter().any(|call| call == "present"));
     }
 
     #[test]
@@ -623,8 +731,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.0; 4],
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
             &[section(1, &solid, &[])],
             None,
             None,
@@ -643,8 +750,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.0; 4],
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
             &[section(1, &solid, &translucent)],
             Some((&sky, 1)),
             None,
@@ -676,8 +782,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport::new(320, 240),
-            [0.0; 4],
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
             &[],
             Some((&sky, 3)),
             None,
@@ -685,5 +790,64 @@ mod tests {
         );
         let draw = renderer.frame().draws()[0];
         assert_eq!(draw.section, SKY);
+        // The sky is drawn where the camera is: no origin of its own.
+        assert_eq!(draw.origin, [0.0; 3]);
+    }
+
+    /// The section's origin is the draw's: a mesher writes positions relative to a section, and
+    /// without this the whole world would be drawn piled on the camera.
+    #[test]
+    fn a_section_s_origin_is_the_draw_s_u_origin() {
+        let solid = vertices(6, 3);
+        let mut renderer = Renderer::new(1024);
+        let mut device = Recording::default();
+        let mut placed = section(4, &solid, &[]);
+        placed.origin = [16.0, 64.0, -32.0];
+        renderer.draw(
+            &mut device,
+            View::new(Viewport::new(320, 240), [0.0; 4], IDENTITY),
+            &[placed],
+            None,
+            None,
+            false,
+        );
+        let draw = renderer.frame().draws()[0];
+        assert_eq!(draw.origin, [16.0, 64.0, -32.0]);
+        let origin = device
+            .calls
+            .iter()
+            .find(|call| call.starts_with("terrain origin "))
+            .expect("the draw's uniforms");
+        assert!(origin.contains("[16.0, 64.0, -32.0]"), "{origin}");
+        // And the sprite the run names, which the device turns into the atlas's rectangle.
+        assert!(origin.contains("sprite 3"), "{origin}");
+    }
+
+    /// The HUD's uniforms carry the window, the GUI scale and the tick's fraction: without the
+    /// first two the overlay is drawn at the wrong size, and without the third the glint freezes.
+    #[test]
+    fn the_hud_gets_the_window_the_scale_and_the_time() {
+        let mut renderer = Renderer::new(256);
+        let mut device = Recording::default();
+        let mut hud = hud_batch(3, Blend::Alpha);
+        hud.scale = 2.0;
+        hud.time = 0.25;
+        renderer.draw(
+            &mut device,
+            View::new(Viewport::new(640, 480), [0.0; 4], IDENTITY),
+            &[],
+            None,
+            Some(&hud),
+            true,
+        );
+        let frame = device
+            .index_of("hud frame")
+            .expect("the hud's uniforms");
+        let line = &device.calls[frame];
+        assert!(line.contains("[640.0, 480.0]"), "{line}");
+        assert!(line.contains("scale 2"), "{line}");
+        assert!(line.contains("time 0.25"), "{line}");
+        // The window's origin is its top left: the y flip `hud.vert` has.
+        assert!(line.contains("flip 1"), "{line}");
     }
 }
