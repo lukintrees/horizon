@@ -120,7 +120,7 @@ mod tests {
         // Sky 15, block 4 (16 levels are 16x fixed point: the bytes are 240 and 64) in the mesh's
         // packing: `sky * 16` in the low byte, `block * 16` in the high one
         // (`mesher::pack_coords`).
-        let packed_light = (4 * 16) << 8 | 15 * 16;
+        let packed_light = ((4 * 16) << 8) | (15 * 16);
         // A colour of #00804020: red 0x20 in the low byte, blue 0x80 in the third.
         let v = GlVertex::of(&vertex(1.5, [0.25, 0.75], 7, packed_light, 0x0080_4020));
         assert_eq!(v.pos, [1.5, 2.0, 3.0]);
@@ -158,6 +158,7 @@ mod tests {
 
     #[test]
     fn runs_split_by_sprite_and_keep_the_order() {
+        let marked = 3 | crate::mesher::OPAQUE_LAYER;
         let vertices = [
             vertex(0.0, [0.0, 0.0], 3, 0, 0xFF00_0000),
             vertex(1.0, [1.0, 0.0], 3, 0, 0xFF00_0000),

@@ -96,10 +96,9 @@ fn occlusion_culling_requested(info: &wgpu::AdapterInfo, env: Option<&str>) -> b
 fn translucent_batchable(info: &wgpu::AdapterInfo, multi_draw: bool) -> bool {
     translucent_batchable_with(info, multi_draw, crate::gl21::poorest_paths())
 }
-/// `translucent_batchable`, with the poorest paths (`HORIZON_GL_PROFILE=x1650`) given rather than
-/// read from the environment: the batching draws its sorted pages with the GPU's own multi-draw
-/// counts and a storage arena.
-#[cfg(test)]
+/// `translucent_batchable`, with the poorest paths (`HORIZON_GL_PROFILE=x1650`) given by the caller
+/// rather than read from the environment: the batching draws its sorted pages with the GPU's own
+/// multi-draw counts and a storage arena.
 fn translucent_batchable_with(info: &wgpu::AdapterInfo, multi_draw: bool, poorest: bool) -> bool {
     !poorest && multi_draw && info.backend != wgpu::Backend::Gl
 }
@@ -1291,7 +1290,6 @@ fn layer_split(
 /// `layer_split`, with the poorest paths (`HORIZON_GL_PROFILE=x1650`) given rather than read from
 /// the environment: they keep one array of `SPRITE_SPLIT` layers, the split the CPU mip chains were
 /// cut by.
-#[cfg(test)]
 fn layer_split_with(
     max_layers: u32,
     gl: bool,
@@ -11297,9 +11295,18 @@ mod tests {
     #[test]
     fn the_x1650_profile_takes_the_poor_paths_on_a_capable_device() {
         let capable = wgpu::AdapterInfo {
-            backend: wgpu::Backend::Vulkan,
             name: "a 2020 GPU".into(),
-            ..Default::default()
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::DiscreteGpu,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Vulkan,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: None,
+            limit_bucket: None,
         };
         assert!(super::translucent_batchable_with(&capable, true, false));
         assert!(!super::translucent_batchable_with(&capable, true, true));
