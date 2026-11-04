@@ -7,6 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
 LABELS = ("playhorizon-ci", "playhorizon-light")
 FORK_GUARD = "github.event.pull_request.head.repo.full_name == github.repository"
+# The only repository whose variable can route a job to those runners. A fork has no
+# `playhorizon-*` machine at all, and a job that asks for one there queues until it is
+# cancelled -- which is what a fork saw: 80 queued runs, the oldest six hours old.
+UPSTREAM = "github.repository == 'horizon-rust/horizon'"
 
 
 def jobs(text):
@@ -34,10 +38,13 @@ class ChecksRunnerTests(unittest.TestCase):
                     continue
                 routed += 1
                 where = f"{path.name} {name}"
-                # The switch back to GitHub's runners.
-                self.assertTrue("vars.SELF_HOSTED_CI != 'off'" in runs_on or "vars.SELF_HOSTED_CI == 'all'" in runs_on,
-                                where)
+                # The switch back to GitHub's runners, and it has to be `== 'all'`: `!= 'off'`
+                # is true when the variable is *unset*, and unset has to mean GitHub's runners.
+                self.assertIn("vars.SELF_HOSTED_CI == 'all'", runs_on, where)
+                self.assertNotIn("!= 'off'", runs_on, where)
                 self.assertIn("'ubuntu-latest'", runs_on, where)
+                # And the upstream repository is the only place the pools exist.
+                self.assertIn(UPSTREAM, runs_on, f"{where}: a fork would ask for a runner it has not got")
                 if "pull_request" in on:
                     job_if = next((l for l in block.splitlines() if l.strip().startswith("if:")), "")
                     self.assertTrue(FORK_GUARD in runs_on or FORK_GUARD in job_if, f"{where}: a fork's pull request")

@@ -30,7 +30,7 @@ jobs:
     concurrency:
       group: claim-${{ github.event.issue.number }}
     # One of playhorizon's small runners, out of GitHub's shared pool: main's script only (docs/ci-runners.md).
-    runs-on: ${{ vars.SELF_HOSTED_CI != 'off' && fromJSON('["self-hosted", "linux", "playhorizon-light"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && github.repository == 'horizon-rust/horizon' && fromJSON('["self-hosted", "linux", "playhorizon-light"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -57,7 +57,7 @@ jobs:
   release:
     if: github.event_name != 'issue_comment' && github.repository == 'horizon-rust/horizon'
     # One of playhorizon's small runners, out of GitHub's shared pool: main's script only (docs/ci-runners.md).
-    runs-on: ${{ vars.SELF_HOSTED_CI != 'off' && fromJSON('["self-hosted", "linux", "playhorizon-light"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && github.repository == 'horizon-rust/horizon' && fromJSON('["self-hosted", "linux", "playhorizon-light"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
