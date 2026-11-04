@@ -179,6 +179,17 @@ impl<'a> Renderer<'a> {
     pub fn stats(&self) -> Stats {
         self.stats
     }
+    /// Remaining tracked payload/object capacity, not actual driver VRAM. Owners
+    /// can reserve space for a streamed GUI before clearing a world frame.
+    pub fn remaining(&self) -> Stats {
+        Stats {
+            texture_bytes: self.budget.texture_bytes - self.stats.texture_bytes,
+            mesh_bytes: self.budget.mesh_bytes - self.stats.mesh_bytes,
+            textures: 4096 - self.stats.textures,
+            meshes: 65536 - self.stats.meshes,
+        }
+    }
+
     fn check(&self) -> Result<(), String> {
         // SAFETY: current live context, no pointer parameters.
         let error = unsafe { (self.gl.get_error)() };

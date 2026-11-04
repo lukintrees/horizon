@@ -828,6 +828,79 @@ fn paged_gui_compositor(context: &Context) -> Result<(), String> {
         })
         .map_err(error)?;
     pixel(&mut renderer, [32, 32], [255, 255, 0])?;
+    // Linear sampling must be continuous across each gutter, not clamp to the
+    // last interior texel. Vignette's sampled alpha is deliberately zero.
+    let shades = [0, 32, 96, 160, 224, 255];
+    pixels = shades
+        .into_iter()
+        .flat_map(|v| [v, v, v, 0])
+        .collect::<Vec<_>>()
+        .repeat(2);
+    cache.invalidate(&[0, 1, 2]);
+    let vertices = [0, 1, 2, 0, 2, 3].map(|i| Input {
+        pos: p[i],
+        uv: uv[i],
+        color: u32::MAX,
+        depth: 0.,
+    });
+    let linear = gui::runs(
+        &vertices,
+        &[(0..6, Blend::Vignette)],
+        [64; 2],
+        1.,
+        [1.; 2],
+        6,
+    )
+    .map_err(error)?;
+    let linear = paged_gui::split(layout, &linear, 100).map_err(error)?;
+    clear.clear = Clear::ColorDepth([1.; 4]);
+    renderer.render(&clear)?;
+    cache
+        .render(&mut renderer, &linear, white, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    for x in 2..62 {
+        let coordinate = ((x as f32 + 0.5 - 2.) / 60. * 6. - 0.5).clamp(0., 5.);
+        let lo = coordinate.floor() as usize;
+        let hi = (lo + 1).min(5);
+        let shade =
+            f32::from(shades[lo]) + f32::from(shades[hi] - shades[lo]) * (coordinate - lo as f32);
+        pixel(&mut renderer, [x, 32], [(255. - shade).round() as u8; 3])?;
+    }
+    // Evicting a page is not a new depth group: the far blue model must stay
+    // behind the near red one even when the two textures cannot coexist.
+    pixels = row.repeat(2);
+    for rgba in pixels.chunks_exact_mut(4) {
+        rgba[3] = 255;
+    }
+    cache.invalidate(&[0, 1, 2]);
+    let mut model = Vec::new();
+    for (u, depth) in [(0.1, 0.2), (0.9, 0.8)] {
+        model.extend([0, 1, 2, 0, 2, 3].map(|i| Input {
+            pos: p[i],
+            uv: [u, 0.5],
+            color: u32::MAX,
+            depth,
+        }));
+    }
+    let model = gui::runs(
+        &model,
+        &[(0..12, Blend::Depth([0, 0, 64, 64]))],
+        [64; 2],
+        1.,
+        [1.; 2],
+        12,
+    )
+    .map_err(error)?;
+    let model = paged_gui::split(layout, &model, 100).map_err(error)?;
+    renderer.render(&clear)?;
+    cache
+        .render(&mut renderer, &model, white, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?;
     cache.release(&mut renderer)?;
     renderer.remove_texture(white)?;
     require(

@@ -51,6 +51,7 @@ pub struct TerrainHudRenderer {
     world: WorldScene<Renderer<'static>>,
     hud: Backing,
     cache: Cache,
+    hud_capacity: usize,
     white: TextureId,
     retired_hud: Vec<Cache>,
     limits: Limits,
@@ -77,17 +78,23 @@ impl TerrainHudRenderer {
             limits.hud_page_count,
         )
         .map_err(diagnostic)?;
-        let backing = Backing::new(layout, &hud.pixels(), limits.hud_backing_bytes)?;
-        let cache = Cache::new(layout, limits.hud_resident_pages).map_err(diagnostic)?;
         let white = world.backend_mut().create_texture(Image {
             width: 1,
             height: 1,
             rgba: &[255; 4],
         })?;
+        let remaining = world.backend_mut().remaining();
+        let hud_capacity = limits
+            .hud_resident_pages
+            .min(remaining.textures)
+            .min(remaining.texture_bytes / layout.page_bytes());
+        let cache = Cache::new(layout, hud_capacity).map_err(diagnostic)?;
+        let backing = Backing::new(layout, &hud.pixels(), limits.hud_backing_bytes)?;
         Ok(Self {
             world,
             hud: backing,
             cache,
+            hud_capacity,
             white,
             retired_hud: Vec::new(),
             limits,
@@ -124,6 +131,16 @@ impl TerrainHudRenderer {
             .patch(&hud.patches, self.limits.glyph_patch_bytes)?;
         self.cache.invalidate(&changed);
         self.collect_hud()?;
+        self.world.collect_garbage().map_err(diagnostic)?;
+        let remaining = self.world.backend_mut().remaining();
+        if runs.iter().any(|run| {
+            std::mem::size_of_val(run.geometry.vertices.as_slice())
+                + std::mem::size_of_val(run.geometry.indices.as_slice())
+                > remaining.mesh_bytes
+        }) || (!runs.is_empty() && remaining.meshes == 0)
+        {
+            return Err("no transient mesh capacity for paged HUD".into());
+        }
         self.world.render(world).map_err(diagnostic)?;
         let backing = &self.hud;
         self.cache
@@ -143,7 +160,7 @@ impl TerrainHudRenderer {
         )
         .map_err(diagnostic)?;
         let backing = Backing::new(layout, &hud.pixels(), self.limits.hud_backing_bytes)?;
-        let cache = Cache::new(layout, self.limits.hud_resident_pages).map_err(diagnostic)?;
+        let cache = Cache::new(layout, self.hud_capacity).map_err(diagnostic)?;
         self.retired_hud
             .push(std::mem::replace(&mut self.cache, cache));
         self.hud = backing;
@@ -278,7 +295,6 @@ mod tests {
                 texture_bytes: (1 << 20) + 4096,
                 ..Budget::default()
             },
-            hud_resident_pages: 1,
             ..Limits::default()
         };
         let mut renderer = TerrainHudRenderer::new(
@@ -342,6 +358,62 @@ mod tests {
         assert_eq!(
             renderer.read_rgba([16, 32, 1, 1]).unwrap(),
             [0, 255, 0, 255]
+        );
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_transient_mesh_preflight_does_not_erase_the_previous_frame() {
+        let atlas = HudAtlas::boot();
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[64, 128, 192, 255]]).unwrap();
+        let limits = Limits {
+            gpu: Budget {
+                mesh_bytes: 4 * 44 + 6 * 2,
+                ..Budget::default()
+            },
+            ..Limits::default()
+        };
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[255; 16 * 16 * 4],
+            &atlas,
+            limits,
+        )
+        .unwrap();
+        let mut mesh = SectionMesh::default();
+        mesh.solid.extend(
+            [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]]
+                .map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, u32::MAX, 0xf0f0)),
+        );
+        renderer.upload_section([0; 3], &mesh).unwrap();
+        let mut frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: None,
+            solid: &[[0; 3]],
+            translucent: &[],
+        };
+        let mut hud = HudBatch::new([64; 2]);
+        renderer.render(&frame, &hud).unwrap();
+        frame.solid = &[];
+        frame.clear = [1., 0., 0., 1.];
+        hud.fill(&atlas, 0., 0., 64., 64., u32::MAX);
+        assert!(renderer.render(&frame, &hud).is_err());
+        assert_eq!(
+            renderer.read_rgba([32, 32, 1, 1]).unwrap(),
+            [64, 128, 192, 255]
         );
     }
 }
