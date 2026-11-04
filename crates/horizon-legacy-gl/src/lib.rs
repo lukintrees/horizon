@@ -12,6 +12,12 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(all(
+    feature = "window-context",
+    any(target_os = "linux", target_os = "windows")
+))]
+pub mod window;
+
 pub const TERRAIN_VERTEX_SHADER: &str = include_str!("terrain.vert");
 pub const TERRAIN_FRAGMENT_SHADER: &str = include_str!("terrain.frag");
 

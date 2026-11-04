@@ -75,6 +75,8 @@ wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 audio = ["dep:cpal"]
 # Helpers horizon-client's tests build their fixtures with.
 test-support = []
+# Native GLX/WGL context bootstrap, currently only used by the developer example.
+legacy-gl-window = ["horizon-legacy-gl/window-context"]
 
 [build-dependencies]
 horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }
@@ -85,3 +87,7 @@ workspace = true
 [dev-dependencies]
 horizon-items = { path = "../horizon-items", features = ["test-support"] }
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out", "glsl-out", "msl-out", "spv-out"] }
+
+[[example]]
+name = "legacy_gl_window"
+required-features = ["legacy-gl-window"]

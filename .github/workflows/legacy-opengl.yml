@@ -5,6 +5,7 @@ on:
       - 'crates/horizon-legacy-gl/**'
       - 'crates/horizon-client-render/src/legacy/**'
       - 'crates/horizon-client-render/Cargo.toml'
+      - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
       - 'tools/legacy_gl_*'
       - '.github/workflows/legacy-opengl.yml'
   pull_request:
@@ -12,6 +13,7 @@ on:
       - 'crates/horizon-legacy-gl/**'
       - 'crates/horizon-client-render/src/legacy/**'
       - 'crates/horizon-client-render/Cargo.toml'
+      - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
       - 'tools/legacy_gl_*'
       - '.github/workflows/legacy-opengl.yml'
   workflow_dispatch:
@@ -29,7 +31,7 @@ jobs:
       - name: Install Mesa and client build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libosmesa6 libasound2-dev libudev-dev
+          sudo apt-get install -y --no-install-recommends libosmesa6 libasound2-dev libudev-dev libgl-dev libx11-dev xvfb xauth
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-opengl
@@ -74,3 +76,35 @@ jobs:
           print('::error::' + text)
           PY
           exit 1
+      - name: Build and test an X11 GL window
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -o pipefail
+          {
+            cargo clippy --locked -p horizon-client-render --features legacy-gl-window --example legacy_gl_window -- -D warnings &&
+            cargo build --locked -p horizon-client-render --features legacy-gl-window --example legacy_gl_window &&
+            LIBGL_ALWAYS_SOFTWARE=1 WINIT_UNIX_BACKEND=x11 MESA_GL_VERSION_OVERRIDE=2.1 MESA_GLSL_VERSION_OVERRIDE=120 xvfb-run -a target/debug/examples/legacy_gl_window --smoke &&
+            LIBGL_ALWAYS_SOFTWARE=1 WINIT_UNIX_BACKEND=x11 MESA_GL_VERSION_OVERRIDE=2.0 MESA_EXTENSION_OVERRIDE='-GL_ARB_pixel_buffer_object -GL_EXT_pixel_buffer_object' xvfb-run -a target/debug/examples/legacy_gl_window --smoke
+          } 2>&1 | tee "$RUNNER_TEMP/legacy-window.log" && exit 0
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text = Path(os.environ['RUNNER_TEMP'], 'legacy-window.log').read_text(errors='replace')[-2500:]
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + text)
+          PY
+          exit 1
+  windows-i686:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+          components: clippy
+      - name: Check 32-bit WGL context code
+        run: cargo clippy --locked -p horizon-legacy-gl --features window-context --target i686-pc-windows-msvc -- -D warnings
