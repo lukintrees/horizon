@@ -55,6 +55,14 @@ class TypedBindingTests(unittest.TestCase):
         self.assertEqual(found(line), [])
 
 
+class BlankLineTests(unittest.TestCase):
+    def test_two_blank_lines_are_one_too_many(self):
+        self.assertTrue(found("fn a() {}\n\n\nfn b() {}\n"))
+
+    def test_one_blank_line_is_fine(self):
+        self.assertEqual(found("fn a() {}\n\nfn b() {}\n"), [])
+
+
 class StructLiteralTests(unittest.TestCase):
     def test_a_literal_with_three_named_fields_goes_one_a_line(self):
         # CI broke this one after a `--changed` run said nothing about it.

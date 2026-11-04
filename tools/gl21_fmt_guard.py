@@ -195,6 +195,20 @@ def wide_struct_literals(line):
     return out
 
 
+def blank_runs(text):
+    """Two or more blank lines in a row: `blank_lines_upper_bound` is one."""
+    problems = []
+    blanks = 0
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            blanks = 0
+            continue
+        blanks += 1
+        if blanks == 2:
+            problems.append((number, "two blank lines in a row: rustfmt keeps one"))
+    return problems
+
+
 def merged_derives(text):
     """Two `#[derive(..)]` attributes in a row: `merge_derives` joins them."""
     problems = []
@@ -305,6 +319,7 @@ def check_text(text, name="<memory>"):
             problems.append((number, f"`use` names are not in rustfmt's order: {ordered}"))
     problems.extend(unsorted_modules(text))
     problems.extend(merged_derives(text))
+    problems.extend(blank_runs(text))
     return problems
 
 

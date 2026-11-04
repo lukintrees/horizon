@@ -200,8 +200,6 @@ impl Renderer {
         self.frames += 1;
     }
 
-
-
     /// The overlay: its whole vertex buffer, then one draw per run of blending state.
     fn draw_hud(&mut self, device: &mut dyn Device, hud: &HudDraws) {
         device.use_program(Program::Hud);
