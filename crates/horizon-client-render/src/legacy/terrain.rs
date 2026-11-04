@@ -86,7 +86,7 @@ fn build_inner(
     mesh.vertices
         .try_reserve_exact(count)
         .map_err(|_| MeshError::AllocationFailed)?;
-    for quad in quads.chunks_exact(4) {
+    for quad in quads.as_chunks::<4>().0 {
         let layer = quad[0].layer & !OPAQUE_LAYER;
         if quad.iter().any(|v| v.layer & !OPAQUE_LAYER != layer) {
             return Err(MeshError::MixedSpriteLayers);

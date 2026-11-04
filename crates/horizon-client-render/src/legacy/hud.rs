@@ -273,7 +273,7 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
             return Err(Error::InvalidTriangles);
         }
         expected = end;
-        for triangle in batch.vertices[start..end].chunks_exact(3) {
+        for triangle in batch.vertices[start..end].as_chunks::<3>().0 {
             let mut points = Vec::with_capacity(3);
             for v in triangle {
                 if v.uv.iter().any(|u| !u.is_finite() || *u < 0.0 || *u > 1.0)
@@ -433,7 +433,9 @@ mod tests {
         // The clipped triangles cover the original clip-space 2x2 square.
         let area: f32 = mesh
             .vertices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 let a = t[0].position;
                 let b = t[1].position;
