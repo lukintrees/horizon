@@ -748,7 +748,7 @@ GPU cache, streaming visibility/upload scheduling здесь не добавле
 
 До submission проверяются камера/матрицы, HUD size после resize, fog/lightmap,
 glint, geometry counts/limits и неподдержанные requested passes. Panorama, sky,
-clouds/celestial/stars, weather, lightning/additive, lines/outlines, GPU skins,
+clouds/celestial/stars, weather, lines/outlines, GPU skins,
 glowing, dynamic/colored lights, emissive layers, screen overlays, border,
 post/menu blur, chunk fade и water mirror возвращают явную ошибку — не тихо
 отключаются. Поэтому это пока subset без видимого sky и перечисленных эффектов,
@@ -821,3 +821,49 @@ fixtures**, full-client check/game Clippy, 3×23 independent runtime outcomes,
 Первый GPU запуск корректно отверг недостаточный hand-mesh budget самого теста;
 финальный fixture учитывает шесть paged vertices. Docs-only commit после него
 не меняет проверенный код. Чужие workflows/PR/Actions не использовались.
+
+
+## Реальные world lightning и additive/rays (2026-11-04)
+
+`render_game_frame` теперь обрабатывает настоящий `Frame.lightning` и
+`Frame.additive`, а не только отдельный тестовый draw. Молнии используют общий,
+неизменённый seed-generator игры: **896 vertices / 224 quads на bolt**. Сначала
+в f64 вычисляется bolt−camera, затем f32 offset прибавляется к local f32
+geometry. Порядок входных bolts сохраняется, после них идёт source additive.
+Постоянного legacy seed-cache пока нет: временно строится один bounded template.
+По умолчанию максимум **64 bolts**; generated + additive входят в единый лимит
+static/dynamic/hand/see-through vertices. Overflow, nonfinite translations,
+неподдерживаемый material и CPU/GPU budgets не приводят к тихому пропуску.
+
+Отдельный `entity::additive_runs` принимает только коды **0/2/3/37**; обычный
+body/hand путь по-прежнему не разрешает additive/rays. 0/3 сохраняют CPU lightmap,
+2 — unlit; overlay/glint/cutout/back-color correction и world fog здесь не
+применяются. Dragon death rays (37) не используют texture/lightmap/UV и гасят
+**RGB и alpha** по максимуму spherical/cylindrical fog ramps, без множителя
+fog-color alpha. Обе политики: **SRC_ALPHA/ONE для RGB и alpha, LEQUAL**.
+Обычный additive — без cull/depth-write, rays — back-cull с depth-write даже при
+alpha=0 или полном fog fade. Shader mode сбрасывается на каждом draw.
+
+Порядок coordinator: solid → body/text/shadow/item/water-mask → lightning +
+additive → translucent terrain → particles → see-through → hand → screen → HUD.
+Paging, mesh/page budgets и pre-clear validation распространяются на новый pass.
+24-й independent GPU outcome проверяет blend/depth/cull/fog/material/state-reset.
+13-й actual-game GPU fixture проверяет реальные seeded bolts возле 30 млн блоков,
+две instances одного seed, полное fog, покрытие молнии translucent terrain,
+ray depth и сохранение framebuffer при rejection. Coverage terrain в этом тесте
+задаётся texture alpha: старший байт mesher color — material/HDR flags, не alpha.
+
+Локально: **40 standalone Rust tests**, host/i686 Clippy,
+**3×24 OSMesa checks**, **642 Python tests, 1 skipped**. Полноценный startup,
+input/resource backend, sky/End/panorama/stars/clouds, weather и прочие отклоняемые
+passes остаются незавершёнными. Windows x86 ABI/linking не заменяет проверку
+PE/CRT/ISA/ICD на Win7 32-bit и настоящем Radeon X1650; playable qualification
+по-прежнему не заявляется.
+
+Финальный own CI [41805814823](https://github.com/lukintrees/horizon/actions/runs/41805814823) на `083bb8e`: **все три jobs SUCCESS**.
+Full-client check, game Clippy, новый CPU test, **13 actual-game GPU fixtures**,
+**3×24 independent runtime outcomes**, **39 выполненных Windows x86 workspace
+tests**, ordinary x86 probe linking. Первый запуск выявил ошибку GPU-фикстуры
+(coverage в mesher flags вместо texture alpha); второй прошёл GPU, но выявил
+требования нового Clippy к тестовому коду. Финальный запуск включает исправления.
+Следующий docs-only commit не меняет проверенный код; чужие Actions/PR не читались.

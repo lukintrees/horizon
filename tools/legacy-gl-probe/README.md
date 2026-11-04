@@ -361,3 +361,28 @@ at `c076df5`: **all three jobs passed**, including the two new CPU tests, twelve
 actual-game GPU fixtures, full-client check/game Clippy, 3x23 runtime matrix,
 **37 executed x86 Windows workspace tests**, and ordinary x86 probe linking.
 The subsequent documentation-only commit leaves the verified code unchanged.
+
+
+### Seeded world lightning and additive rays
+
+`backend_world_additive` is now mandatory: **24 readbacks per GL profile**.
+It verifies SRC_ALPHA/ONE for RGB and alpha, unlit versus CPU-lightmapped
+textured geometry, disabled cutout/world fog for that pass, texture-independent
+ray RGBA fog fade, ray culling/depth (also alpha zero), ordinary shader-mode
+reset and resource cleanup. Local Rust 1.88 host/i686 Clippy and **40 standalone
+Rust tests**, **3x24 llvmpipe checks**, **642 Python tests (1 skipped)** pass.
+
+The real-game adapter shares `gfx::lightning::geometry`, checks a default 64-bolt
+limit and the combined source/generated vertex budget, preserves bolt/quad order
+and subtracts the camera in f64 before adding the local f32 geometry. Additive
+runs are prepared and reserved before clear, then drawn before translucent
+terrain. A thirteenth actual-game GPU fixture proves visible seeded geometry at
+a 30-million-block coordinate, duplicate seed instances, no lightning fog,
+translucent coverage, additive/ray depth distinctions and rejection preservation.
+This remains a bounded SDR subset: sky/weather, normal Game startup and actual
+Win7/X1650 execution are not qualified.
+
+Final own CI [41805814823](https://github.com/lukintrees/horizon/actions/runs/41805814823) at `083bb8e`: **all three jobs passed** —
+full-client check, game Clippy, new CPU coverage, 13 actual-game GPU fixtures,
+3x24 independent runtime outcomes, 39 executed x86 Windows workspace tests and
+ordinary x86 probe linking. The subsequent docs-only commit changes no code.

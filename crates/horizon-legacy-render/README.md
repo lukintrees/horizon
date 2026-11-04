@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-23 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+24 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, spherical/dual-distance fog, reversed game depth, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 23 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 24 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -60,9 +60,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 36 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 38 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 23 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 24 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -490,8 +490,8 @@ introduced. This is a flat-screen classic-SDR subset, **not a playable backend**
   is not copied/charged; missing snapshots mean no static model, as in the game.
   Duplicate visible keys/snapshots are errors. With no visible static geometry,
   the dynamic stream is borrowed instead of cloned. Static + dynamic + hand +
-  see-through vertices share the same bounded entity budget; scratch allocation
-  is fallible. This does not yet add resident static-model GPU caching.
+  see-through + generated lightning + source additive vertices share the same
+  bounded entity budget; scratch allocation is fallible. This does not yet add resident static-model GPU caching.
 * `lightmap::pixels` is the original CPU calculation extracted unchanged from
   wgpu's `update_lightmap`. Both backends now call it, including night vision,
   effective gamma, flicker, darkness, boss darkening and fullbright. The GL
@@ -509,7 +509,7 @@ The actual-frame entry point checks camera/projection arithmetic, current HUD
 size (rebuild after resize), fog and classic lightmap parameters, glint, counts,
 visibility duplicates and explicitly requested missing passes before submission.
 Unsupported: panorama, visible sky/End sky, clouds/celestial/stars, weather,
-lightning/additive, lines/outlines, GPU skin frames (caller must request CPU
+lines/outlines, GPU skin frames (caller must request CPU
 poses), glowing silhouettes, dynamic/colored lights, emissive layers,
 border, post/menu blur, chunk fade and water mirrors. These are **errors,
 not automatically disabled options**. Consequently normal Overworld/title frames
@@ -615,3 +615,56 @@ matrix, **37 executed x86 Windows workspace tests**, and ordinary probe linking.
 The initial GPU attempt correctly rejected an undersized hand-mesh test budget;
 the final fixture budgets the actual paged six-vertex stream. This is not
 Win7/X1650 or complete gameplay qualification.
+
+
+## World lightning and explicit additive geometry
+
+The actual `gfx::Frame` adapter now accepts `lightning::Input` and `Frame.additive`.
+Lightning reuses the game's unchanged deterministic seed generator: 224 quads /
+896 vertices per bolt, the same UV, packed color and fullbright material. Each
+`bolt.at - camera` subtraction happens in f64, followed by conversion to f32 and
+addition of the local generated f32 vertex. Input bolt order is retained; source
+additive quads follow the bolts. No persistent legacy seed cache is claimed.
+The default cap is 64 bolts. Generated vertices and source additive vertices
+share the existing combined static/dynamic/hand/see-through entity ceiling.
+Count arithmetic, finite translations and temporary output reservation are
+checked before any framebuffer clear; generation uses one bounded bolt template
+at a time. Invalid positions/materials and both CPU/GPU budget failures remain
+explicit errors rather than silently omitting effects.
+
+`entity::additive_runs` is a separate material view, not permission to submit
+these materials through the ordinary body/hand path. It accepts only source
+codes 0, 2, 3 and 37, preserving source order and merging only adjacent identical
+pipeline policies. Textured codes 0/3 retain CPU lightmap sampling; code 2 is
+unlit. They ignore overlay/glint/cutout/back-color correction and world fog,
+matching the game's classic additive shader. Code 37 (dragon death rays) is
+unlit and ignores texture, lightmap and UV entirely. Its spherical/cylindrical
+fog ramp fades **both RGB and alpha**, independently of fog-color alpha.
+
+Both policies use `SRC_ALPHA, ONE` for RGB **and alpha**, and LEQUAL depth.
+Textured additive draws are two-sided without depth writes. Rays use back-face
+culling and **do write depth**, including when source alpha is zero or the fog
+fade completely extinguishes the color. The native shader resets its additive
+mode for every draw, so later ordinary fogged entities cannot inherit it.
+The coordinator submits body/text/shadow/item/water-mask first, then lightning +
+source additive, translucent terrain, particles, see-through text, hand, screen
+effects, and HUD. All additive mesh/page reservations join pre-clear preflight.
+There is no new hardware feature beyond OpenGL 2.0 / GLSL 1.10.
+
+The required `backend_world_additive` readback covers RGBA blend factors, lightmap
+versus unlit behavior, no textured fog/cutout, ray fog/texture independence,
+culling, zero-alpha ray depth, and ordinary shader-state reset. The additional
+actual-game GPU fixture renders seeded bolts near a 30-million-block coordinate,
+checks duplicate-seed instances and full-fog independence, proves translucent
+terrain overlays lightning (coverage comes from texture alpha, not mesher HDR
+flags), and checks ray depth/fog and pre-clear rejection. Own CI [41805814823](https://github.com/lukintrees/horizon/actions/runs/41805814823) at `083bb8e` passed all three jobs: full-client
+check, game-bridge Clippy, the new CPU coverage, **13 actual-game GPU fixtures**,
+**3x24 independent runtime outcomes**, **39 executed x86 Windows workspace
+tests**, and ordinary x86 probe linking. Local verification also passed 40
+standalone Rust tests, host/i686 Clippy and 642 Python tests (one skipped).
+Earlier runs exposed a test-only terrain-coverage mistake and current-Clippy
+fixture issues; the final run includes those fixes.
+
+Sky/panorama/End/celestial/stars/clouds, weather and the other explicitly rejected
+passes remain unsupported. This does not wire the normal wgpu-based game startup
+to the legacy backend and is not X1650/Windows 7 runtime qualification.
