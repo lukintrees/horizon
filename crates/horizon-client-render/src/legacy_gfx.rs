@@ -704,6 +704,9 @@ impl TerrainHudRenderer {
     pub fn resize(&mut self, size: [u32; 2]) -> Result<(), String> {
         self.world.backend_mut().context().resize(size)
     }
+    pub fn is_windowed(&mut self) -> bool {
+        self.world.backend_mut().context().is_windowed()
+    }
     pub fn present(&mut self) -> Result<bool, String> {
         self.world.backend_mut().context().present()
     }

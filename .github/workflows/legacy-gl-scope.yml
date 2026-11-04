@@ -1,0 +1,34 @@
+name: Legacy GL trusted scope status
+# Metadata-only control plane. Never checkout/build/import/execute PR code.
+# Unlike an ordinary PR workflow, a task cannot replace this gate in its diff.
+on:
+  pull_request_target:
+    branches: ['main', 'arena/a7e96628-horizon']
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions:
+  contents: read
+  statuses: write
+concurrency:
+  group: legacy-trusted-scope-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  scope:
+    if: >-
+      github.repository == 'lukintrees/horizon' &&
+      (github.base_ref == 'arena/a7e96628-horizon' ||
+       github.head_ref == 'arena/a7e96628-horizon')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch objects only, evaluate trusted policy and publish head status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/legacy_scope.py
+          --policy .github/legacy-gl-policy.json
+          --fetch --publish --report "$RUNNER_TEMP/legacy-scope-report.json"

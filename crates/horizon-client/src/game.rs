@@ -350,6 +350,7 @@ mod world_loading;
 mod zombie_reinforcements;
 mod zombie_villagers;
 use event_loop::EventLoopCtl;
+use horizon_client::platform_contract::WakePolicy as ControlFlow;
 use horizon_client::spans::startup;
 use horizon_client::{
     Result,
@@ -438,7 +439,7 @@ use winit::{
     application::ApplicationHandler,
     error::EventLoopError,
     event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{CursorGrabMode, Window, WindowId},
 };
@@ -15437,7 +15438,10 @@ impl Game<'_> {
                         upgrade,
                         self.cursor,
                     );
-                    return renderer.render(&loading_frame(&hud));
+                    return horizon_client::renderer_facade::render_modern(
+                        renderer,
+                        &loading_frame(&hud),
+                    );
                 }
                 return Ok(false);
             }
@@ -15476,7 +15480,10 @@ impl Game<'_> {
                     Some(&status),
                     progress,
                 );
-                return renderer.render(&loading_frame(&hud));
+                return horizon_client::renderer_facade::render_modern(
+                    renderer,
+                    &loading_frame(&hud),
+                );
             }
             return Ok(false);
         }
@@ -15492,7 +15499,10 @@ impl Game<'_> {
                     loader.progress.line(),
                     loader.progress.fraction(),
                 );
-                return renderer.render(&loading_frame(&hud));
+                return horizon_client::renderer_facade::render_modern(
+                    renderer,
+                    &loading_frame(&hud),
+                );
             }
             return Ok(false);
         }
@@ -15508,7 +15518,10 @@ impl Game<'_> {
                     reload.progress.fraction(),
                     self.settings.file.bool("darkMojangStudiosBackground"),
                 );
-                return renderer.render(&loading_frame(&hud));
+                return horizon_client::renderer_facade::render_modern(
+                    renderer,
+                    &loading_frame(&hud),
+                );
             }
             return Ok(false);
         }
@@ -16046,7 +16059,9 @@ impl Game<'_> {
         let result = match self.renderer.as_mut() {
             Some(renderer) => {
                 renderer.set_pass_timing(self.debug || self.gpu_passes);
-                horizon_client::spans::time("renderer", || renderer.render(&frame))
+                horizon_client::spans::time("renderer", || {
+                    horizon_client::renderer_facade::render_modern(renderer, &frame)
+                })
             }
             None => Err("renderer".into()),
         };
@@ -18544,9 +18559,10 @@ impl Game<'_> {
                         window.request_redraw();
                     }
                     // Yield between polls even when disk I/O is slow.
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(
-                        Instant::now() + Duration::from_millis(4),
-                    ));
+                    EventLoopCtl::set_control_flow(
+                        event_loop,
+                        ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(4)),
+                    );
                 }
                 Err(error) => {
                     self.error = Some(error);
@@ -18607,11 +18623,14 @@ impl Game<'_> {
         }
         // Consume the last frame's result: a hidden compositor may stop sending
         // redraws altogether, leaving a successful result stale indefinitely.
-        event_loop.set_control_flow(event_loop::redraw_flow(
-            &mut self.frame_drawn,
-            self.options.offscreen,
-            Instant::now(),
-        ));
+        EventLoopCtl::set_control_flow(
+            event_loop,
+            event_loop::redraw_flow(
+                &mut self.frame_drawn,
+                self.options.offscreen,
+                Instant::now(),
+            ),
+        );
     }
 }
 /// clouds.png as filled cells (`CloudRenderer.prepare`: alpha 10 or more).
@@ -21009,7 +21028,7 @@ impl Loading {
                 w.request_redraw();
             }
         }
-        event_loop.set_control_flow(ControlFlow::Poll);
+        EventLoopCtl::set_control_flow(event_loop, ControlFlow::Poll);
     }
     fn draw(&mut self) {
         let Some(size) = self
@@ -21028,7 +21047,7 @@ impl Loading {
             self.settings.file.double("panoramaScrollSpeed") as f32,
         );
         if let Some(renderer) = &mut self.renderer {
-            match renderer.render(&frame) {
+            match horizon_client::renderer_facade::render_modern(renderer, &frame) {
                 Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
                     self.title_drawn = true;
                     self.menu.perf.title_shown()

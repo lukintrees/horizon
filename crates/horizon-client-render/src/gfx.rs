@@ -6319,6 +6319,10 @@ impl Renderer {
             );
         }
     }
+    /// Adapter query; does not expose a surface/device to the common facade.
+    pub(crate) fn is_offscreen(&self) -> bool {
+        self.offscreen.is_some()
+    }
     pub fn render(&mut self, frame: &Frame) -> Result<bool> {
         // A lost device cannot accept uploads either. Leave recovery to the
         // owner instead of submitting atlas patches to the invalid device.

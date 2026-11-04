@@ -91,6 +91,8 @@ pub mod potent_sulfur;
 pub mod preedit;
 pub mod providers;
 pub mod render_bridge;
+pub mod renderer_facade;
+pub use horizon_render_api::{platform_contract, render_contract, resource_contract};
 pub mod screen_draw;
 pub mod screen_effects;
 pub mod sculk;

@@ -422,6 +422,9 @@ impl crate::ContextImpl for Context {
             Ok(())
         }
     }
+    fn is_windowed(&self) -> bool {
+        true
+    }
     fn drawable_size(&self) -> Option<[u32; 2]> {
         Some(self.state.size.get())
     }

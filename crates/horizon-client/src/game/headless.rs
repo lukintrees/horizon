@@ -8,11 +8,11 @@
 
 use super::Game;
 use super::event_loop::EventLoopCtl;
+use horizon_client::platform_contract::WakePolicy as ControlFlow;
 use std::{
     cell::Cell,
     time::{Duration, Instant},
 };
-use winit::event_loop::ControlFlow;
 
 /// Time between headless frames. The client ticks at 20 Hz whatever the frame rate (a frame
 /// runs the ticks its elapsed time owes), so one frame per tick does all the work there is
