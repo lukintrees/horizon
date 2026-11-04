@@ -64,7 +64,8 @@ zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "time"] }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(all(windows, not(target_vendor = "win7")))'.dependencies]
+# Windows 7 cannot use the wgpu DX12 backend.
 wgpu = { version = "30.0.1", default-features = false, features = ["dx12"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]

@@ -90,6 +90,8 @@ rustix = { version = "1", default-features = false, features = ["std", "time", "
 [target.'cfg(windows)'.dependencies]
 # Use the registered URI handler without routing links through Explorer/cmd.
 open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
+[target.'cfg(all(windows, not(target_vendor = "win7")))'.dependencies]
+# DirectX 12 is not available on Windows 7; keep it out of that target.
 # DirectX 12, where Vulkan has no adapter or device, or by choice (`graphicsApi`, graphics.rs).
 # Shaders compile with FXC (d3dcompiler_47.dll, part of Windows), or DXC when dxcompiler.dll is
 # on the PATH.

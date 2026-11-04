@@ -112,7 +112,7 @@ cargo run -p horizon-legacy-gl --features window-context --target i686-pc-window
 
 ## Компиляция Win7 x86
 
-CI уже **скомпоновал существующий клиент** с `--no-default-features` для `i686-win7-windows-msvc` через nightly и пересборку `std`. Это пока wgpu-клиент: экспериментальный legacy backend к нему не подключён. У собранного EXE найден статический импорт `KERNEL32!GetSystemTimePreciseAsFileTime` (функция Windows 8+), поэтому такой файл нельзя считать совместимым с Windows 7; расследование причины продолжается. Успешная компиляция не гарантирует работу API, драйвера, аудио, сети или игрового цикла.
+CI уже **скомпоновал существующий клиент** с `--no-default-features` для `i686-win7-windows-msvc` через nightly и пересборку `std`. Это пока wgpu-клиент: экспериментальный legacy backend к нему не подключён. Для цели Win7 сборка больше не включает DX12 backend wgpu; оставшиеся wgpu Vulkan/GLES не являются заменой GL 2.0/2.1. У собранного EXE найден статический импорт `KERNEL32!GetSystemTimePreciseAsFileTime` (функция Windows 8+), поэтому такой файл нельзя считать совместимым с Windows 7; расследование причины продолжается. Успешная компиляция не гарантирует работу API, драйвера, аудио, сети или игрового цикла.
 
 На современной Windows с Visual Studio C++/Windows SDK, Python и Rust nightly с `rust-src` повторить сборку можно командой:
 
