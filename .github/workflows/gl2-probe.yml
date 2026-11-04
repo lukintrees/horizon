@@ -112,13 +112,29 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z'
-          Invoke-WebRequest -Uri $url -OutFile mesa.7z
-          7z x mesa.7z -omesa | Out-Null
-          $gl = Get-ChildItem -Path mesa -Recurse -Filter opengl32.dll | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
-          if (-not $gl) { throw 'no x64 opengl32.dll in the Mesa archive' }
-          Get-ChildItem -Path $gl.DirectoryName -Filter '*.dll' | Copy-Item -Destination crates/horizon-gl2/target/release/
-          Write-Output "copied $((Get-ChildItem -Path $gl.DirectoryName -Filter '*.dll').Count) DLLs from $($gl.DirectoryName)"
+          # Failures are printed as annotations: the logs of this sandbox's runs cannot be read.
+          try {
+            $url = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z'
+            Invoke-WebRequest -Uri $url -OutFile mesa.7z -UseBasicParsing
+            $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+            if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
+            & $sevenZip x mesa.7z -omesa -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE (using $sevenZip)" }
+            $root = (Resolve-Path mesa).Path
+            $dlls = @(Get-ChildItem -Path mesa -Recurse -Filter opengl32.dll)
+            $listing = ($dlls | ForEach-Object { $_.FullName.Substring($root.Length) }) -join ' ; '
+            Write-Output "::notice title=mesa::opengl32.dll in the archive: $listing"
+            $gl = $dlls | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            if (-not $gl -and $dlls.Count -eq 1) { $gl = $dlls[0] }
+            if (-not $gl) { throw 'no x64 opengl32.dll in the Mesa archive' }
+            $source = $gl.DirectoryName
+            $dllFiles = @(Get-ChildItem -Path $source -Filter '*.dll')
+            $dllFiles | Copy-Item -Destination crates/horizon-gl2/target/release/
+            Write-Output "::notice title=mesa::copied $($dllFiles.Count) DLLs from $source"
+          } catch {
+            Write-Output "::error title=mesa::$($_.Exception.Message)"
+            exit 1
+          }
 
       - name: Probe, driver as it is
         continue-on-error: true
