@@ -456,7 +456,7 @@ impl crate::ContextImpl for Context {
                 0,
                 rect.right - rect.left,
                 rect.bottom - rect.top,
-                0x0015,
+                0x0002 | 0x0004 | 0x0010, // SWP_NOMOVE | NOZORDER | NOACTIVATE; NOT NOSIZE
             ) == 0
             {
                 return Err(failure("SetWindowPos"));
@@ -563,8 +563,10 @@ mod tests {
         first.poll_events().unwrap();
         second.poll_events().unwrap();
         first.set_title("Horizon — Ж 🌍").unwrap();
-        first.resize([96, 48]).unwrap();
-        assert_eq!(first.drawable_size(), Some([96, 48]));
+        for size in [[1; 2], [96, 48]] {
+            first.resize(size).unwrap();
+            assert_eq!(first.drawable_size(), Some(size));
+        }
         // SAFETY: our live private HWND, bounded Win32 message payloads. The
         // window proc retains its Box<State> through close and until Drop.
         unsafe {
@@ -609,5 +611,9 @@ mod tests {
         // SAFETY: query only; WM_CLOSE must NOT destroy a drawable behind GL.
         assert_ne!(unsafe { IsWindow(first.window) }, 0);
         assert!(first.poll_events().unwrap().close_requested);
+        let handle = first.window;
+        drop(first);
+        // SAFETY: liveness query only; owner teardown must finally close it.
+        assert_eq!(unsafe { IsWindow(handle) }, 0);
     }
 }
