@@ -94,43 +94,20 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "120"
         run: .\target\release\horizon-client-gl2.exe --scene terrain --frames 60 --out out\terrain.json --png out\terrain.png
 
-      # The frame as text, because the artifact cannot be fetched from the sandbox: one character per
-      # 8x16 pixels of the PNG, a space for sky. Decoding it also proves the PNG is valid.
-      - name: Terrain frame as text (from the PNG)
+      # The frame as text comes from the report (the artifact cannot be fetched from the sandbox). Loading
+      # the PNG proves that it decodes.
+      - name: Terrain frame as text, and the PNG decodes
         continue-on-error: true
         run: |
           $ErrorActionPreference = 'Stop'
+          $report = Get-Content -Raw out\terrain.json | ConvertFrom-Json
+          $text = ($report.preview -join '%0A')
+          Write-Output "::notice title=terrain frame as text (space is sky)::$text"
           Add-Type -AssemblyName System.Drawing
           $bmp = [System.Drawing.Bitmap]::new((Resolve-Path out\terrain.png).Path)
-          $cols = 80; $rows = 30
-          $ramp = ' .:-=+*#@'
-          $lines = @()
-          for ($r = 0; $r -lt $rows; $r++) {
-            $y = [int](($r + 0.5) * $bmp.Height / $rows)
-            $line = ''
-            for ($c = 0; $c -lt $cols; $c++) {
-              $x = [int](($c + 0.5) * $bmp.Width / $cols)
-              $p = $bmp.GetPixel($x, $y)
-              # The sky is a gradient from light blue to deep blue; the ground is green, brown or grey.
-              if ($p.B -ge 180 -and $p.B -gt $p.R + 40) {
-                $line += ' '
-              } else {
-                $lum = 0.3 * $p.R + 0.59 * $p.G + 0.11 * $p.B
-                $line += $ramp[[math]::Min($ramp.Length - 1, [int]($lum / 256 * $ramp.Length))]
-              }
-            }
-            $lines += $line
-          }
-          $samples = @()
-          foreach ($f in @(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9)) {
-            $p = $bmp.GetPixel([int]($bmp.Width / 2), [int]($bmp.Height * $f))
-            $samples += "$f=($($p.R),$($p.G),$($p.B))"
-          }
-          Write-Output "::notice title=terrain colours down the middle column (fraction from the top)::$($samples -join '  ')"
           $size = "$($bmp.Width)x$($bmp.Height)"
           $bmp.Dispose()
-          $text = ($lines -join '%0A')
-          Write-Output "::notice title=terrain frame ($size as text)::$text"
+          Write-Output "terrain.png decodes as $size"
 
       - name: Every frame must pass
         env:

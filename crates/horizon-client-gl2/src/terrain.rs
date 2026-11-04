@@ -348,6 +348,32 @@ pub fn horizon_ndc(camera: &Camera) -> f32 {
     theta.tan() / (camera.fovy.to_radians() / 2.0).tan()
 }
 
+/// A text picture of a terrain frame for the CI log: `cols` by `rows` characters, a space where the
+/// sky is (the same test as the checks) and a brightness ramp for the ground. Rows go top to bottom.
+pub fn preview(pixels: &Pixels, horizon: f32, cols: u32, rows: u32) -> Vec<String> {
+    const RAMP: &[u8] = b" .:-=+*#@";
+    let (w, h) = (pixels.width, pixels.height);
+    (0..rows)
+        .map(|r| {
+            let top_down = (((r as f32 + 0.5) * h as f32 / rows as f32) as u32).min(h - 1);
+            let y = h - 1 - top_down;
+            (0..cols)
+                .map(|c| {
+                    let x = (((c as f32 + 0.5) * w as f32 / cols as f32) as u32).min(w - 1);
+                    let got = pixels.at_bottom_up(x, y);
+                    if is_sky(got, row_ndc(y, h), horizon) {
+                        ' '
+                    } else {
+                        let lum = 0.3 * f32::from(got[0]) + 0.59 * f32::from(got[1]) + 0.11 * f32::from(got[2]);
+                        let index = ((lum / 256.0) * RAMP.len() as f32) as usize;
+                        char::from(RAMP[index.min(RAMP.len() - 1)])
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn upload_sky_quad(gl: &glow::Context) -> Result<glow::Buffer, String> {
     let quad: [f32; 12] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0];
     let bytes: Vec<u8> = quad.iter().flat_map(|v| v.to_ne_bytes()).collect();
@@ -495,6 +521,15 @@ mod tests {
         assert_eq!(sky_at(1.0, TEST_HORIZON), [ZENITH[0], ZENITH[1], ZENITH[2], 255]);
         let middle = sky_at(0.7, TEST_HORIZON);
         assert!(middle[0] < HORIZON[0] && middle[0] > ZENITH[0], "{middle:?}");
+    }
+
+    #[test]
+    fn the_preview_shows_sky_on_top_and_ground_below() {
+        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { sky_row(y, 64) });
+        let lines = preview(&pixels, TEST_HORIZON, 8, 4);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].chars().all(|c| c == ' '), "{lines:?}");
+        assert!(lines[3].chars().all(|c| c != ' '), "{lines:?}");
     }
 
     #[test]

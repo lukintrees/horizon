@@ -18,6 +18,8 @@ pub struct Report {
     pub frame_ms_sum: f64,
     /// The terrain's cost in the last frame; `None` for the flat scene.
     pub terrain: Option<Stats>,
+    /// The last terrain frame as text, for the CI log (see `terrain::preview`); empty for the flat scene.
+    pub preview: Vec<String>,
     /// The fewest and the most draw calls of any frame so far.
     pub draw_calls_range: Option<(u32, u32)>,
     pub error: Option<String>,
@@ -66,6 +68,7 @@ impl Report {
             "frames": self.frames,
             "frame_ms_avg": frame_ms_avg,
             "terrain": terrain,
+            "preview": self.preview,
             "draw_calls_min": self.draw_calls_range.map(|(low, _)| low),
             "draw_calls_max": self.draw_calls_range.map(|(_, high)| high),
             "checks": self.checks.iter().map(|check| serde_json::json!({

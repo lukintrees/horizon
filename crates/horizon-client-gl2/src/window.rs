@@ -136,6 +136,7 @@ impl App {
                 self.report.checks = checks;
                 if let Some(stats) = stats {
                     self.report.note_draw_calls(stats.draw_calls);
+                    self.report.preview = terrain::preview(&pixels, stats.horizon_ndc, 80, 30);
                 }
                 self.report.terrain = stats;
                 self.report.window = Some((size.width, size.height));
