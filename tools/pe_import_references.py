@@ -128,13 +128,14 @@ def main():
     parser.add_argument('map', type=Path)
     parser.add_argument('--dll', default='kernel32.dll')
     parser.add_argument('--symbol', default='GetSystemTimePreciseAsFileTime')
-    parser.add_argument('--callee', help='also find candidate x86 rel32 calls to this map symbol')
+    parser.add_argument('--callee', action='append', default=[],
+                        help='also find candidate x86 rel32 calls to this map symbol (repeatable)')
     args = parser.parse_args()
     try:
         data = args.exe.read_bytes()
         map_text = args.map.read_text(errors='replace')
         result = find_references(data, args.dll, args.symbol, map_text)
-        calls = find_direct_calls(data, map_text, args.callee) if args.callee else []
+        calls = [(callee, find_direct_calls(data, map_text, callee)) for callee in args.callee]
     except (OSError, ValueError) as error:
         parser.exit(1, f'{error}\n')
     print(f'Candidate code references to {args.dll}!{args.symbol}: {len(result)}')
@@ -145,9 +146,9 @@ def main():
         else:
             detail = 'no preceding public map symbol'
         print(f'  VA 0x{address:08x}: {kind}, IAT 0x{slot:08x}; nearest {detail}')
-    if args.callee:
-        print(f'Candidate direct rel32 calls/jumps to {args.callee}: {len(calls)}')
-        for address, kind, destination, nearest in calls[:50]:
+    for callee, candidates in calls:
+        print(f'Candidate direct rel32 calls/jumps to {callee}: {len(candidates)}')
+        for address, kind, destination, nearest in candidates[:50]:
             if nearest:
                 base, name, obj = nearest
                 detail = f'{name}+0x{address-base:x} ({obj})'
