@@ -162,8 +162,34 @@ jobs:
           # Clippy builds the crate and its tests; the rustfmt check is a direct rustfmt call
           # because `cargo fmt` has no per-package selection.
           cargo fetch
-          cargo +stable clippy -p horizon-client-gl --all-targets -- -D warnings
-          cargo +stable test -p horizon-client-gl --lib --bins --tests
+          # The diagnostics go through a reporter on their way to the log: the job log lives in
+          # the runner's blob storage, which a session that reaches only api.github.com cannot
+          # open, while a check run's annotations are served by the API. `--message-format=json`
+          # is what makes that possible; the reporter prints the compiler's rendered text as
+          # `::error file=...,line=...::` commands, and the exit status is cargo's, unchanged.
+          set +e
+          cargo +stable clippy -p horizon-client-gl --all-targets --message-format=json \
+            -- -D warnings > clippy.json
+          clippy_status=$?
+          python tools/gl21_annotate_rustc.py clippy.json
+          if [ "$clippy_status" -ne 0 ]; then
+            # The rendered text is in the annotations; this is the one-line summary.
+            echo "::error title=clippy::cargo clippy exited $clippy_status"
+          fi
+          set -e
+          [ "$clippy_status" -eq 0 ]
+          set +e
+          cargo +stable test -p horizon-client-gl --lib --bins --tests > test.log 2>&1
+          test_status=$?
+          set -e
+          # libtest's output is not JSON: only a failure's tail is worth an annotation, and the
+          # reporter attaches it when the stream carried no diagnostics.
+          tail -n 200 test.log
+          python tools/gl21_annotate_rustc.py test.log
+          if [ "$test_status" -ne 0 ]; then
+            echo "::error title=tests::cargo test exited $test_status"
+          fi
+          [ "$test_status" -eq 0 ]
           # Formatting is reported, not enforced, until this crate has had one green build: the
           # code was written without rustfmt available, and a formatting diff would hide a
           # real compile error behind a style one.

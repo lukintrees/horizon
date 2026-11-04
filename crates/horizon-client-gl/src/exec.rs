@@ -29,11 +29,11 @@ use crate::caps::Feature;
 use crate::draw::{self, Clear, Draw, Geometry, UniformId, Value, Viewport};
 use crate::error::{Error, Result};
 use crate::gl::buffer::{Buffer, VertexFormat};
-use crate::multi_draw::{MultiDraw, MultiDrawElements};
 use crate::gl::program::Program;
 use crate::gl::state::{StateCache, StateKey};
 use crate::gl::texture::{Sampling, Texture};
 use crate::gl::Context;
+use crate::multi_draw::{MultiDraw, MultiDrawElements};
 
 /// Why the executor refused something.
 ///

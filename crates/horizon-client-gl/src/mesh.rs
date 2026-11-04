@@ -45,7 +45,7 @@
 //!    here. What matters is that it is not mistaken for alpha: the fragment stage takes
 //!    transparency from the lightmap, as the WGSL does.
 
-use crate::gl::texture::ATLAS_COUNT;
+use crate::gl::texture::{ATLAS_COUNT, SpriteRect};
 
 /// Fixed-point steps per unit of the mesher's UVs: `horizon-client-render`'s `UV_STEPS`.
 pub const UV_STEPS: f32 = 32768.0;
@@ -325,7 +325,7 @@ pub fn sprite_uv(rect: SpriteRect, corner: [f32; 2]) -> [f32; 2] {
 mod tests {
     use super::*;
     use crate::gl::buffer::{AttributeType, VertexFormat};
-    use crate::gl::texture::{SpriteRect, ATLAS_TEXELS};
+    use crate::gl::texture::ATLAS_TEXELS;
 
     /// A placement with the first `n` sprites in atlas 0, as a 16x16-only pack would have.
     fn placed(n: u16) -> AtlasPlacement {
