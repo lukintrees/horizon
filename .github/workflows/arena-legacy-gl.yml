@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  CARGO_TERM_COLOR: always
+  CARGO_TERM_COLOR: never
   RUST_BACKTRACE: 1
 
 jobs:
@@ -71,7 +71,7 @@ jobs:
           cargo check -p horizon-client --features legacy-gl --no-default-features > /tmp/gate.log 2>&1
           rc=$?
           if [ "$rc" -ne 0 ]; then
-            python3 -c 'from pathlib import Path; t=Path("/tmp/gate.log").read_text(errors="replace")[-8000:]; print("::error::"+t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+            python3 -c 'import re; from pathlib import Path; t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",Path("/tmp/gate.log").read_text(errors="replace")); ls=[l for l in t.splitlines() if not any(k in l for k in ("Downloaded","Compiling","Checking","Updating crates.io"))]; s="\n".join(ls[-120:])[-20000:]; print("::error::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
             exit "$rc"
           fi
           tail -20 /tmp/gate.log
@@ -82,7 +82,7 @@ jobs:
           cargo test -p horizon-client-render --lib gfx21 --features legacy-gl > /tmp/gfx21-test.log 2>&1
           rc=$?
           if [ "$rc" -ne 0 ]; then
-            python3 -c 'from pathlib import Path; t=Path("/tmp/gfx21-test.log").read_text(errors="replace")[-8000:]; print("::error::"+t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+            python3 -c 'import re; from pathlib import Path; t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",Path("/tmp/gfx21-test.log").read_text(errors="replace")); ls=[l for l in t.splitlines() if not any(k in l for k in ("Downloaded","Compiling","Checking","Updating crates.io"))]; s="\n".join(ls[-120:])[-20000:]; print("::error::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
             exit "$rc"
           fi
           tail -30 /tmp/gfx21-test.log
