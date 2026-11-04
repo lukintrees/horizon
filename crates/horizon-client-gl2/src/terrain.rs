@@ -65,7 +65,7 @@ pub struct Camera {
 impl Camera {
     /// The view of the terrain check on frame `frame`: above the hills, looking down at the centre of the
     /// world from 62 blocks out, and circling it at 3 degrees a frame from the south-west corner. Frame 0
-    /// is at (20, 26, 20), so the culling changes from frame to frame, as it does when the player moves.
+    /// is at about (20.2, 26, 20.2), so the culling changes from frame to frame, as it does when the player moves.
     pub fn orbit(frame: u32) -> Self {
         let centre = [64.0, 10.0, 64.0];
         let angle = (225.0 + 3.0 * frame as f32).to_radians();
@@ -375,8 +375,10 @@ mod tests {
 
     #[test]
     fn the_orbit_starts_at_the_first_view_and_keeps_its_height_and_distance() {
+        // 225 degrees puts the eye at 62 * cos(45 degrees) short of the centre on both horizontal axes.
         let start = Camera::orbit(0);
-        assert!((start.eye[0] - 20.0).abs() < 1e-3 && (start.eye[2] - 20.0).abs() < 1e-3, "{:?}", start.eye);
+        let expected = 64.0 - 62.0 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!((start.eye[0] - expected).abs() < 1e-3 && (start.eye[2] - expected).abs() < 1e-3, "{:?}", start.eye);
         for frame in [1, 17, 59] {
             let c = Camera::orbit(frame);
             assert_eq!(c.eye[1], 26.0);
