@@ -12,6 +12,9 @@ members = [
     "crates/horizon-client-core",
     "crates/horizon-client-input",
     "crates/horizon-client-render",
+    # The OpenGL 2.1 legacy path (docs/gl21-x1650-plan.ru.md): a second renderer,
+    # not a configuration of the wgpu one, because wgpu needs GL 3.3.
+    "crates/horizon-client-gl",
     "crates/horizon-cosmetics",
     "crates/horizon-command",
     "crates/horizon-items",

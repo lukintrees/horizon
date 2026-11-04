@@ -1,0 +1,336 @@
+//! A linked GLSL 1.20 program, with its uniforms measured before the driver sees it.
+//!
+//! Three things this module does that a plain "compile and link" does not:
+//!
+//! 1. **Budget first.** The sources are measured by [`crate::budget`] before
+//!    `glCreateShader`, so a program that exceeds the target's 512 uniform components, 44
+//!    varying floats, 16 samplers or 0 vertex texture units fails here with a sentence, on
+//!    every driver, instead of working on llvmpipe and dropping uniforms on the target.
+//! 2. **Locations resolved once.** On a 2.1 context a uniform is a loose `glUniform*` call
+//!    per member, so every `glGetUniformLocation` is a string lookup in the driver: they are
+//!    resolved at link time into a table, and a draw sets values by name.
+//! 3. **`#version` is ours.** The source a shader file carries starts without a `#version`
+//!    line; the backend prepends `#version 120` (and the strict-mode defines), so the
+//!    version is never a property of a file that could drift from the context.
+
+use std::collections::BTreeMap;
+
+use glow::HasContext;
+
+use crate::budget::{self, Measured, Stage, Type};
+use crate::caps::Limits;
+use crate::error::{Error, Result};
+use crate::gl::Context;
+
+/// What a program is for, in the log and in a budget failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    Terrain,
+    Entities,
+    Hud,
+    Screen,
+    Sky,
+    Other(&'static str),
+}
+
+impl Purpose {
+    pub fn label(self) -> &'static str {
+        match self {
+            Purpose::Terrain => "terrain",
+            Purpose::Entities => "entities",
+            Purpose::Hud => "hud",
+            Purpose::Screen => "screen",
+            Purpose::Sky => "sky",
+            Purpose::Other(name) => name,
+        }
+    }
+}
+
+/// The sources of one program: GLSL 1.20 without a `#version` line.
+#[derive(Clone, Copy, Debug)]
+pub struct Sources<'a> {
+    pub vertex: &'a str,
+    pub fragment: &'a str,
+    pub purpose: Purpose,
+}
+
+/// Where a program's uniform went.
+#[derive(Clone, Debug)]
+pub struct UniformSlot {
+    /// The location, or `None` when the linker dropped the member because nothing reads it.
+    /// Setting a dead uniform is a no-op, which is what makes optional features usable.
+    pub location: Option<glow::UniformLocation>,
+    pub ty: Type,
+}
+
+impl UniformSlot {
+    pub fn is_live(&self) -> bool {
+        self.location.is_some()
+    }
+}
+
+/// A linked program and its uniform locations.
+pub struct Program {
+    raw: Option<glow::Program>,
+    purpose: Purpose,
+    uniforms: BTreeMap<String, UniformSlot>,
+    vertex: Measured,
+    fragment: Measured,
+}
+
+impl std::fmt::Debug for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Program")
+            .field("purpose", &self.purpose)
+            .field("uniforms", &self.uniforms.len())
+            .field("live", &self.raw.is_some())
+            .finish()
+    }
+}
+
+/// The attribute slots every program of this path agrees on, so one vertex format fits all.
+pub mod attribs {
+    /// `vec3` position in section-local blocks.
+    pub const POSITION: u32 = 0;
+    /// `vec2` texture coordinates inside the sprite.
+    pub const TEXCOORD: u32 = 1;
+    /// `vec4` tint (RGBA8, normalized).
+    pub const COLOR: u32 = 2;
+    /// `vec2` light (sky, block), normalized 0..1.
+    pub const LIGHT: u32 = 3;
+    /// `vec4` whatever the pass needs: layer and flags, or the origin.
+    pub const EXTRA: u32 = 4;
+}
+
+/// The source text handed to the driver: the version line, the strict-mode defines, then the
+/// file. A separate function so the version is checkable without a context.
+pub fn compose_source(body: &str, stage: Stage, strict: bool) -> String {
+    let mut out = String::with_capacity(body.len() + 96);
+    out.push_str("#version 120\n");
+    if strict {
+        // Strict mode compiles as the target's compiler would. The define is also what a
+        // shader tests when it would rather drop a feature than fail to compile.
+        out.push_str("#define HORIZON_GL21_STRICT 1\n");
+    }
+    out.push_str("#define HORIZON_STAGE_");
+    out.push_str(&stage.name().to_uppercase());
+    out.push_str(" 1\n");
+    out.push_str(body);
+    out
+}
+
+impl Program {
+    /// Measures both stages, then compiles and links.
+    ///
+    /// The measurement runs first and on purpose: a driver's link error for an over-budget
+    /// program names no limit, and on the target it may not even be an error until the world
+    /// turns black.
+    pub fn create(ctx: &Context, sources: Sources<'_>) -> Result<Self> {
+        let limits = ctx.caps().limits;
+        let vertex = budget::measure(sources.vertex, Stage::Vertex);
+        let fragment = budget::measure(sources.fragment, Stage::Fragment);
+
+        let label = sources.purpose.label();
+        budget::check(&vertex, Stage::Vertex, &limits).map_err(|e| named(e, label))?;
+        budget::check(&fragment, Stage::Fragment, &limits).map_err(|e| named(e, label))?;
+        budget::check_linked(&vertex, &fragment).map_err(|e| named(e, label))?;
+
+        let strict = ctx.caps().strict;
+        let gl = ctx.gl();
+        let fs_source = compose_source(sources.fragment, Stage::Fragment, strict);
+        let vs_source = compose_source(sources.vertex, Stage::Vertex, strict);
+
+        let vs = compile(gl, Stage::Vertex, &vs_source, sources.purpose)?;
+        let fs = match compile(gl, Stage::Fragment, &fs_source, sources.purpose) {
+            Ok(fs) => fs,
+            Err(e) => {
+                unsafe { gl.delete_shader(vs) };
+                return Err(e);
+            }
+        };
+
+        let raw = unsafe {
+            let program = gl
+                .create_program()
+                .map_err(|e| Error::gl("glCreateProgram", e))?;
+            gl.attach_shader(program, vs);
+            gl.attach_shader(program, fs);
+            // Attrib locations are bound explicitly: `glBindAttribLocation` before linking
+            // is the only way to know them on 2.1, and knowing them once is what lets one
+            // 24-byte vertex format serve every program.
+            gl.bind_attrib_location(program, attribs::POSITION, "a_position");
+            gl.bind_attrib_location(program, attribs::TEXCOORD, "a_texcoord");
+            gl.bind_attrib_location(program, attribs::COLOR, "a_color");
+            gl.bind_attrib_location(program, attribs::LIGHT, "a_light");
+            gl.bind_attrib_location(program, attribs::EXTRA, "a_extra");
+
+            gl.link_program(program);
+            gl.detach_shader(program, vs);
+            gl.detach_shader(program, fs);
+            gl.delete_shader(vs);
+            gl.delete_shader(fs);
+
+            if !gl.get_program_link_status(program) {
+                let log = gl.get_program_info_log(program);
+                gl.delete_program(program);
+                return Err(Error::Shader {
+                    stage: "link",
+                    log: format!("{label} program: {log}"),
+                });
+            }
+            program
+        };
+
+        let uniforms = resolve_uniforms(gl, raw, &vertex, &fragment);
+        Ok(Self {
+            raw: Some(raw),
+            purpose: sources.purpose,
+            uniforms,
+            vertex,
+            fragment,
+        })
+    }
+
+    /// The uniform table: names as the GLSL declares them.
+    pub fn uniforms(&self) -> &BTreeMap<String, UniformSlot> {
+        &self.uniforms
+    }
+
+    /// One uniform, `None` when the source never declared it (a typo in a caller, and a
+    /// cheap one to find in a test).
+    pub fn uniform(&self, name: &str) -> Option<&UniformSlot> {
+        self.uniforms.get(name)
+    }
+
+    pub fn purpose(&self) -> Purpose {
+        self.purpose
+    }
+
+    /// What the budget measured, for the log.
+    pub fn measured(&self) -> (&Measured, &Measured) {
+        (&self.vertex, &self.fragment)
+    }
+
+    pub(crate) fn raw(&self) -> Option<glow::Program> {
+        self.raw
+    }
+
+    /// Deletes the GL object now. Idempotent; the renderer calls it for every program it
+    /// made, because a drop after the context is gone cannot call the driver.
+    pub fn destroy(&mut self, ctx: &Context) {
+        if let Some(raw) = self.raw.take() {
+            unsafe { ctx.gl().delete_program(raw) };
+            ctx.note_program_destroyed();
+        }
+    }
+}
+
+fn named(error: Error, purpose: &str) -> Error {
+    match error {
+        Error::Budget { what, detail } => Error::budget(format!("{purpose} program's {what}"), detail),
+        other => other,
+    }
+}
+
+fn resolve_uniforms(
+    gl: &glow::Context,
+    program: glow::Program,
+    vertex: &Measured,
+    fragment: &Measured,
+) -> BTreeMap<String, UniformSlot> {
+    let mut out = BTreeMap::new();
+    for decl in vertex.uniforms.iter().chain(fragment.uniforms.iter()) {
+        if out.contains_key(&decl.name) {
+            continue;
+        }
+        let location = unsafe { gl.get_uniform_location(program, &decl.name) };
+        out.insert(
+            decl.name.clone(),
+            UniformSlot {
+                location,
+                ty: decl.ty,
+            },
+        );
+    }
+    out
+}
+
+fn compile(
+    gl: &glow::Context,
+    stage: Stage,
+    source: &str,
+    purpose: Purpose,
+) -> Result<glow::Shader> {
+    let kind = match stage {
+        Stage::Vertex => glow::VERTEX_SHADER,
+        Stage::Fragment => glow::FRAGMENT_SHADER,
+    };
+    unsafe {
+        let shader = gl
+            .create_shader(kind)
+            .map_err(|e| Error::gl("glCreateShader", e))?;
+        gl.shader_source(shader, source);
+        gl.compile_shader(shader);
+        if !gl.get_shader_compile_status(shader) {
+            let log = gl.get_shader_info_log(shader);
+            gl.delete_shader(shader);
+            return Err(Error::Shader {
+                stage: stage.name(),
+                log: format!("{} program: {log}", purpose.label()),
+            });
+        }
+        // The driver's warnings: on the target these are the only sign that a shader is
+        // close to a limit its compiler does not enforce.
+        let log = gl.get_shader_info_log(shader);
+        if !log.trim().is_empty() {
+            log::debug!("{} {} shader notes: {log}", purpose.label(), stage.name());
+        }
+        Ok(shader)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_source_always_carries_the_version_the_context_has() {
+        let out = compose_source("void main() {}\n", Stage::Vertex, false);
+        assert!(out.starts_with("#version 120\n"), "{out}");
+        assert!(!out.contains("HORIZON_GL21_STRICT"));
+        assert!(out.contains("#define HORIZON_STAGE_VERTEX 1"));
+
+        let strict = compose_source("void main() {}\n", Stage::Fragment, true);
+        assert!(strict.contains("#define HORIZON_GL21_STRICT 1"));
+        assert!(strict.contains("HORIZON_STAGE_FRAGMENT 1"));
+    }
+
+    #[test]
+    fn the_composed_source_still_measures_within_budget() {
+        // The defines must not look like declarations to the budget pass.
+        let body = "uniform vec4 tint;\nvoid main() { }\n";
+        let composed = compose_source(body, Stage::Fragment, true);
+        let measured = budget::measure(&composed, Stage::Fragment);
+        assert_eq!(measured.uniforms.len(), 1);
+        assert!(budget::check(&measured, Stage::Fragment, &Limits::X1650).is_ok());
+    }
+
+    #[test]
+    fn attribute_slots_are_the_five_of_the_legacy_vertex_format() {
+        let slots = [
+            attribs::POSITION,
+            attribs::TEXCOORD,
+            attribs::COLOR,
+            attribs::LIGHT,
+            attribs::EXTRA,
+        ];
+        assert_eq!(slots, [0, 1, 2, 3, 4]);
+        assert!(*slots.iter().max().unwrap() < Limits::X1650.max_vertex_attribs);
+    }
+
+    #[test]
+    fn purpose_labels_reach_the_log() {
+        assert_eq!(Purpose::Terrain.label(), "terrain");
+        assert_eq!(Purpose::Other("menu blur").label(), "menu blur");
+    }
+}

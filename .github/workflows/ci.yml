@@ -51,6 +51,13 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 tools/ci/rust_changes.py "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
       # A pull request adds only its own commits to main, so it reads those; main's pushes read every ref's history.
+      # The OpenGL 2.1 path's budgets (docs/gl21-x1650-plan.ru.md §5): the target GPU is a
+      # Radeon X1650, which no runner has, so its limits are checked statically here. Cheap
+      # and needs no toolchain: two Python gates over the sources.
+      - name: OpenGL 2.1 budgets
+        run: |
+          python tools/gl21_budget.py --check
+          python tools/gl21_glsl.py --check
       - name: Keep game artifacts out of Git
         env:
           EVENT: ${{ github.event_name }}

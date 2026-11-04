@@ -1392,6 +1392,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-client-gl"
+version = "0.1.0"
+dependencies = [
+ "glow",
+ "libloading",
+ "log",
+ "once_cell",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "horizon-client-lib"
 version = "0.1.0"
 dependencies = [
