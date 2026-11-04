@@ -190,14 +190,26 @@ impl screen::Resources {
         view: &WorldView,
     ) -> Result<(), String> {
         self.collect(backend)?;
+        let mut active = None;
         for run in &prepared.runs {
-            let sprite = &prepared.sprites[run.sprite];
-            let texture = backend.create_texture(Image {
-                width: sprite.size[0],
-                height: sprite.size[1],
-                rgba: &sprite.pixels,
-            })?;
-            self.textures.push(texture);
+            // Rain/snow columns normally share one rectangle. Keep that image
+            // across adjacent quads instead of uploading it for every column;
+            // switching sprites still preserves source order and one-image VRAM.
+            let texture = match active {
+                Some((index, texture)) if index == run.sprite => texture,
+                _ => {
+                    self.collect(backend)?;
+                    let sprite = &prepared.sprites[run.sprite];
+                    let texture = backend.create_texture(Image {
+                        width: sprite.size[0],
+                        height: sprite.size[1],
+                        rgba: &sprite.pixels,
+                    })?;
+                    self.textures.push(texture);
+                    active = Some((run.sprite, texture));
+                    texture
+                }
+            };
             let mesh = backend.create_entity_mesh(&run.vertices, &[0, 1, 2, 0, 2, 3])?;
             self.meshes.push(mesh);
             backend.render(&Frame {
@@ -219,9 +231,12 @@ impl screen::Resources {
                     scissor: None,
                 }],
             })?;
-            self.collect(backend)?;
+            while let Some(&id) = self.meshes.last() {
+                backend.remove_mesh(id)?;
+                self.meshes.pop();
+            }
         }
-        Ok(())
+        self.collect(backend)
     }
 }
 

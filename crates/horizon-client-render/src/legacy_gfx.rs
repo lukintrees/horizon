@@ -780,6 +780,37 @@ mod tests {
         draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).unwrap();
         near(&mut renderer, [0, 16], [128, 0, 64]); // blue translucent terrain THEN half-alpha red rain
         near(&mut renderer, [32, 32], [16, 96, 48]); // HUD follows weather
+        let repeated: Vec<_> = rain.into_iter().chain(rain).collect();
+        draw(
+            &mut renderer,
+            &hud,
+            &repeated,
+            Time::new(0, 0.),
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        near(&mut renderer, [0, 16], [192, 0, 32]); // retained image, both quad instances
+        let mut alternate = rain;
+        for v in &mut alternate {
+            v.rect = [6. / 8., 0., 1. / 8., 1. / 4.];
+            v.color = 0x8000ff00;
+        }
+        let switched: Vec<_> = rain.into_iter().chain(alternate).collect();
+        renderer.limits.weather_bytes = 92;
+        draw(
+            &mut renderer,
+            &hud,
+            &switched,
+            Time::new(0, 0.),
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        near(&mut renderer, [0, 16], [64, 128, 32]); // sprite switch retains source blend order
+        renderer.limits.weather_bytes = 88;
         draw(&mut renderer, &hud, &rain, Time::new(16, 0.), &[], &[], &[]).unwrap();
         near(&mut renderer, [0, 16], [0, 128, 192]); // rain moves to cyan row, not atlas neighbour
         draw(&mut renderer, &hud, &snow, Time::new(0, 0.), &[], &[], &[]).unwrap();
