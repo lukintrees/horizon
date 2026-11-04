@@ -1,0 +1,55 @@
+name: legacy OpenGL
+on:
+  push:
+    paths:
+      - 'crates/horizon-legacy-gl/**'
+      - 'crates/horizon-client-render/src/legacy/**'
+      - 'crates/horizon-client-render/Cargo.toml'
+      - 'tools/legacy_gl_*'
+      - '.github/workflows/legacy-opengl.yml'
+  pull_request:
+    paths:
+      - 'crates/horizon-legacy-gl/**'
+      - 'crates/horizon-client-render/src/legacy/**'
+      - 'crates/horizon-client-render/Cargo.toml'
+      - 'tools/legacy_gl_*'
+      - '.github/workflows/legacy-opengl.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  llvmpipe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Mesa and client build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libosmesa6 libasound2-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: legacy-opengl
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run GL 2.1 and CPU smoke tests
+        run: tools/legacy_gl_e2e.sh
+      # Attach the end of a failed build to an annotation so it can be inspected
+      # through the checks API as well as the runner's downloadable logs.
+      - name: Check the client-render crate
+        shell: bash
+        run: |
+          set -o pipefail
+          if cargo clippy --locked -p horizon-client-render --lib --tests -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
+            exit 0
+          fi
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text = Path(os.environ['RUNNER_TEMP'], 'legacy-clippy.log').read_text(errors='replace')[-12000:]
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + text)
+          PY
+          exit 1

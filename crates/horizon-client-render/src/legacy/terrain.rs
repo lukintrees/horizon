@@ -71,7 +71,7 @@ fn build_inner(
     quads: &[TerrainVertex],
     lightmap: Option<&[u8; 16 * 16 * 4]>,
 ) -> Result<Mesh, MeshError> {
-    if quads.len() % 4 != 0 {
+    if !quads.len().is_multiple_of(4) {
         return Err(MeshError::IncompleteQuad);
     }
     let count = (quads.len() / 4)
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn preserves_winding_tint_and_translucent_order_across_pages() {
         let atlas = Atlas::new(1, 2, 4, &[255; 8]).unwrap();
-        let vertices: Vec<_> = [quad(0 | OPAQUE_LAYER), quad(1), quad(0)].concat();
+        let vertices: Vec<_> = [quad(OPAQUE_LAYER), quad(1), quad(0)].concat();
         let mesh = build(&atlas, &vertices).unwrap();
         assert_eq!(
             mesh.batches,
@@ -214,9 +214,11 @@ mod tests {
     #[test]
     fn section_keeps_solid_and_translucent_separate() {
         let atlas = Atlas::new(1, 1, 4, &[255; 4]).unwrap();
-        let mut section = SectionMesh::default();
-        section.solid = quad(0);
-        section.translucent = [quad(0), quad(0)].concat();
+        let section = SectionMesh {
+            solid: quad(0),
+            translucent: [quad(0), quad(0)].concat(),
+            ..SectionMesh::default()
+        };
         let (solid, translucent) = build_section(&atlas, &section).unwrap();
         assert_eq!(solid.vertices.len(), 6);
         assert_eq!(translucent.vertices.len(), 12);

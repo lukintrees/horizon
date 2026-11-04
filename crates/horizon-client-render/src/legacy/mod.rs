@@ -4,6 +4,7 @@
 //! remains the only selectable renderer. Keep these CPU structures independent
 //! of either graphics API so they can also be tested without a GPU.
 pub mod atlas;
+pub mod hud;
 pub mod terrain;
 
 /// The prototype terrain shaders. They require a 2D atlas page with one-pixel

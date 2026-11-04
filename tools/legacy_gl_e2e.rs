@@ -36,6 +36,7 @@ mod mesher {
     pub struct SectionMesh {
         pub solid: Vec<TerrainVertex>,
         pub translucent: Vec<TerrainVertex>,
+        pub _other: (),
     }
 }
 mod sprites {
@@ -46,6 +47,88 @@ mod sprites {
     impl Sprites {
         pub fn count(&self) -> usize {
             self.pixels.len() / (self.size * self.size * 4) as usize
+        }
+    }
+}
+mod font {
+    pub struct Patch {
+        pub x: u32,
+        pub y: u32,
+        pub width: u32,
+        pub height: u32,
+        pub rgba: Vec<u8>,
+    }
+}
+mod hud {
+    use std::{borrow::Cow, ops::Range};
+    pub struct HudAtlas {
+        pub width: u32,
+        pub height: u32,
+        pub pixels: Vec<u8>,
+    }
+    impl HudAtlas {
+        pub fn pixels(&self) -> Cow<'_, [u8]> {
+            Cow::Borrowed(&self.pixels)
+        }
+    }
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Blend {
+        Alpha,
+        Invert,
+        Additive,
+        Depth([u32; 4]),
+        Vignette,
+        EndPortal,
+        CitGlint(u8),
+    }
+    #[derive(Clone, Copy)]
+    pub struct HudVertex {
+        pub pos: [f32; 2],
+        pub uv: [f32; 2],
+        pub color: u32,
+        pub depth: f32,
+        pub glint_uv: [f32; 2],
+        pub text: u32,
+    }
+    pub struct HudBatch {
+        pub vertices: Vec<HudVertex>,
+        pub scale: f32,
+        pub blends: Vec<(Range<u32>, Blend)>,
+    }
+    impl HudBatch {
+        pub fn new(_: [u32; 2]) -> Self {
+            Self {
+                vertices: vec![],
+                scale: 1.0,
+                blends: vec![],
+            }
+        }
+        pub fn quad(&mut self, p: [[f32; 2]; 4], uv: [[f32; 2]; 4], color: u32) {
+            for i in [0, 1, 2, 0, 2, 3] {
+                self.vertices.push(HudVertex {
+                    pos: p[i],
+                    uv: uv[i],
+                    color,
+                    depth: 0.,
+                    glint_uv: [0., 0.],
+                    text: 0,
+                });
+            }
+        }
+        pub fn runs(&self) -> Vec<(Range<u32>, Blend)> {
+            let mut out = Vec::new();
+            let mut at = 0;
+            for (range, blend) in &self.blends {
+                if range.start > at {
+                    out.push((at..range.start, Blend::Alpha));
+                }
+                out.push((range.clone(), *blend));
+                at = range.end;
+            }
+            if self.vertices.len() as u32 > at {
+                out.push((at..self.vertices.len() as u32, Blend::Alpha));
+            }
+            out
         }
     }
 }
@@ -322,6 +405,117 @@ fn main() {
             horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
         );
         assert!(rgb(sample(16))[0].abs_diff(100) <= 1, "CPU lightmap");
+
+        // A GUI atlas wider than the GPU limit is split; UV-crossing triangles
+        // are clipped and still render over existing world depth.
+        let mut gui_pixels = Vec::new();
+        for _ in 0..4 {
+            for x in 0..8 {
+                gui_pixels.extend_from_slice(if x < 4 {
+                    &[200, 0, 0, 255]
+                } else {
+                    &[0, 200, 0, 255]
+                });
+            }
+        }
+        let mut gui_atlas = legacy::hud::Atlas::new(8, 4, &gui_pixels, 4).unwrap();
+        let mut gui = horizon_legacy_gl::Renderer::new(|name| {
+            let p = getproc(name.as_ptr());
+            if p.is_null() {
+                dlsym(handle, name.as_ptr())
+            } else {
+                p
+            }
+        })
+        .unwrap();
+        let pages: Vec<_> = gui_atlas
+            .pages()
+            .iter()
+            .map(|p| horizon_legacy_gl::Page {
+                side: p.side,
+                pixels: &p.pixels,
+            })
+            .collect();
+        gui.upload_pages(&pages).unwrap();
+        let mut gui_batch = hud::HudBatch::new([32, 32]);
+        gui_batch.quad(
+            [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
+            [[0., 0.], [1., 0.], [1., 1.], [0., 1.]],
+            u32::MAX,
+        );
+        let gui_mesh = legacy::hud::build(&gui_atlas, &gui_batch, [32, 32]).unwrap();
+        let gui_draw = |gui: &mut horizon_legacy_gl::Renderer| {
+            for run in &gui_mesh.runs {
+                gui.draw(
+                    &gui_mesh.vertices,
+                    std::slice::from_ref(&run.batch),
+                    &identity,
+                    run.blend.pass(),
+                )
+                .unwrap();
+            }
+        };
+        gui_draw(&mut gui);
+        assert_eq!(rgb(sample(5)), [200, 0, 0]);
+        assert_eq!(rgb(sample(26)), [0, 200, 0]);
+        let dirty = gui_atlas
+            .update_rect(3, 0, 2, 4, &[0, 0, 200, 255].repeat(8))
+            .unwrap();
+        assert_eq!(dirty, [0, 1]);
+        for i in dirty {
+            let p = &gui_atlas.pages()[i];
+            gui.update_page(
+                i,
+                horizon_legacy_gl::Page {
+                    side: p.side,
+                    pixels: &p.pixels,
+                },
+            )
+            .unwrap();
+        }
+        gui_draw(&mut gui);
+        assert_eq!(rgb(sample(14)), [0, 0, 200]);
+        assert_eq!(rgb(sample(18)), [0, 0, 200]);
+
+        // Exercise the GUI invert and additive blend functions against a
+        // known background using one white atlas texel.
+        gui_atlas.update_rect(0, 0, 1, 1, &[255; 4]).unwrap();
+        let p = &gui_atlas.pages()[0];
+        gui.update_page(
+            0,
+            horizon_legacy_gl::Page {
+                side: p.side,
+                pixels: &p.pixels,
+            },
+        )
+        .unwrap();
+        let mut overlay = hud::HudBatch::new([32, 32]);
+        overlay.quad(
+            [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
+            [[0.0625, 0.125]; 4],
+            u32::MAX,
+        );
+        overlay.blends.push((0..6, hud::Blend::Invert));
+        let invert = legacy::hud::build(&gui_atlas, &overlay, [32, 32]).unwrap();
+        clear_color(0.25, 0.5, 0.75, 1.0);
+        clear(0x4000 | 0x0100);
+        for run in &invert.runs {
+            gui.draw(
+                &invert.vertices,
+                std::slice::from_ref(&run.batch),
+                &identity,
+                run.blend.pass(),
+            )
+            .unwrap();
+        }
+        let inverted = rgb(sample(16));
+        assert!(
+            inverted[0].abs_diff(191) <= 1
+                && inverted[1].abs_diff(127) <= 1
+                && inverted[2].abs_diff(64) <= 1,
+            "HUD invert {inverted:?}"
+        );
+        gui.destroy();
         gpu.destroy();
         destroy(context);
         dlclose(handle);

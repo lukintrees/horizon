@@ -115,7 +115,7 @@ impl Atlas {
             .and_then(|s| s.checked_mul(s))
             .and_then(|n| n.checked_mul(4))
             .ok_or(AtlasError::SizeOverflow)?;
-        let count = layer_count / per_page + u32::from(layer_count % per_page != 0);
+        let count = layer_count.div_ceil(per_page);
         let mut pages = Vec::new();
         pages
             .try_reserve_exact(count as usize)

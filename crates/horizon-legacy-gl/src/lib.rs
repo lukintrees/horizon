@@ -59,9 +59,17 @@ pub struct Page<'a> {
 #[derive(Clone, Copy)]
 pub enum Pass {
     /// Depth writes on, blending off; cutout pixels can be discarded.
-    Solid { alpha_cutoff: f32 },
+    Solid {
+        alpha_cutoff: f32,
+    },
     /// Depth writes off, alpha blending on. Draw back to front.
-    Translucent { alpha_cutoff: f32 },
+    Translucent {
+        alpha_cutoff: f32,
+    },
+    /// GUI drawn over the world, with no depth test or depth writes.
+    HudAlpha,
+    HudInvert,
+    HudAdditive,
 }
 
 macro_rules! gl_functions {
@@ -128,7 +136,7 @@ gl_functions! {
     depth_mask: "glDepthMask" => (u8) -> (),
     depth_range: "glDepthRange" => (f64, f64) -> (),
     color_mask: "glColorMask" => (u8, u8, u8, u8) -> (),
-    blend_func: "glBlendFunc" => (u32, u32) -> (),
+    blend_func_separate: "glBlendFuncSeparate" => (u32, u32, u32, u32) -> (),
     blend_equation: "glBlendEquation" => (u32) -> (),
     draw_arrays: "glDrawArrays" => (u32, i32, i32) -> (),
 }
@@ -442,6 +450,8 @@ impl Renderer {
             }
             let cutoff = match pass {
                 Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
+                Pass::HudInvert => 0.0001,
+                Pass::HudAlpha | Pass::HudAdditive => 0.004,
             };
             (gl.use_program)(self.program);
             (gl.uniform_matrix)(self.view_projection, 1, 0, transform.as_ptr());
@@ -457,10 +467,27 @@ impl Renderer {
                     (gl.disable)(0x0be2);
                     (gl.depth_mask)(1);
                 }
-                Pass::Translucent { .. } => {
+                Pass::Translucent { .. } | Pass::HudAlpha => {
+                    if matches!(pass, Pass::HudAlpha) {
+                        (gl.disable)(0x0b71);
+                    }
                     (gl.enable)(0x0be2);
                     (gl.blend_equation)(0x8006); // GL_FUNC_ADD
-                    (gl.blend_func)(0x0302, 0x0303);
+                    (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
+                    (gl.depth_mask)(0);
+                }
+                Pass::HudInvert => {
+                    (gl.disable)(0x0b71);
+                    (gl.enable)(0x0be2);
+                    (gl.blend_equation)(0x8006);
+                    (gl.blend_func_separate)(0x0307, 0x0301, 1, 0);
+                    (gl.depth_mask)(0);
+                }
+                Pass::HudAdditive => {
+                    (gl.disable)(0x0b71);
+                    (gl.enable)(0x0be2);
+                    (gl.blend_equation)(0x8006);
+                    (gl.blend_func_separate)(1, 1, 1, 1);
                     (gl.depth_mask)(0);
                 }
             }
