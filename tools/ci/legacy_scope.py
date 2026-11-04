@@ -175,6 +175,8 @@ def main():
     args.report.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, ensure_ascii=True))
     if report["status"] != "passed":
+        message = report["error"].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error title=CI01 scope::" + message)
         return 1
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as out:

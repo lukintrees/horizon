@@ -1,6 +1,8 @@
 """CI01 behavior: trusted policy, ownership, spoofing and actual git diffs."""
 import importlib.util
 import json
+import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -86,6 +88,47 @@ class ScopeTests(unittest.TestCase):
         pr["base"]["sha"] = "9" * 40
         with self.assertRaises(scope.Rejected):
             scope.verify_current_pr(context, pr)
+
+    def test_cli_uses_trusted_base_even_when_candidate_replaces_checker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            def git(*args):
+                return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.DEVNULL).decode().strip()
+            git("init")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "test")
+            (repo / "tools/ci").mkdir(parents=True)
+            (repo / ".github").mkdir()
+            checker = repo / "tools/ci/legacy_scope.py"
+            checker.write_text((ROOT / "tools/ci/legacy_scope.py").read_text())
+            (repo / ".github/legacy-gl-policy.json").write_text(json.dumps(POLICY))
+            git("add", ".")
+            git("commit", "-m", "base")
+            base = git("rev-parse", "HEAD")
+            checker.write_text("raise SystemExit(0)\n")
+            (repo / ".github/legacy-gl-policy.json").write_text('{"protected": []}')
+            (repo / "Cargo.toml").write_text("changed")
+            git("add", ".")
+            git("commit", "-m", "try to opt out")
+            pr = event()
+            pr["pull_request"]["base"]["sha"] = base
+            pr["pull_request"]["head"]["sha"] = git("rev-parse", "HEAD")
+            (root / "event.json").write_text(json.dumps(pr))
+            # Same git-show extraction as the real read-only candidate workflow.
+            (root / "trusted.py").write_text(git("show", base + ":tools/ci/legacy_scope.py"))
+            (root / "policy.json").write_text(git("show", base + ":.github/legacy-gl-policy.json"))
+            env = dict(os.environ)
+            env.pop("GITHUB_OUTPUT", None)
+            result = subprocess.run([sys.executable, str(root / "trusted.py"),
+                "--policy", str(root / "policy.json"), "--repo-dir", str(repo),
+                "--event-name", "pull_request", "--event-file", str(root / "event.json"),
+                "--report", str(root / "report.json")], capture_output=True, env=env)
+            self.assertEqual(result.returncode, 1)
+            report = json.loads((root / "report.json").read_text())
+            self.assertEqual(report["status"], "failed")
+            self.assertIn("Cargo.toml", report["error"])
 
     def test_actual_diff_detects_rename_out_of_protected_file(self):
         with tempfile.TemporaryDirectory() as directory:

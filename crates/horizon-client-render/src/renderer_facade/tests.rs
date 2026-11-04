@@ -50,7 +50,7 @@ fn real_facade_preserves_offscreen_outcome_pixels_and_explicit_rejection() {
         assert!(facade.resize([0, 64]).is_err());
     }
     let before = renderer.read_rgba([0, 0, 64, 64]).unwrap();
-    assert!(before.chunks_exact(4).any(|pixel| pixel == [255; 4]));
+    assert!(before.as_chunks::<4>().0.contains(&[255; 4]));
     source.title = true;
     assert!(
         RendererFacade::legacy(&mut renderer, frame::VisibleSections::default(), options)

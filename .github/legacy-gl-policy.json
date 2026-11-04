@@ -38,6 +38,8 @@
     ".cargo/**",
     ".githooks/**",
     "rust-toolchain",
-    "rust-toolchain.toml"
+    "rust-toolchain.toml",
+    "docs/design/legacy-gl-c01.md",
+    "docs/design/legacy-renderer-inventory.json"
   ]
 }

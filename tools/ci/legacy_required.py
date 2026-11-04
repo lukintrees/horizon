@@ -52,5 +52,6 @@ if __name__ == "__main__":
     try:
         main()
     except (ValueError, KeyError) as error:
-        print(str(error), file=sys.stderr)
+        message = str(error).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error title=CI01 required::" + message, file=sys.stderr)
         sys.exit(1)
