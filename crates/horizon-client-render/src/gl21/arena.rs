@@ -44,7 +44,19 @@ pub struct Upload {
     pub len: u32,
 }
 
+impl Slot {
+    /// A section at `begin`, `len` vertices long, in `runs` draw calls.
+    pub const fn at(begin: u32, len: u32, runs: u32) -> Slot {
+        Slot { begin, len, runs }
+    }
+}
+
 impl Upload {
+    /// The range from `begin`, `len` vertices long.
+    pub const fn at(begin: u32, len: u32) -> Upload {
+        Upload { begin, len }
+    }
+
     /// The byte offset `glBufferSubData` takes, for a stride of `gl21::vertex::STRIDE`.
     pub fn byte_offset(self) -> usize {
         self.begin as usize * crate::gl21::vertex::STRIDE as usize
@@ -188,12 +200,8 @@ impl Arena {
 pub fn coalesce(pending: &[Upload]) -> Vec<Upload> {
     let mut out: Vec<Upload> = Vec::new();
     for upload in pending {
-        const GAP: u32 = 256;
         match out.last_mut() {
-            Some(last)
-                if last.begin + last.len <= upload.begin
-                    && upload.begin - (last.begin + last.len) <= GAP =>
-            {
+            Some(last) if joins(last, &upload) => {
                 last.len = upload.begin + upload.len - last.begin;
             }
             _ => out.push(*upload),
@@ -202,37 +210,49 @@ pub fn coalesce(pending: &[Upload]) -> Vec<Upload> {
     out
 }
 
+/// Whether one copy can carry `next` as well as `last`: it starts after `last` ends, and no more
+/// than `GAP` vertices later.
+fn joins(last: &Upload, next: &Upload) -> bool {
+    const GAP: u32 = 256;
+    let end = last.begin + last.len;
+    end <= next.begin && next.begin - end <= GAP
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesher::TerrainVertex;
     use crate::gl21::vertex::Batches;
+    use crate::mesher::TerrainVertex;
 
-    /// `count` vertices of one sprite, so that a run is one run.
+    /// A section of `count` vertices of one sprite, so that it is one run.
     fn section(count: usize, sprite: u16) -> Vec<TerrainVertex> {
-        (0..count)
-            .map(|i| TerrainVertex::new([i as f32, 0.0, 0.0], [0.0, 0.0], sprite, 0, 0))
-            .collect()
+        let mut out = Vec::with_capacity(count);
+        for i in 0..count {
+            let pos = [i as f32, 0.0, 0.0];
+            out.push(TerrainVertex::new(pos, [0.0, 0.0], sprite, 0, 0));
+        }
+        out
     }
 
+    /// `mesher` vertices as the arena stores them, and how many runs they are.
     fn gl(vertices: &[TerrainVertex]) -> (Vec<GlVertex>, u32) {
         let (out, batches) = Batches::of(vertices);
         (out, batches.runs.len() as u32)
     }
 
     #[test]
-    fn a_stored_section_lands_where_the_buffer_ends_and_is_uploaded_once() {
+    fn a_stored_section_lands_at_the_end_and_is_uploaded_once() {
         let mut arena = Arena::new(1024);
         let (a, runs) = gl(&section(4, 1));
         let (b, _) = gl(&section(2, 1));
         let first = arena.store(0, &a, runs).unwrap();
         let second = arena.store(1, &b, 1).unwrap();
-        assert_eq!(first, Slot { begin: 0, len: 4, runs: 1 });
-        assert_eq!(second, Slot { begin: 4, len: 2, runs: 1 });
+        assert_eq!(first, Slot::at(0, 4, 1));
+        assert_eq!(second, Slot::at(4, 2, 1));
         assert_eq!(arena.len(), 6);
         assert_eq!(arena.vertices(4, 2), &b[..]);
         // The two ranges are adjacent, so one copy carries both.
-        assert_eq!(arena.uploads(), vec![Upload { begin: 0, len: 6 }]);
+        assert_eq!(arena.uploads(), vec![Upload::at(0, 6)]);
         // Drained: a second frame uploads nothing until something changes.
         assert!(arena.uploads().is_empty());
     }
@@ -246,12 +266,13 @@ mod tests {
         // The same handle again: the new vertices go to the end, the slot points there.
         let (changed, _) = gl(&section(4, 2));
         let slot = arena.store(0, &changed, 1).unwrap();
-        assert_eq!(slot.begin, 4);
+        assert_eq!(slot, Slot::at(4, 4, 1));
         assert_eq!(arena.slot(0), Some(slot));
-        assert_eq!(arena.uploads(), vec![Upload { begin: 4, len: 4 }]);
-        // The buffer kept the old copy: 8 vertices for 4 live ones, and the next `reset` is what
-        // takes that room back.
-        assert_eq!((arena.len(), arena.stored()), (8, 1));
+        assert_eq!(arena.uploads(), vec![Upload::at(4, 4)]);
+        // The old copy stayed: eight vertices for four live ones. A reset is what takes the room
+        // back, which is cheaper than copying on the frame that changed.
+        assert_eq!(arena.len(), 8);
+        assert_eq!(arena.stored(), 1);
     }
 
     #[test]
@@ -263,60 +284,58 @@ mod tests {
         // Four and four do not fit six.
         assert_eq!(arena.store(1, &b, 1), None);
         assert_eq!(arena.len(), 4);
-        // And starting over makes room for the new frame.
+        // Starting over makes room for the frame's sections again.
         arena.reset();
         assert!(arena.is_empty());
         assert_eq!(arena.stored(), 0);
         let (small, _) = gl(&section(2, 1));
         assert!(arena.store(1, &small, 1).is_some());
-        assert_eq!(arena.uploads(), vec![Upload { begin: 0, len: 2 }]);
-        assert_eq!(arena.slot(1), Some(Slot { begin: 0, len: 2, runs: 1 }));
+        assert_eq!(arena.slot(1), Some(Slot::at(0, 2, 1)));
+        assert_eq!(arena.uploads(), vec![Upload::at(0, 2)]);
     }
 
     #[test]
-    fn an_evicted_section_leaves_the_list_and_the_slot_is_reused() {
+    fn an_evicted_section_leaves_the_list() {
         let mut arena = Arena::new(1024);
         let (a, _) = gl(&section(3, 1));
-        let (b, _) = gl(&section(3, 1));
         arena.store(0, &a, 1).unwrap();
-        arena.store(1, &b, 1).unwrap();
-        assert_eq!(arena.evict(0), Some(Slot { begin: 0, len: 3, runs: 1 }));
+        arena.store(1, &a, 1).unwrap();
+        assert_eq!(arena.evict(0), Some(Slot::at(0, 3, 1)));
         assert_eq!(arena.slot(0), None);
         assert_eq!(arena.evict(0), None, "evicting twice is not a fault");
         assert_eq!(arena.stored(), 1);
-        // Room for the next one is the buffer's end, not the freed range, until a reset: appending
-        // is the whole point, and a hole is not a place to write.
-        let (c, _) = gl(&section(3, 1));
-        assert_eq!(arena.store(0, &c, 1).unwrap().begin, 6);
+        // The next one goes to the buffer's end, not into the freed range: appending is the point,
+        // and a hole is not a place to write.
+        assert_eq!(arena.store(0, &a, 1).unwrap(), Slot::at(6, 3, 1));
         assert_eq!(arena.stored(), 2);
     }
 
     #[test]
     fn uploads_coalesce_only_what_touches() {
-        let adjacent = [Upload { begin: 0, len: 4 }, Upload { begin: 4, len: 4 }];
-        assert_eq!(coalesce(&adjacent), vec![Upload { begin: 0, len: 8 }]);
-        let near = [Upload { begin: 0, len: 4 }, Upload { begin: 100, len: 4 }];
-        assert_eq!(
-            coalesce(&near),
-            vec![Upload { begin: 0, len: 104 }],
-            "one copy for 96 skipped vertices"
-        );
-        let far = [Upload { begin: 0, len: 4 }, Upload { begin: 1024, len: 4 }];
+        let adjacent = [Upload::at(0, 4), Upload::at(4, 4)];
+        assert_eq!(coalesce(&adjacent), vec![Upload::at(0, 8)]);
+        // 96 skipped vertices are worth one copy.
+        let near = [Upload::at(0, 4), Upload::at(100, 4)];
+        assert_eq!(coalesce(&near), vec![Upload::at(0, 104)]);
+        let far = [Upload::at(0, 4), Upload::at(1024, 4)];
         assert_eq!(coalesce(&far), far.to_vec(), "two copies");
-        // Unsorted or overlapping ranges are not merged backwards.
-        let backwards = [Upload { begin: 8, len: 4 }, Upload { begin: 0, len: 4 }];
+        // Ranges that come backwards (or overlap) are never merged: a copy cannot go back in time.
+        let backwards = [Upload::at(8, 4), Upload::at(0, 4)];
         assert_eq!(coalesce(&backwards), backwards.to_vec());
+    }
 
-        // The far pair with the near cap: 1020 vertices is past it.
-        let edge = [Upload { begin: 0, len: 4 }, Upload { begin: 260, len: 4 }];
-        assert_eq!(coalesce(&edge), vec![Upload { begin: 0, len: 264 }], "256 is the cap, not 255");
-        let over = [Upload { begin: 0, len: 4 }, Upload { begin: 261, len: 4 }];
-        assert_eq!(coalesce(&over), over.to_vec());
+    #[test]
+    fn a_gap_of_two_hundred_and_fifty_six_vertices_is_the_cap() {
+        // 256 skipped vertices join, 257 do not: the constant is the line, either side of it.
+        let at_cap = [Upload::at(0, 4), Upload::at(260, 4)];
+        assert_eq!(coalesce(&at_cap), vec![Upload::at(0, 264)]);
+        let past_cap = [Upload::at(0, 4), Upload::at(261, 4)];
+        assert_eq!(coalesce(&past_cap), past_cap.to_vec());
     }
 
     #[test]
     fn an_upload_knows_its_place_in_bytes() {
-        let upload = Upload { begin: 10, len: 5 };
+        let upload = Upload::at(10, 5);
         assert_eq!(upload.byte_offset(), 10 * 28);
         assert_eq!(upload.byte_len(), 5 * 28);
     }

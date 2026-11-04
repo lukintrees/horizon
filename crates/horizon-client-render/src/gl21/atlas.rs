@@ -247,13 +247,21 @@ mod tests {
         assert!(Atlas::new(65_537, 16, 0, 4096).is_err());
     }
 
+    /// The error a refused atlas gives, with the sentence that says why it matters.
+    fn refusal(layers: u32, tile: u32, pad: u32, max_size: u32) -> String {
+        match Atlas::new(layers, tile, pad, max_size) {
+            Ok(_) => panic!("a {tile}-texel sprite with {pad} of padding was accepted"),
+            Err(message) => message,
+        }
+    }
+
     #[test]
     fn wrong_sides_are_refused() {
-        assert!(Atlas::new(1, 24, 0, 4096).unwrap_err().contains("power of two"));
-        assert!(Atlas::new(1, 0, 0, 4096).is_err());
-        assert!(Atlas::new(1, 16, 3, 4096).unwrap_err().contains("padding"));
-        assert!(Atlas::new(1, 16, 32, 4096).unwrap_err().contains("wider than the sprite"));
-        assert!(Atlas::new(1, 8192, 0, 4096).unwrap_err().contains("does not fit"));
+        assert!(refusal(1, 24, 0, 4096).contains("power of two"));
+        assert!(refusal(1, 0, 0, 4096).contains("power of two"));
+        assert!(refusal(1, 16, 3, 4096).contains("padding"));
+        assert!(refusal(1, 16, 32, 4096).contains("wider than the sprite"));
+        assert!(refusal(1, 8192, 0, 4096).contains("does not fit"));
     }
 
     #[test]
@@ -319,14 +327,22 @@ mod tests {
         assert_eq!(atlas.texel(4, 0), [0, 0, 0, 255]);
     }
 
+    /// The error a refused blit gives.
+    fn blit_refusal(atlas: &mut Atlas, layer: u32, source: &[u8], side: u32) -> String {
+        match atlas.blit(layer, source, side) {
+            Ok(()) => panic!("layer {layer} took a {side}-texel sheet"),
+            Err(message) => message,
+        }
+    }
+
     #[test]
     fn a_blit_of_the_wrong_size_or_layer_is_refused() {
         // One sprite of 2 texels: the only layer there is.
         let mut atlas = Atlas::new(1, 2, 0, 4096).unwrap();
         assert_eq!(atlas.capacity(), 1);
         assert!(atlas.blit(0, &sheet(2), 2).is_ok());
-        assert!(atlas.blit(0, &[0; 8], 2).unwrap_err().contains("bytes"));
-        assert!(atlas.blit(0, &sheet(4), 4).unwrap_err().contains("texel sprite"));
-        assert!(atlas.blit(1, &sheet(2), 2).unwrap_err().contains("past the atlas"));
+        assert!(blit_refusal(&mut atlas, 0, &[0; 8], 2).contains("bytes"));
+        assert!(blit_refusal(&mut atlas, 0, &sheet(4), 4).contains("texel sprite"));
+        assert!(blit_refusal(&mut atlas, 1, &sheet(2), 2).contains("past the atlas"));
     }
 }

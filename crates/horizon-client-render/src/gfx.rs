@@ -1285,7 +1285,8 @@ fn layer_split(
     requested: Option<u32>,
     layers: u32,
 ) -> std::result::Result<u32, String> {
-    layer_split_with(max_layers, gl, requested, layers, crate::gl21::poorest_paths())
+    let poorest = crate::gl21::poorest_paths();
+    layer_split_with(max_layers, gl, requested, layers, poorest)
 }
 /// `layer_split`, with the poorest paths (`HORIZON_GL_PROFILE=x1650`) given rather than read from
 /// the environment: they keep one array of `SPRITE_SPLIT` layers, the split the CPU mip chains were
@@ -11308,9 +11309,12 @@ mod tests {
             Ok(super::SPRITE_SPLIT)
         );
         assert_eq!(super::layer_split_with(2048, false, None, 64, false), Ok(2048));
+        // The same split the adapter asked for, one line each way.
+        assert_eq!(super::layer_split_with(512, false, None, 8, false), Ok(512));
         // A card that cannot name SPRITE_SPLIT layers still gets the largest split that fits, as
         // before: the profile does not override the adapter's limit.
         assert_eq!(super::layer_split_with(1024, false, None, 64, true), Ok(1024));
+        assert_eq!(super::layer_split_with(256, false, None, 8, true), Ok(256));
     }
     #[test]
     fn entity_shader_validates_with_its_overlay_constants() {
