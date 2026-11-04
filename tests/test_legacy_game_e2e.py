@@ -272,12 +272,16 @@ class RunnerTests(unittest.TestCase):
                 [sys.executable, "-c", "import time; time.sleep(60)"],
                 cwd=root, env=dict(os.environ),
                 stdout_path=root / "out.log", stderr_path=root / "err.log")
-        self.addCleanup(process.stop)
-        if os.name != "nt":
-            self.assertEqual(os.getpgid(process.pid), process.pid)
-        self.assertIsNone(process.poll())
-        process.stop()
-        self.wait_until(lambda: process.poll() is not None)
+            try:
+                if os.name != "nt":
+                    self.assertEqual(os.getpgid(process.pid), process.pid)
+                self.assertIsNone(process.poll())
+                process.stop()
+                self.wait_until(lambda: process.poll() is not None)
+            finally:
+                # Windows cannot remove open log files. Stop and close them
+                # before TemporaryDirectory attempts to remove the scratch root.
+                process.stop()
 
 
 if __name__ == "__main__":
