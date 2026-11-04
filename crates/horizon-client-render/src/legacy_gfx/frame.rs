@@ -47,6 +47,8 @@ pub struct Prepared<'a> {
     pub hud: &'a HudBatch,
     pub lightmap: [u8; 1024],
     pub screen: &'a [crate::screen_effects::ScreenQuad],
+    pub weather: &'a [crate::weather::Vertex],
+    pub weather_time: crate::weather::Time,
     entities: Cow<'a, [Vertex]>,
     pub additive: Cow<'a, [Vertex]>,
     hand: &'a [Vertex],
@@ -135,8 +137,19 @@ impl<'a> Prepared<'a> {
                 .filter(|&n| n <= limits.entity_vertices)
                 .ok_or(Error::Budget("combined frame vertices"))?;
         }
-        let entity_count =
-            count - frame.hand.len() - frame.see_through.len() - frame.additive.len();
+        if !frame.weather.len().is_multiple_of(4) || frame.weather.len() / 4 > limits.weather_quads
+        {
+            return Err(Error::Budget("weather quads/count"));
+        }
+        count = count
+            .checked_add(frame.weather.len())
+            .filter(|&n| n <= limits.entity_vertices)
+            .ok_or(Error::Budget("combined frame vertices"))?;
+        let entity_count = count
+            - frame.hand.len()
+            - frame.see_through.len()
+            - frame.additive.len()
+            - frame.weather.len();
         if frame.lightning.bolts.len() > limits.lightning_bolts {
             return Err(Error::Budget("lightning bolts"));
         }
@@ -296,6 +309,8 @@ impl<'a> Prepared<'a> {
             hud: frame.hud,
             lightmap,
             screen: frame.screen,
+            weather: frame.weather,
+            weather_time: frame.weather_time,
             entities,
             additive,
             hand: frame.hand,
@@ -348,7 +363,6 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
             !frame.celestial.is_empty() || frame.stars.is_some(),
             "celestial/stars",
         ),
-        (!frame.weather.is_empty(), "weather"),
         (
             !frame.outline.is_empty()
                 || !frame.debug_lines.is_empty()

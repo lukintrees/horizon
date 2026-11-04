@@ -452,6 +452,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_entity_glint");
     gui_glint(context)?;
     checks.push("backend_gui_glint");
+    weather_world(context)?;
+    checks.push("backend_world_weather");
     additive_world(context)?;
     checks.push("backend_world_additive");
     screen_sampling(context)?;
@@ -1975,6 +1977,153 @@ fn gui_glint(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "GUI foil resources not reclaimed",
+    )
+}
+
+fn weather_world(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        GameFog,
+        entity::{Kind, LitVertex, Material, Overlay},
+    };
+    let mut renderer = Renderer::new(context, Budget::default())?;
+    let rgba = [
+        255, 0, 0, 255, 0, 255, 0, 32, 0, 0, 255, 128, 255, 255, 0, 0, 255, 0, 255, 64, 0, 255,
+        255, 255,
+    ];
+    let texture = renderer.create_texture(Image {
+        width: 3,
+        height: 2,
+        rgba: &rgba,
+    })?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let vertices = quad([0.5, 0.75, 0.25, 0.5], 0., 1.).map(|mut base| {
+        base.uv = [base.uv[0] * 4. - 1.25, base.uv[1] * 2. - 0.75];
+        LitVertex {
+            base,
+            back_color: [1., 0., 0., 1.],
+            light_color: [0.5, 0.75, 0.25, 0.5],
+            glint_uv: [0.; 2],
+        }
+    });
+    let front = renderer.create_entity_mesh(&vertices, &[0, 1, 2, 0, 2, 3])?;
+    let back = renderer.create_entity_mesh(&vertices, &[0, 2, 1, 0, 3, 2])?;
+    let material = Material {
+        kind: Kind::Weather,
+        cull: false,
+        overlay: Overlay::None,
+        glint: None,
+    };
+    let draw = Draw {
+        mesh: front,
+        texture,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Entity(material),
+        scissor: None,
+    };
+    for mesh in [front, back] {
+        let draws = [Draw { mesh, ..draw }];
+        let mut view = frame(&draws);
+        view.clear = Clear::ColorDepth([64. / 255., 96. / 255., 160. / 255., 0.4]);
+        view.fog = Some(Fog {
+            color: [0., 0., 1.],
+            start: 0.,
+            end: 0.01,
+            game: Some(GameFog {
+                start: 0.,
+                end: 0.01,
+                alpha: 0.25,
+            }),
+        });
+        renderer.render(&view)?;
+        for y in [5, 19, 37, 55] {
+            for x in [1, 11, 25, 41, 61] {
+                let u = ((f64::from(x) + 0.5) / 64. * 4. - 1.25).rem_euclid(1.);
+                let v = ((f64::from(y) + 0.5) / 64. * 2. - 0.75).rem_euclid(1.);
+                let texel = ((v * 2.).floor() as usize * 3 + (u * 3.).floor() as usize) * 4;
+                let tex = &rgba[texel..texel + 4];
+                let raw_alpha = f64::from(tex[3]) / 255. * 0.5;
+                let a = if raw_alpha < 0.1 { 0. } else { raw_alpha * 0.5 };
+                let expected = std::array::from_fn(|c| {
+                    let lit = f64::from(tex[c]) / 255. * [0.25, 0.5625, 0.0625][c];
+                    let fogged = lit * 0.75 + if c == 2 { 0.25 } else { 0. };
+                    (fogged * a * 255. + [64., 96., 160.][c] * (1. - a)).round() as u8
+                });
+                pixel(&mut renderer, [x, y], expected)?;
+                let alpha = ((a + 0.4 * (1. - a)) * 255.).round() as u8;
+                require(
+                    renderer.read_rgba([x, y, 1, 1])?[3].abs_diff(alpha) <= 2,
+                    "weather alpha factors/cutout mismatch",
+                )?;
+            }
+        }
+    }
+    let lit = |color, z| {
+        quad(color, z, 1.).map(|base| LitVertex {
+            base,
+            back_color: base.color,
+            light_color: [1.; 4],
+            glint_uv: [0.; 2],
+        })
+    };
+    let green = renderer.create_entity_mesh(&lit([0., 1., 0., 0.5], 0.), &[0, 1, 2, 0, 2, 3])?;
+    let red = renderer.create_entity_mesh(&lit([1., 0., 0., 0.5], 0.5), &[0, 1, 2, 0, 2, 3])?;
+    let draws = [
+        Draw {
+            mesh: green,
+            texture: white,
+            ..draw
+        },
+        Draw {
+            mesh: red,
+            texture: white,
+            ..draw
+        },
+    ];
+    renderer.render(&frame(&draws))?;
+    pixel(&mut renderer, [32, 32], [128, 64, 0])?; // no weather depth writes
+    let solid = renderer.create_mesh(&quad([0., 1., 0., 1.], 0., 1.), &[0, 1, 2, 0, 2, 3])?;
+    let equal = renderer.create_entity_mesh(&lit([1., 0., 0., 0.5], 0.), &[0, 1, 2, 0, 2, 3])?;
+    renderer.render(&frame(&[
+        Draw {
+            mesh: solid,
+            texture: white,
+            pass: Pass::Opaque,
+            ..draw
+        },
+        Draw {
+            mesh: equal,
+            texture: white,
+            ..draw
+        },
+    ]))?;
+    pixel(&mut renderer, [32, 32], [128, 127, 0])?; // LEQUAL not LESS
+    let reset = lit([1.; 4], 0.).map(|mut v| {
+        v.base.uv = [2.25, 0.25];
+        v
+    });
+    let reset = renderer.create_entity_mesh(&reset, &[0, 1, 2, 0, 2, 3])?;
+    renderer.render(&frame(&[Draw {
+        mesh: reset,
+        pass: Pass::Entity(Material {
+            kind: Kind::Item,
+            ..material
+        }),
+        ..draw
+    }]))?;
+    pixel(&mut renderer, [32, 32], [0, 0, 128])?; // ordinary UV clamp, no weather/fog leak
+    for mesh in [front, back, green, red, solid, equal, reset] {
+        renderer.remove_mesh(mesh)?;
+    }
+    renderer.remove_texture(texture)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "weather fixture leaked resources",
     )
 }
 

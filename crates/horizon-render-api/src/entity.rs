@@ -64,6 +64,8 @@ pub enum Kind {
     Additive,
     /// Untextured dragon rays: cull back, write depth, fade RGBA by world fog.
     DragonRays,
+    /// Extracted-sprite repeating weather; alpha blend, LEQUAL, no depth writes.
+    Weather,
     Particle,
     SeeThrough,
 }
@@ -128,7 +130,8 @@ fn shade(normal: [f32; 3], nether: bool) -> f32 {
     };
     ((dot([0.2, 1., -0.7]) + dot([-0.2, if nether { -1. } else { 1. }, 0.7])) * 0.6 + 0.4).min(1.)
 }
-fn sample(lightmap: &[u8], light: u32) -> [f32; 4] {
+/// Bilinear classic lightmap sampling shared by entity and weather vertices.
+pub fn light_color(lightmap: &[u8; 1024], light: u32) -> [f32; 4] {
     let x = (((light >> 8) & 255) as f32 / 16.).min(15.);
     let y = ((light & 255) as f32 / 16.).min(15.);
     let (x0, y0) = (x.floor() as usize, y.floor() as usize);
@@ -194,9 +197,7 @@ fn runs_view(
         return Err(Error::InvalidGlint);
     }
     let nether = options.nether;
-    if lightmap.len() != 16 * 16 * 4 {
-        return Err(Error::InvalidLightmap);
-    }
+    let lightmap: &[u8; 1024] = lightmap.try_into().map_err(|_| Error::InvalidLightmap)?;
     let mut iter = input.into_iter();
     let mut total = 0usize;
     let mut result: Vec<gui::Run<LitVertex>> = Vec::new();
@@ -310,7 +311,7 @@ fn runs_view(
                 light_color: if additive && matches!(code, 2 | 37) {
                     [1.; 4]
                 } else {
-                    sample(lightmap, v.light)
+                    light_color(lightmap, v.light)
                 },
                 glint_uv: if glint.is_none() {
                     [0.; 2]

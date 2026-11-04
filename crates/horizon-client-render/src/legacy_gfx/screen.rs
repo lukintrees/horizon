@@ -11,8 +11,8 @@ use horizon_render_api::{
 use std::collections::HashMap;
 
 pub(super) struct Sprite {
-    size: [u32; 2],
-    pixels: Vec<u8>,
+    pub(super) size: [u32; 2],
+    pub(super) pixels: Vec<u8>,
 }
 struct Run {
     sprite: usize,
@@ -120,7 +120,7 @@ impl Prepared {
             .unwrap_or(0)
     }
 }
-fn pixel_rect(rect: [f32; 4], size: [u32; 2]) -> Result<[u32; 4], String> {
+pub(super) fn pixel_rect(rect: [f32; 4], size: [u32; 2]) -> Result<[u32; 4], String> {
     let mut edges = [0; 4];
     for i in 0..4 {
         let value = rect[i];
@@ -144,8 +144,8 @@ fn pixel_rect(rect: [f32; 4], size: [u32; 2]) -> Result<[u32; 4], String> {
 /// Retain any failed cleanup IDs until retry/Drop. No leaked context/ID casts.
 #[derive(Default)]
 pub(super) struct Resources {
-    meshes: Vec<MeshId>,
-    textures: Vec<TextureId>,
+    pub(super) meshes: Vec<MeshId>,
+    pub(super) textures: Vec<TextureId>,
 }
 impl Resources {
     pub fn collect<B: RenderBackend<Error = String>>(

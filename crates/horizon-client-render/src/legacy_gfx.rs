@@ -20,6 +20,7 @@ use horizon_render_api::{
 
 pub mod frame;
 mod screen;
+mod weather;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -35,6 +36,8 @@ pub struct Limits {
     pub hud_page_count: usize,
     pub screen_quads: usize,
     pub lightning_bolts: usize,
+    pub weather_quads: usize,
+    pub weather_bytes: usize,
     /// Extracted sprite bytes plus one decoded virtual-atlas page.
     pub screen_bytes: usize,
 }
@@ -53,6 +56,8 @@ impl Default for Limits {
             hud_page_count: 4096,
             screen_quads: 256,
             lightning_bolts: 64,
+            weather_quads: 4096,
+            weather_bytes: 8 << 20,
             screen_bytes: 8 << 20,
         }
     }
@@ -273,6 +278,7 @@ impl TerrainHudRenderer {
             &prepared.geometry(),
             prepared.screen,
             &prepared.additive,
+            (prepared.weather, prepared.weather_time),
         )
     }
 
@@ -282,7 +288,14 @@ impl TerrainHudRenderer {
         hud: &HudBatch,
         geometry: &Geometry<'_>,
     ) -> Result<(), String> {
-        self.render_geometry_with_effects(world, hud, geometry, &[], &[])
+        self.render_geometry_with_effects(
+            world,
+            hud,
+            geometry,
+            &[],
+            &[],
+            (&[], crate::weather::Time::new(0, 0.)),
+        )
     }
     fn render_geometry_with_effects(
         &mut self,
@@ -291,6 +304,7 @@ impl TerrainHudRenderer {
         geometry: &Geometry<'_>,
         screen_quads: &[crate::screen_effects::ScreenQuad],
         additive_vertices: &[crate::mesher::Vertex],
+        precipitation: (&[crate::weather::Vertex], crate::weather::Time),
     ) -> Result<(), String> {
         let strength = entity::Strength::new(geometry.glint.strength).map_err(diagnostic)?;
         if !geometry.glint.ticks.is_finite() {
@@ -311,6 +325,7 @@ impl TerrainHudRenderer {
             .checked_add(geometry.hand.len())
             .and_then(|n| n.checked_add(geometry.see_through.len()))
             .and_then(|n| n.checked_add(additive_vertices.len()))
+            .and_then(|n| n.checked_add(precipitation.0.len()))
             .is_none_or(|n| n > self.limits.entity_vertices)
         {
             return Err("entity/hand input budget exceeded".into());
@@ -319,12 +334,13 @@ impl TerrainHudRenderer {
         {
             return Err("invalid hand projection".into());
         }
+        let geometry_limit = self.limits.entity_vertices - precipitation.0.len();
         let mut hand = entity_bridge::prepare_with(
             geometry.hand,
             &self.lightmap,
             options,
             self.hud.layout(),
-            self.limits.entity_vertices,
+            geometry_limit,
             entity_bridge::View::World,
         )
         .map_err(diagnostic)?;
@@ -341,7 +357,7 @@ impl TerrainHudRenderer {
                 material.kind = Kind::Body;
             }
         }
-        let remaining = self.limits.entity_vertices
+        let remaining = geometry_limit
             - hand
                 .iter()
                 .map(|r| r.geometry.vertices.len())
@@ -417,6 +433,15 @@ impl TerrainHudRenderer {
             self.limits.screen_bytes,
             self.world.backend_mut().max_texture_size(),
         )?;
+        let weather = weather::Prepared::new(
+            precipitation.0,
+            precipitation.1,
+            &self.hud,
+            &self.lightmap,
+            self.limits.weather_quads,
+            self.limits.weather_bytes,
+            self.world.backend_mut().max_texture_size(),
+        )?;
         self.screen.collect(self.world.backend_mut())?;
         self.collect_hud()?;
         self.world.collect_garbage().map_err(diagnostic)?;
@@ -424,7 +449,7 @@ impl TerrainHudRenderer {
         self.collect_glint()?;
         // Screen sprites and virtual GUI pages never coexist on the GPU. Empty
         // the cache before sizing, and again between the hand and overlays.
-        if !screens.is_empty() {
+        if !screens.is_empty() || !weather.is_empty() {
             self.cache.release(self.world.backend_mut())?;
         }
         let remaining = self.world.backend_mut().remaining();
@@ -446,6 +471,19 @@ impl TerrainHudRenderer {
                     }))
         {
             return Err("no transient screen texture/mesh capacity".into());
+        }
+        if !weather.is_empty()
+            && (remaining.textures == 0
+                || remaining.meshes == 0
+                || remaining.mesh_bytes < 348
+                || remaining.texture_bytes
+                    < weather.largest_texture().max(if paged {
+                        self.hud.layout().page_bytes()
+                    } else {
+                        0
+                    }))
+        {
+            return Err("no transient weather texture/mesh capacity".into());
         }
         if runs.iter().any(|run| {
             std::mem::size_of_val(run.geometry.vertices.as_slice())
@@ -502,6 +540,11 @@ impl TerrainHudRenderer {
                 backing.load(page)
             })
             .map_err(diagnostic)?;
+        if !weather.is_empty() {
+            self.cache.release(self.world.backend_mut())?;
+            self.screen
+                .render_weather(self.world.backend_mut(), &weather, &view)?;
+        }
         self.cache
             .render_world(self.world.backend_mut(), &see_through, &view, |page| {
                 backing.load(page)
@@ -608,6 +651,296 @@ mod tests {
         IDENTITY,
         atlas::{SpriteSize, build_page, pack_atlas},
     };
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_actual_weather_animates_sprites_after_translucency_before_text_hand_screen_and_hud() {
+        use crate::{
+            mesher::Vertex,
+            screen_effects::{Blend, ScreenQuad, ScreenVertex},
+            weather::{Time, Vertex as WeatherVertex},
+        };
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 8;
+        atlas.height = 4;
+        atlas.pixels = vec![0; 128];
+        for (i, rgb) in [
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [0, 255, 255],
+            [255, 0, 255],
+            [255, 255, 0],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = ((1 + i / 3) * 8 + 1 + i % 3) * 4;
+            atlas.pixels[at..at + 4].copy_from_slice(&[rgb[0], rgb[1], rgb[2], 128]);
+        }
+        atlas.pixels[24..28].copy_from_slice(&[255; 4]);
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255, 255, 255, 128]]).unwrap();
+        let limits = Limits {
+            hud_page_size: 4,
+            weather_bytes: 88,
+            gpu: Budget {
+                texture_bytes: 1156,
+                mesh_bytes: 704,
+            },
+            ..Limits::default()
+        };
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout.clone(),
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            limits,
+        )
+        .unwrap();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.quad(
+            [[24., 24.], [40., 24.], [40., 40.], [24., 40.]],
+            [[6.5 / 8., 0.5 / 4.]; 4],
+            0xff306010,
+        );
+        let mut water = SectionMesh::default();
+        water
+            .translucent
+            .extend([[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]].map(|p| {
+                TerrainVertex::new([p[0] + 0.25, p[1] + 4.5, 1.], [0.5; 2], 0, 0xffff0000, 0)
+            }));
+        let key = [1_875_000, 6, 0];
+        let keys = [key];
+        renderer.upload_section(key, &water).unwrap();
+        let corners = [[-4., -4., 2.], [-4., 4., 2.], [4., 4., 2.], [4., -4., 2.]];
+        let rain = corners.map(|pos| WeatherVertex {
+            pos,
+            uv: [-0.75, -0.75],
+            rect: [1. / 8., 1. / 4., 3. / 8., 2. / 4.],
+            animation: [1., 0., 0., 0.],
+            bases: [0; 4],
+            color: u32::MAX,
+            light: 0,
+            snow: 0,
+        });
+        let mut snow = rain;
+        for v in &mut snow {
+            v.snow = 1;
+            v.bases = [0, 0x3fe00000, 0, 0x3fe00000];
+        }
+        let options = frame::Options {
+            gamma: 0.,
+            fullbright: true,
+        };
+        let visible = frame::VisibleSections {
+            solid: &[],
+            translucent: &keys,
+        };
+        let draw = |renderer: &mut TerrainHudRenderer,
+                    hud: &HudBatch,
+                    weather: &[WeatherVertex],
+                    time: Time,
+                    hand: &[Vertex],
+                    see: &[Vertex],
+                    screens: &[ScreenQuad]| {
+            let mut source = frame::tests::source(hud);
+            source.camera = glam::DVec3::new(30_000_000.25, 100.5, 0.);
+            source.yaw = 0.;
+            source.pitch = 0.;
+            source.fov_degrees = 90.;
+            source.distance = 512.;
+            source.sky.fog_color = [0.; 3];
+            source.weather = weather;
+            source.weather_time = time;
+            source.hand = hand;
+            source.see_through = see;
+            source.screen = screens;
+            renderer.render_game_frame(&source, visible, options)
+        };
+        let near = |renderer: &mut TerrainHudRenderer, at: [u32; 2], expected: [u8; 3]| {
+            let actual = renderer.read_rgba([at[0], at[1], 1, 1]).unwrap();
+            assert!(
+                actual[..3]
+                    .iter()
+                    .zip(expected)
+                    .all(|(&a, b)| a.abs_diff(b) <= 2),
+                "{at:?}: {actual:?} != {expected:?}"
+            );
+        };
+        draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).unwrap();
+        near(&mut renderer, [0, 16], [128, 0, 64]); // blue translucent terrain THEN half-alpha red rain
+        near(&mut renderer, [32, 32], [16, 96, 48]); // HUD follows weather
+        draw(&mut renderer, &hud, &rain, Time::new(16, 0.), &[], &[], &[]).unwrap();
+        near(&mut renderer, [0, 16], [0, 128, 192]); // rain moves to cyan row, not atlas neighbour
+        draw(&mut renderer, &hud, &snow, Time::new(0, 0.), &[], &[], &[]).unwrap();
+        near(&mut renderer, [0, 16], [128, 128, 64]); // snow bases select yellow independently of rain clock
+        let text = corners.map(|pos| Vertex {
+            pos,
+            uv: [6.5 / 8., 0.5 / 4.],
+            layer: 0,
+            color: 0xffff0000,
+            light: 0,
+            normal: [0; 4],
+            glint_uv: [0.; 2],
+        });
+        draw(
+            &mut renderer,
+            &hud,
+            &rain,
+            Time::new(0, 0.),
+            &[],
+            &text,
+            &[],
+        )
+        .unwrap();
+        near(&mut renderer, [0, 16], [0, 0, 255]); // see-through follows weather
+        let hand = text.map(|mut v| {
+            v.pos[0] *= 25.;
+            v.pos[1] *= 25.;
+            v.pos[2] = 8.;
+            v
+        });
+        draw(
+            &mut renderer,
+            &hud,
+            &rain,
+            Time::new(0, 0.),
+            &hand,
+            &[],
+            &[],
+        )
+        .unwrap();
+        near(&mut renderer, [0, 16], [0, 0, 255]); // hand follows weather too
+        let overlay = ScreenQuad {
+            vertices: [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]].map(|pos| ScreenVertex {
+                pos,
+                uv: [0.5; 2],
+                rect: [6. / 8., 0., 7. / 8., 1. / 4.],
+                color: [0., 0., 0., 0.5],
+            }),
+            blend: Blend::Alpha,
+            sampling: 0,
+            world_tint: false,
+        };
+        draw(
+            &mut renderer,
+            &hud,
+            &rain,
+            Time::new(0, 0.),
+            &hand,
+            &[],
+            &[overlay],
+        )
+        .unwrap();
+        near(&mut renderer, [0, 16], [0, 0, 127]);
+        near(&mut renderer, [32, 32], [16, 96, 48]);
+        hud.patches.push(crate::font::Patch {
+            x: 1,
+            y: 1,
+            width: 1,
+            height: 1,
+            rgba: vec![0, 255, 0, 128],
+        });
+        draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).unwrap();
+        near(&mut renderer, [0, 16], [0, 128, 64]);
+        hud.patches.clear();
+        renderer.reload_hud(&atlas).unwrap();
+        draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).unwrap();
+        near(&mut renderer, [0, 16], [128, 0, 64]);
+        let stats = renderer.world.backend_mut().stats();
+        assert_eq!(stats.texture_bytes, 1156);
+        assert_eq!(stats.mesh_bytes, 188);
+        let stable = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        renderer.limits.weather_quads = 0;
+        assert!(draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).is_err());
+        renderer.limits.weather_quads = 4096;
+        renderer.limits.entity_vertices = 3;
+        assert!(draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).is_err());
+        renderer.limits.entity_vertices = 262144;
+        renderer.limits.weather_bytes = 87;
+        assert!(draw(&mut renderer, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).is_err());
+        renderer.limits.weather_bytes = 88;
+        assert!(
+            draw(
+                &mut renderer,
+                &hud,
+                &rain,
+                Time {
+                    values: [0., 0., f32::NAN, 0.]
+                },
+                &[],
+                &[],
+                &[]
+            )
+            .is_err()
+        );
+        let mut invalid = rain;
+        invalid[0].snow = 2;
+        assert!(
+            draw(
+                &mut renderer,
+                &hud,
+                &invalid,
+                Time::new(0, 0.),
+                &[],
+                &[],
+                &[]
+            )
+            .is_err()
+        );
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        let mut small = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits {
+                gpu: Budget {
+                    mesh_bytes: 535,
+                    ..limits.gpu
+                },
+                ..limits
+            },
+        )
+        .unwrap();
+        small.upload_section(key, &water).unwrap();
+        draw(&mut small, &hud, &[], Time::new(0, 0.), &[], &[], &[]).unwrap();
+        let before = small.read_rgba([0, 0, 64, 64]).unwrap();
+        assert!(draw(&mut small, &hud, &rain, Time::new(0, 0.), &[], &[], &[]).is_err());
+        assert_eq!(small.read_rgba([0, 0, 64, 64]).unwrap(), before); // needs exactly 188 resident + 348 transient mesh bytes
+        let mut source = frame::tests::source(&hud);
+        source.weather = &rain;
+        source.pitch = 0.;
+        source.yaw = 0.;
+        source.fog = Some(crate::fog::FogData {
+            color: [0., 1., 0., 1.],
+            environmental_start: 0.,
+            environmental_end: 0.,
+            render_distance_start: 0.,
+            render_distance_end: 0.,
+            sky_end: 0.,
+            cloud_end: 0.,
+        });
+        renderer
+            .render_game_frame(&source, frame::VisibleSections::default(), options)
+            .unwrap();
+        near(&mut renderer, [0, 16], [0, 255, 0]);
+        near(&mut renderer, [32, 32], [16, 96, 48]);
+        renderer.unload_section(key).unwrap();
+        renderer.world.collect_garbage().unwrap();
+        assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 0);
+    }
     #[test]
     #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
     fn bridge_actual_lightning_and_additive_precede_translucency_and_preserve_ray_depth() {

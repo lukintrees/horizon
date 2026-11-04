@@ -6,6 +6,7 @@ uniform float glint_strength;
 uniform float gui_glint;
 uniform float screen_mode;
 uniform float additive_mode;
+uniform float weather_mode;
 varying vec2 foil_uv;
 uniform float entity_mode;
 uniform float mask_only;
@@ -31,8 +32,12 @@ float linear_fog(float distance, float start, float end) {
 void main() {
     if (mask_only > 0.5) { gl_FragColor = vec4(0.0); return; }
     vec4 color = tint;
-    if (entity_mode > 0.5 && !gl_FrontFacing) color = back_tint;
-    vec4 sample_color = texture2D(image, uv);
+    if (entity_mode > 0.5 && weather_mode < 0.5 && !gl_FrontFacing) color = back_tint;
+    // Repeat AFTER interpolation within the extracted sprite. NEAREST/CLAMP
+    // yields the same clamped integer texel as weather_texel, including NPOT.
+    vec2 image_uv = uv;
+    if (weather_mode > 0.5) image_uv = fract(uv);
+    vec4 sample_color = texture2D(image, image_uv);
     if (screen_mode > 0.5) {
         vec4 result = sample_color * tint;
         if (screen_mode > 1.5) result.a = 1.0;
