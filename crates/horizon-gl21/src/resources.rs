@@ -141,8 +141,14 @@ impl<'a> Upload<'a> {
             if (below.width, below.height) != want {
                 problems.push(format!(
                     "{:?}: level {} is {}×{} and its level above is {}×{}, so it has to be {}×{}",
-                    self.texture, below.level, below.width, below.height, above.width, above.height,
-                    want.0, want.1
+                    self.texture,
+                    below.level,
+                    below.width,
+                    below.height,
+                    above.width,
+                    above.height,
+                    want.0,
+                    want.1
                 ));
             }
         }
@@ -200,7 +206,10 @@ mod tests {
     #[test]
     fn a_whole_chain_has_no_problems() {
         let levels = [level(0, 64, 64), level(1, 32, 32), level(2, 16, 16)];
-        let upload = Upload { texture: TextureId::SpriteAtlas, levels: &levels };
+        let upload = Upload {
+            texture: TextureId::SpriteAtlas,
+            levels: &levels,
+        };
         assert_eq!(upload.problems(), Vec::<String>::new());
         assert_eq!(upload.size(), Some((64, 64)));
         // A texture's chain is a power of two's own: 64 texels have seven levels including 1×1.
@@ -212,20 +221,33 @@ mod tests {
     #[test]
     fn a_level_of_the_wrong_size_or_order_is_a_sentence() {
         let pixels = level(0, 4, 4);
-        let wrong_bytes = Level { pixels: &pixels.pixels[..4], ..pixels };
-        let short = Upload { texture: TextureId::Lightmap, levels: &[wrong_bytes] };
+        let wrong_bytes = Level {
+            pixels: &pixels.pixels[..4],
+            ..pixels
+        };
+        let short = Upload {
+            texture: TextureId::Lightmap,
+            levels: &[wrong_bytes],
+        };
         let problems = short.problems();
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains("carries 4 bytes"), "{problems:?}");
 
         // A chain that skips a level: 4×4 above a 1×1.
         let skipped = [level(0, 4, 4), level(2, 1, 1)];
-        let problems = Upload { texture: TextureId::SpriteAtlas, levels: &skipped }.problems();
+        let problems = Upload {
+            texture: TextureId::SpriteAtlas,
+            levels: &skipped,
+        }
+        .problems();
         let out_of_order = problems.iter().any(|p| p.contains("place 1"));
         assert!(out_of_order, "{problems:?}");
 
         // And one with no levels at all, which is a slot being cleared rather than a texture.
-        let empty = Upload { texture: TextureId::Glyphs, levels: &[] };
+        let empty = Upload {
+            texture: TextureId::Glyphs,
+            levels: &[],
+        };
         let problems = empty.problems();
         assert!(problems[0].contains("no levels"), "{problems:?}");
         assert_eq!(empty.size(), None);
@@ -247,12 +269,19 @@ mod tests {
         assert!(TextureId::SpriteAtlas.clamped());
         assert!(!TextureId::Glint.clamped());
         // The linear copy is the same pixels and the same unit as the atlas it blurs.
-        assert_eq!(TextureId::SpriteAtlasLinear.as_gl21(), Some(gl21::Texture::SpriteAtlas));
+        assert_eq!(
+            TextureId::SpriteAtlasLinear.as_gl21(),
+            Some(gl21::Texture::SpriteAtlas)
+        );
     }
 
     #[test]
     fn every_program_has_two_stages_and_its_own_attributes() {
-        for program in [gl21::Program::Terrain, gl21::Program::Hud, gl21::Program::Present] {
+        for program in [
+            gl21::Program::Terrain,
+            gl21::Program::Hud,
+            gl21::Program::Present,
+        ] {
             let sources = sources(program);
             assert_eq!(sources.len(), 2, "{program:?}");
             assert!(sources[0].0.ends_with(".vert"), "{program:?}");

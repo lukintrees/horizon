@@ -198,8 +198,16 @@ impl Driver {
             } else {
                 glow::REPEAT
             } as i32;
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, min_filter as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, mag_filter as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                min_filter as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                mag_filter as i32,
+            );
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, wrap);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, wrap);
             gl.bind_texture(glow::TEXTURE_2D, None);
@@ -414,8 +422,11 @@ impl gl21::Device for Driver {
         let gl = self.context.gl();
         // Safety: the HUD program is in use, and its locations are its own.
         unsafe {
-            self.hud
-                .vec4(gl, "u_hud", [hud.window[0], hud.window[1], hud.scale, hud.time]);
+            self.hud.vec4(
+                gl,
+                "u_hud",
+                [hud.window[0], hud.window[1], hud.scale, hud.time],
+            );
             // x: which way the target's y axis runs; y: unused, as `hud.vert` says.
             self.hud.vec2(gl, "u_aspect", [hud.flip, 0.0]);
         }
@@ -513,9 +524,9 @@ impl Program {
     unsafe fn compile(gl: &glow::Context, program: gl21::Program) -> Result<Program, String> {
         // Safety: as this method's own contract.
         unsafe {
-            let raw = gl
-                .create_program()
-                .map_err(|e| format!("Horizon's OpenGL 2.1 renderer could not make a program: {e}"))?;
+            let raw = gl.create_program().map_err(|e| {
+                format!("Horizon's OpenGL 2.1 renderer could not make a program: {e}")
+            })?;
             let mut shaders = Vec::with_capacity(2);
             for (file, source) in resources::sources(program) {
                 let kind = if file.ends_with(".vert") {
@@ -523,9 +534,9 @@ impl Program {
                 } else {
                     glow::FRAGMENT_SHADER
                 };
-                let shader = gl
-                    .create_shader(kind)
-                    .map_err(|e| format!("Horizon's OpenGL 2.1 renderer could not make a shader: {e}"))?;
+                let shader = gl.create_shader(kind).map_err(|e| {
+                    format!("Horizon's OpenGL 2.1 renderer could not make a shader: {e}")
+                })?;
                 gl.shader_source(shader, source);
                 gl.compile_shader(shader);
                 if !gl.get_shader_compile_status(shader) {
@@ -787,7 +798,10 @@ mod tests {
             let units = units(program);
             assert_eq!(samplers.len(), units.len(), "{program:?}");
             for (name, unit) in units {
-                assert!(samplers.contains(name), "{name} is no sampler of {program:?}");
+                assert!(
+                    samplers.contains(name),
+                    "{name} is no sampler of {program:?}"
+                );
                 assert!((0..3).contains(unit), "{name} is on unit {unit}");
             }
         }

@@ -840,9 +840,7 @@ mod tests {
             Some(&hud),
             true,
         );
-        let frame = device
-            .index_of("hud frame")
-            .expect("the hud's uniforms");
+        let frame = device.index_of("hud frame").expect("the hud's uniforms");
         let line = &device.calls[frame];
         assert!(line.contains("[640.0, 480.0]"), "{line}");
         assert!(line.contains("scale 2"), "{line}");

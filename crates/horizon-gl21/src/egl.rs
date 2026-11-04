@@ -171,8 +171,8 @@ impl Context {
         // Safety: `native` came from the caller's own window handle, of the same platform as
         // `display`, and the window outlives this context. No attributes: the surface's colour
         // buffer is the config's own.
-        let surface = unsafe { egl.create_window_surface(display, config, native, None) }
-            .map_err(|e| {
+        let surface =
+            unsafe { egl.create_window_surface(display, config, native, None) }.map_err(|e| {
                 format!(
                     "Horizon's OpenGL 2.1 renderer could not make a window surface: {e}. The \
                      driver may have no GL 2.1 config for this window."
@@ -262,7 +262,8 @@ impl Context {
         unsafe {
             self.gl
                 .bind_framebuffer(glow::FRAMEBUFFER, Some(self.frame.framebuffer));
-            self.gl.viewport(0, 0, self.size.0 as i32, self.size.1 as i32);
+            self.gl
+                .viewport(0, 0, self.size.0 as i32, self.size.1 as i32);
         }
     }
 
@@ -272,7 +273,8 @@ impl Context {
         // Safety: the context is current; there is no argument here to get wrong.
         unsafe {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-            self.gl.viewport(0, 0, self.size.0 as i32, self.size.1 as i32);
+            self.gl
+                .viewport(0, 0, self.size.0 as i32, self.size.1 as i32);
         }
     }
 
@@ -329,10 +331,26 @@ fn make_frame(gl: &glow::Context, size: (u32, u32)) -> Result<Frame, String> {
             glow::PixelUnpackData::Slice(None),
         );
         // No mip chain: the present quad samples it at 1:1, and a chain is one more upload a frame.
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_S,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_T,
+            glow::CLAMP_TO_EDGE as i32,
+        );
         gl.bind_texture(glow::TEXTURE_2D, None);
         let depth = gl.create_renderbuffer().map_err(|e| {
             format!("Horizon's OpenGL 2.1 renderer could not make the depth buffer: {e}")
@@ -366,7 +384,11 @@ fn make_frame(gl: &glow::Context, size: (u32, u32)) -> Result<Frame, String> {
                  GL_ARB_framebuffer_object cannot run this renderer."
             ));
         }
-        Ok(Frame { texture, depth, framebuffer })
+        Ok(Frame {
+            texture,
+            depth,
+            framebuffer,
+        })
     }
 }
 
