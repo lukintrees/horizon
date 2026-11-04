@@ -586,3 +586,10 @@ Markdown из code-path workflow filters добавлены следом; фин
 фиксируется ниже. Startup остаётся wgpu. Sky, glint/portal/crumbling/energy/dissolve,
 остальные gameplay passes, input/resize и Win7 toolchain/PE/CRT/ICD/runtime ещё
 не завершены — готовый playable Win7 EXE не заявляется.
+
+
+Финальный собственный run **41782569337** (code `5fa39c0`) прошёл все три jobs,
+включая GUI scratch cleanup, семь игровых GPU fixtures, полный client check и
+Windows x86 probe linking. Это последний проверенный code commit этапа. Negative
+Markdown path pattern исправляет прежние crate-wide globs: README-only push
+больше не запускает повторную полную сборку.

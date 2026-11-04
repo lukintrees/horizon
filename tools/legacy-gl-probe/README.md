@@ -180,7 +180,7 @@ Run the 24 native/API unit tests independently (the probe itself has 2 tests):
 cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
 ```
 
-For this continuation, 24 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
+For this continuation, 26 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
 modes and the Python suite (642 tests, 1 skipped) passed. Local full-game dependency resolution remains incomplete (287/488 exact packages
 from pinned GitHub mirrors). Our branch-only Actions now compile and test the real
 game bridges and run a real HudAtlas/HudBatch GL2 fixture. This is not a complete
@@ -223,3 +223,10 @@ see-through text retaining world fog, and mask/bias/layout resets inside mixed
 draw lists and across views. The game coordinator now has seven actual-game GPU
 fixtures. Latest local totals are 26 standalone Rust tests, 3x18 llvmpipe outcomes
 and 642 Python tests (1 skipped); Win7 hardware/runtime qualification is unchanged.
+
+
+Final world-layer validation: own run
+[41782569337](https://github.com/lukintrees/horizon/actions/runs/41782569337)
+passed all three jobs at `5fa39c0`, including the GUI scratch-lifetime cleanup.
+Markdown-only pushes are now actually excluded by the branch workflow's negative
+path pattern; previous crate-wide globs also matched READMEs.

@@ -302,3 +302,10 @@ terrain, hand composition and combined expansion-budget rejection without cleari
 the previous frame. Local totals: **26 standalone Rust tests**, host/i686 Clippy,
 3x18 Mesa outcomes, 642 Python tests (1 skipped). Remaining startup/sky/special
 materials/platform/Win7 qualification limits above still apply.
+
+
+Final verification of this continuation:
+[41782569337](https://github.com/lukintrees/horizon/actions/runs/41782569337)
+at `5fa39c0` passed all three jobs, including the scratch-lifetime cleanup and all
+seven actual-game GPU fixtures. The branch workflow now excludes Markdown from
+its crate-wide code globs, avoiding unnecessary builds for README-only updates.
