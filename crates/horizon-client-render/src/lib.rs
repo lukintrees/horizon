@@ -55,9 +55,9 @@ pub mod inventory_effects;
 pub mod java_text;
 pub mod jigsaw_block;
 pub use horizon_world::json_folder;
-pub mod level_loading;
 #[cfg(feature = "legacy-gl")]
 pub mod legacy_gfx;
+pub mod level_loading;
 pub mod light;
 pub mod lod;
 pub mod logging;
@@ -77,6 +77,8 @@ pub mod overlay;
 pub mod pack_browser;
 pub mod pack_screen;
 pub mod packs;
+#[cfg(feature = "legacy-gl")]
+mod paged_hud;
 pub mod par;
 pub mod particles;
 pub mod poi_sections;

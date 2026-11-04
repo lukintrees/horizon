@@ -375,6 +375,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_resident_sections");
     gui_compositor(context)?;
     checks.push("backend_gui_compositor");
+    paged_gui_compositor(context)?;
+    checks.push("backend_paged_gui");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -730,4 +732,106 @@ fn gui_compositor(context: &Context) -> Result<(), String> {
     )?;
     small.remove_texture(white)?;
     Ok(())
+}
+
+fn paged_gui_compositor(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        gui::{self, Blend, Input},
+        paged_gui::{self, Cache, Layout},
+    };
+    fn error(e: impl std::fmt::Debug) -> String {
+        format!("paged GUI: {e:?}")
+    }
+    // Three source tiles, but space for only one GPU tile plus white lightmap.
+    let mut renderer = Renderer::new(
+        context,
+        Budget {
+            texture_bytes: 4 * 4 * 4 + 4,
+            ..Budget::default()
+        },
+    )?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let layout = Layout::new([6, 2], 4, 3).map_err(error)?;
+    let row = [
+        255, 0, 0, 128, 255, 0, 0, 128, 0, 255, 0, 128, 0, 255, 0, 128, 0, 0, 255, 128, 0, 0, 255,
+        128,
+    ];
+    let mut pixels = row.repeat(2);
+    let mut cache = Cache::new(layout, 1).map_err(error)?;
+    let mut clear = frame(&[]);
+    clear.clear = Clear::ColorDepth([40. / 255., 40. / 255., 40. / 255., 1.]);
+    let p = [[2., 2.], [62., 2.], [62., 62.], [2., 62.]];
+    let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
+    let vertices = [0, 1, 2, 0, 2, 3].map(|i| Input {
+        pos: p[i],
+        uv: uv[i],
+        color: u32::MAX,
+        depth: 0.,
+    });
+    let runs =
+        gui::runs(&vertices, &[(0..6, Blend::Alpha)], [64; 2], 1., [1.; 2], 6).map_err(error)?;
+    let runs = paged_gui::split(layout, &runs, 100).map_err(error)?;
+    renderer.render(&clear)?;
+    cache
+        .render(&mut renderer, &runs, white, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    // Check every pixel across both seams: holes or duplicate translucent draws
+    // would produce 40 or ~200 rather than ~148 in the selected channel.
+    for x in 2..62 {
+        let mut expected = [20; 3];
+        expected[((x - 2) / 20) as usize] = 148;
+        pixel(&mut renderer, [x, 32], expected)?;
+    }
+    require(
+        renderer.stats().texture_bytes == 68 && renderer.stats().meshes == 0,
+        "paged GUI exceeded resident budget",
+    )?;
+    let mut layered = Vec::new();
+    for u in [0.1, 0.9] {
+        layered.extend([0, 1, 2, 0, 2, 3].map(|i| Input {
+            pos: p[i],
+            uv: [u, 0.5],
+            color: u32::MAX,
+            depth: 0.,
+        }));
+    }
+    let runs =
+        gui::runs(&layered, &[(0..12, Blend::Alpha)], [64; 2], 1., [1.; 2], 12).map_err(error)?;
+    let runs = paged_gui::split(layout, &runs, 100).map_err(error)?;
+    renderer.render(&clear)?;
+    cache
+        .render(&mut renderer, &runs, white, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [74, 10, 138])?;
+    // The last blue page is resident. Dirty it in CPU backing and make sure the
+    // next frame cannot reuse the stale GPU texture.
+    for rgba in pixels.chunks_exact_mut(4).skip(4).step_by(6) {
+        rgba.copy_from_slice(&[255, 255, 0, 255]);
+    }
+    for rgba in pixels.chunks_exact_mut(4).skip(5).step_by(6) {
+        rgba.copy_from_slice(&[255, 255, 0, 255]);
+    }
+    cache.invalidate(&[2]);
+    let last = std::slice::from_ref(runs.last().unwrap());
+    renderer.render(&clear)?;
+    cache
+        .render(&mut renderer, last, white, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [255, 255, 0])?;
+    cache.release(&mut renderer)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "paged GUI cache did not release its textures",
+    )
 }

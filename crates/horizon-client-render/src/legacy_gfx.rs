@@ -6,13 +6,14 @@ use crate::{
     gui_bridge,
     hud::{HudAtlas, HudBatch},
     mesher::SectionMesh,
+    paged_hud::Backing,
     render_bridge,
 };
 use horizon_legacy_render::{Budget, Context, Renderer};
 use horizon_render_api::{
     Image, RenderBackend, TextureId,
     atlas::AtlasLayout,
-    gui,
+    paged_gui::{self, Cache, Layout},
     scene::{SceneFrame, SectionKey, WorldScene},
 };
 
@@ -23,6 +24,10 @@ pub struct Limits {
     pub section_vertices: usize,
     pub gui_vertices: usize,
     pub glyph_patch_bytes: usize,
+    pub hud_page_size: u32,
+    pub hud_resident_pages: usize,
+    pub hud_backing_bytes: usize,
+    pub hud_page_count: usize,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -32,6 +37,10 @@ impl Default for Limits {
             section_vertices: 262144,
             gui_vertices: 262144,
             glyph_patch_bytes: 8 << 20,
+            hud_page_size: 512,
+            hud_resident_pages: 8,
+            hud_backing_bytes: 128 << 20,
+            hud_page_count: 4096,
         }
     }
 }
@@ -40,11 +49,10 @@ impl Default for Limits {
 /// contexts, lifetime transmutation or references to another field of this struct.
 pub struct TerrainHudRenderer {
     world: WorldScene<Renderer<'static>>,
-    hud: TextureId,
+    hud: Backing,
+    cache: Cache,
     white: TextureId,
-    retired_hud: Vec<TextureId>,
-    hud_size: [u32; 2],
-    hud_uv_scale: [f32; 2],
+    retired_hud: Vec<Cache>,
     limits: Limits,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
@@ -63,14 +71,14 @@ impl TerrainHudRenderer {
         let backend = Renderer::owned(context, limits.gpu)?;
         let mut world = WorldScene::new(backend, layout, terrain_pages, lightmap, limits.sections)
             .map_err(diagnostic)?;
-        let hud_size = [hud.width, hud.height];
-        let (texture, hud_uv_scale) = gui::upload_atlas(
-            world.backend_mut(),
-            hud_size,
-            &hud.pixels(),
-            limits.gpu.texture_bytes,
+        let layout = Layout::new(
+            [hud.width, hud.height],
+            limits.hud_page_size,
+            limits.hud_page_count,
         )
         .map_err(diagnostic)?;
+        let backing = Backing::new(layout, &hud.pixels(), limits.hud_backing_bytes)?;
+        let cache = Cache::new(layout, limits.hud_resident_pages).map_err(diagnostic)?;
         let white = world.backend_mut().create_texture(Image {
             width: 1,
             height: 1,
@@ -78,11 +86,10 @@ impl TerrainHudRenderer {
         })?;
         Ok(Self {
             world,
-            hud: texture,
+            hud: backing,
+            cache,
             white,
             retired_hud: Vec::new(),
-            hud_size,
-            hud_uv_scale,
             limits,
         })
     }
@@ -108,46 +115,43 @@ impl TerrainHudRenderer {
     /// not clear the previous world image. This does not silently hide entities:
     /// callers have not yet switched the full game's gfx::Frame to this subset.
     pub fn render(&mut self, world: &SceneFrame<'_>, hud: &HudBatch) -> Result<(), String> {
-        let runs = gui_bridge::runs(
-            hud,
-            self.size(),
-            self.hud_uv_scale,
-            self.limits.gui_vertices,
-        )
-        .map_err(diagnostic)?;
-        gui_bridge::upload_patches(
-            self.world.backend_mut(),
-            self.hud,
-            self.hud_size,
-            hud,
-            self.limits.glyph_patch_bytes,
-        )
-        .map_err(diagnostic)?;
+        let runs = gui_bridge::runs(hud, self.size(), [1.; 2], self.limits.gui_vertices)
+            .map_err(diagnostic)?;
+        let runs = paged_gui::split(self.hud.layout(), &runs, self.limits.gui_vertices)
+            .map_err(diagnostic)?;
+        let changed = self
+            .hud
+            .patch(&hud.patches, self.limits.glyph_patch_bytes)?;
+        self.cache.invalidate(&changed);
         self.collect_hud()?;
         self.world.render(world).map_err(diagnostic)?;
-        gui::render(self.world.backend_mut(), &runs, self.hud, self.white).map_err(diagnostic)
+        let backing = &self.hud;
+        self.cache
+            .render(self.world.backend_mut(), &runs, self.white, |page| {
+                backing.load(page)
+            })
+            .map_err(diagnostic)
     }
-    /// Stage the replacement atlas first. Allocation failure keeps the old atlas;
-    /// a successful swap retires the old texture using the backend's owned IDs.
+    /// Prepare a compressed replacement before swapping. GPU pages are uploaded
+    /// lazily; old resident pages are retired before the next streamed frame.
     pub fn reload_hud(&mut self, hud: &HudAtlas) -> Result<(), String> {
         self.collect_hud()?;
-        let size = [hud.width, hud.height];
-        let (texture, scale) = gui::upload_atlas(
-            self.world.backend_mut(),
-            size,
-            &hud.pixels(),
-            self.limits.gpu.texture_bytes,
+        let layout = Layout::new(
+            [hud.width, hud.height],
+            self.limits.hud_page_size,
+            self.limits.hud_page_count,
         )
         .map_err(diagnostic)?;
-        let previous = std::mem::replace(&mut self.hud, texture);
-        self.hud_size = size;
-        self.hud_uv_scale = scale;
-        self.retired_hud.push(previous);
+        let backing = Backing::new(layout, &hud.pixels(), self.limits.hud_backing_bytes)?;
+        let cache = Cache::new(layout, self.limits.hud_resident_pages).map_err(diagnostic)?;
+        self.retired_hud
+            .push(std::mem::replace(&mut self.cache, cache));
+        self.hud = backing;
         Ok(())
     }
     fn collect_hud(&mut self) -> Result<(), String> {
-        while let Some(&id) = self.retired_hud.last() {
-            self.world.backend_mut().remove_texture(id)?;
+        while let Some(cache) = self.retired_hud.last_mut() {
+            cache.release(self.world.backend_mut())?;
             self.retired_hud.pop();
         }
         Ok(())
@@ -161,10 +165,10 @@ impl TerrainHudRenderer {
 }
 impl Drop for TerrainHudRenderer {
     fn drop(&mut self) {
-        let _ = self.world.backend_mut().remove_texture(self.hud);
+        let _ = self.cache.release(self.world.backend_mut());
         let _ = self.world.backend_mut().remove_texture(self.white);
-        for id in self.retired_hud.drain(..) {
-            let _ = self.world.backend_mut().remove_texture(id);
+        for mut cache in self.retired_hud.drain(..) {
+            let _ = cache.release(self.world.backend_mut());
         }
         // WorldScene then deletes sections/pages/lightmap before its owned
         // backend/context are dropped, including any failed cleanup handles.
@@ -239,5 +243,105 @@ mod tests {
         assert!(renderer.unload_section([0; 3]).unwrap());
         assert_eq!(renderer.resident_sections(), 0);
         assert!(!renderer.present().unwrap()); // offscreen context, no fake window swap
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_large_hud_streams_one_gpu_page_and_patches_across_a_seam() {
+        // Wider than a conventional GL2 driver's texture limit, but only 2 rows:
+        // the fixture proves virtual addressing without a giant test allocation.
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 16385;
+        atlas.height = 2;
+        atlas.pixels.clear();
+        for _ in 0..2 {
+            for x in 0..atlas.width {
+                atlas.pixels.extend(if x < 510 {
+                    [255, 0, 0, 128]
+                } else {
+                    [0, 0, 255, 128]
+                });
+            }
+        }
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let limits = Limits {
+            gpu: Budget {
+                texture_bytes: (1 << 20) + 4096,
+                ..Budget::default()
+            },
+            hud_resident_pages: 1,
+            ..Limits::default()
+        };
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[255; 16 * 16 * 4],
+            &atlas,
+            limits,
+        )
+        .unwrap();
+        let mut batch = HudBatch::new([64; 2]);
+        let (u0, u1) = (509. / atlas.width as f32, 511. / atlas.width as f32);
+        batch.quad(
+            [[0., 0.], [64., 0.], [64., 64.], [0., 64.]],
+            [[u0, 0.25], [u1, 0.25], [u1, 0.25], [u0, 0.25]],
+            u32::MAX,
+        );
+        let frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: None,
+            solid: &[],
+            translucent: &[],
+        };
+        renderer.render(&frame, &batch).unwrap();
+        for x in 0..64 {
+            let expected = if x < 32 {
+                [128, 0, 0, 255]
+            } else {
+                [0, 0, 128, 255]
+            };
+            assert_eq!(renderer.read_rgba([x, 32, 1, 1]).unwrap(), expected);
+        }
+        assert_eq!(
+            renderer.world.backend_mut().stats().texture_bytes,
+            (1 << 20) + 1092
+        );
+        batch.patches.push(crate::font::Patch {
+            x: 509,
+            y: 0,
+            width: 2,
+            height: 1,
+            rgba: vec![0, 255, 0, 255, 255, 255, 255, 255],
+        });
+        renderer.render(&frame, &batch).unwrap();
+        assert_eq!(
+            renderer.read_rgba([16, 32, 1, 1]).unwrap(),
+            [0, 255, 0, 255]
+        );
+        assert_eq!(renderer.read_rgba([48, 32, 1, 1]).unwrap(), [255; 4]);
+        batch.patches.push(crate::font::Patch {
+            x: atlas.width,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        });
+        assert!(renderer.render(&frame, &batch).is_err());
+        assert_eq!(
+            renderer.read_rgba([16, 32, 1, 1]).unwrap(),
+            [0, 255, 0, 255]
+        );
     }
 }

@@ -86,6 +86,7 @@ jobs:
           MESA_GL_VERSION_OVERRIDE: '2.0'
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
+          cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
           cargo test --locked -p horizon-client-render --features legacy-gl --lib gui_bridge:: -- --ignored
           cargo test --locked -p horizon-client-render --features legacy-gl --lib legacy_gfx::tests:: -- --ignored
       - name: Lint the game bridges and GL2 coordinator

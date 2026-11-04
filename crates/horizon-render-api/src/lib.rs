@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 pub mod atlas;
 pub mod gui;
+pub mod paged_gui;
 pub mod scene;
 pub mod terrain;
 
