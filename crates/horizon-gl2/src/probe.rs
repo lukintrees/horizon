@@ -9,6 +9,7 @@
 
 use glow::HasContext;
 
+#[cfg(not(windows))]
 use crate::egl;
 use crate::report::{Check, Report, parse_version};
 
@@ -60,9 +61,23 @@ const LIMITS: [(&str, u32); 9] = [
 
 /// Creates the context, gathers what it reports and runs the render check.
 pub fn run() -> Result<Report, String> {
+    // Windows (Catalyst) offers OpenGL through WGL only; Linux and CI use EGL on Mesa.
+    #[cfg(windows)]
+    let context = crate::wgl::Context::new()?;
+    #[cfg(not(windows))]
     let context = egl::Context::new_surfaceless().map_err(|e| e.to_string())?;
     let gl = context.glow();
     let mut report = Report::default();
+    #[cfg(windows)]
+    report.checks.push(Check {
+        name: "context_2_1",
+        required: false,
+        ok: context.fallback.is_none(),
+        detail: context
+            .fallback
+            .clone()
+            .unwrap_or_else(|| "OpenGL 2.1 compatibility context created".to_string()),
+    });
     // SAFETY: `gl` belongs to the current context, which `context` keeps alive until the end.
     unsafe {
         gather(&gl, &mut report);

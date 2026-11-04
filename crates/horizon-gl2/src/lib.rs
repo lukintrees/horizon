@@ -8,3 +8,5 @@
 pub mod egl;
 pub mod probe;
 pub mod report;
+#[cfg(windows)]
+pub mod wgl;
