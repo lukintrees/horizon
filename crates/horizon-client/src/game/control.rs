@@ -454,10 +454,12 @@ impl Game<'_> {
                             HORIZON_RENDER_CAPTURE=1) and let the terrain settle first"
                             .into());
                     }
-                    r.capture = Some(horizon_client::gfx::capture::Request {
-                        dir: dir.trim().into(),
-                        settings,
-                    });
+                    if let Some(w) = r.wgpu_mut() {
+                        w.capture = Some(horizon_client::gfx::capture::Request {
+                            dir: dir.trim().into(),
+                            settings,
+                        });
+                    }
                     self.pending_render_capture = Some(reply.clone());
                     Ok(None)
                 }
@@ -1295,9 +1297,9 @@ impl Game<'_> {
                     wgpu::DeviceType::Other => "other",
                 },
                 "backend": format!("{:?}", r.info.backend),
-                "size": r.surface_size(),
+                "size": [r.config.width, r.config.height],
                 "present_mode": format!("{:?}", r.config.present_mode),
-                "drawn_sections": r.drawn_sections(),
+                "drawn_sections": r.drawn_sections,
                 "section_draws": r.section_draws,
                 "section_draw_calls": r.section_draw_calls,
                 "culled_sections": r.culled_sections(),

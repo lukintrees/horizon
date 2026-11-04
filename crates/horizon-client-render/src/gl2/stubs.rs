@@ -4,11 +4,19 @@
 //! signatures of `gfx::Renderer` by the same generator as `renderer.rs`; keep the two in step.
 #![allow(unused_variables)]
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use glam::DVec3;
+use winit::window::Window;
 
 use crate::Result;
 use crate::block_entity_render::{StaticCacheFrameStats, StaticSectionRevision};
+use crate::fast_hash::FxHashSet;
+use crate::gfx::compositor::Compositor;
 use crate::gfx::{HdrCalibration, block_light};
+use crate::lod::TileKey;
+use crate::mesher::SectionMesh;
 use super::renderer::Renderer;
 
 impl Renderer {
@@ -133,4 +141,26 @@ impl Renderer {
     pub fn device_lost(&self) -> bool { Default::default() }
 
     pub fn wait_in_flight(&mut self) {}
+
+    pub fn keep_capture_copies(&mut self, _on: bool) {}
+
+    pub fn keeps_capture_copies(&self) -> bool { Default::default() }
+
+    pub fn compositor(&self, _window: Arc<Window>) -> Result<Compositor> { Err("the split-screen compositor draws with the wgpu renderer only".into()) }
+
+    pub fn offscreen_frame(&self) -> Option<&wgpu::Texture> { Default::default() }
+
+    pub fn take_back(&self, _compositor: Compositor) {}
+
+    pub fn upload_lod(&mut self, _key: TileKey, _mesh: &SectionMesh, _keep: bool) {}
+
+    pub fn remove_lod(&mut self, _key: TileKey) {}
+
+    pub fn clear_lods(&mut self) {}
+
+    pub fn queue_lods(&mut self, _meshes: Vec<(TileKey, SectionMesh)>, _removed: Vec<TileKey>, _cutout: Option<FxHashSet<(i32, i32)>>) {}
+
+    pub fn upload_lods(&mut self, _budget: Duration) {}
+
+    pub fn set_lod_cutout(&mut self, _cutout: crate::fast_hash::FxHashSet<(i32, i32)>) {}
 }

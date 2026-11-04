@@ -330,7 +330,7 @@ impl Game<'_> {
             )]));
             draws.extend(charts);
             if self.debug_charts.lightmap
-                && let Some(r) = &self.renderer
+                && let Some(r) = self.renderer.as_ref().and_then(|r| r.wgpu())
             {
                 draws.extend(horizon_client::debug_chart::lightmap(
                     &r.lightmap_pixels,
@@ -405,7 +405,7 @@ impl Game<'_> {
         d.line("Filtering: None");
         d.line(format!(
             "Terrain Rendering: {}",
-            if self.renderer.as_ref().is_some_and(|r| r.multi_draw) {
+            if self.renderer.as_ref().and_then(|r| r.wgpu()).is_some_and(|r| r.multi_draw) {
                 "multidrawindirect"
             } else {
                 "naive"

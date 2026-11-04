@@ -19,6 +19,10 @@ use crate::gl2;
 use crate::graphics::GraphicsApi;
 use crate::mesher::SectionMesh;
 use crate::sprites::SpriteAnimation;
+use crate::fast_hash::FxHashSet;
+use crate::gfx::compositor::Compositor;
+use crate::lod::TileKey;
+use std::time::Duration;
 
 pub enum Renderer {
     Wgpu(Box<gfx::Renderer>),
@@ -742,6 +746,83 @@ impl Renderer {
         match self {
             Self::Wgpu(r) => r.wait_in_flight(),
             Self::Gl2(r) => r.wait_in_flight(),
+        }
+    }
+
+    pub fn keep_capture_copies(&mut self, on: bool) {
+        match self {
+            Self::Wgpu(r) => r.keep_capture_copies(on),
+            Self::Gl2(r) => r.keep_capture_copies(on),
+        }
+    }
+
+    pub fn keeps_capture_copies(&self) -> bool {
+        match self {
+            Self::Wgpu(r) => r.keeps_capture_copies(),
+            Self::Gl2(r) => r.keeps_capture_copies(),
+        }
+    }
+
+    pub fn compositor(&self, window: Arc<Window>) -> Result<Compositor> {
+        match self {
+            Self::Wgpu(r) => r.compositor(window),
+            Self::Gl2(r) => r.compositor(window),
+        }
+    }
+
+    pub fn offscreen_frame(&self) -> Option<&wgpu::Texture> {
+        match self {
+            Self::Wgpu(r) => r.offscreen_frame(),
+            Self::Gl2(r) => r.offscreen_frame(),
+        }
+    }
+
+    pub fn take_back(&self, compositor: Compositor) {
+        match self {
+            Self::Wgpu(r) => r.take_back(compositor),
+            Self::Gl2(r) => r.take_back(compositor),
+        }
+    }
+
+    pub fn upload_lod(&mut self, key: TileKey, mesh: &SectionMesh, keep: bool) {
+        match self {
+            Self::Wgpu(r) => r.upload_lod(key, mesh, keep),
+            Self::Gl2(r) => r.upload_lod(key, mesh, keep),
+        }
+    }
+
+    pub fn remove_lod(&mut self, key: TileKey) {
+        match self {
+            Self::Wgpu(r) => r.remove_lod(key),
+            Self::Gl2(r) => r.remove_lod(key),
+        }
+    }
+
+    pub fn clear_lods(&mut self) {
+        match self {
+            Self::Wgpu(r) => r.clear_lods(),
+            Self::Gl2(r) => r.clear_lods(),
+        }
+    }
+
+    pub fn queue_lods(&mut self, meshes: Vec<(TileKey, SectionMesh)>, removed: Vec<TileKey>, cutout: Option<FxHashSet<(i32, i32)>>) {
+        match self {
+            Self::Wgpu(r) => r.queue_lods(meshes, removed, cutout),
+            Self::Gl2(r) => r.queue_lods(meshes, removed, cutout),
+        }
+    }
+
+    pub fn upload_lods(&mut self, budget: Duration) {
+        match self {
+            Self::Wgpu(r) => r.upload_lods(budget),
+            Self::Gl2(r) => r.upload_lods(budget),
+        }
+    }
+
+    pub fn set_lod_cutout(&mut self, cutout: crate::fast_hash::FxHashSet<(i32, i32)>) {
+        match self {
+            Self::Wgpu(r) => r.set_lod_cutout(cutout),
+            Self::Gl2(r) => r.set_lod_cutout(cutout),
         }
     }
 }
