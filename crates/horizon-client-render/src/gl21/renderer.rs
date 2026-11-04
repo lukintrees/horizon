@@ -657,7 +657,8 @@ mod tests {
         // The present quad makes the calls four: sky, solid, see-through, present.
         assert!(line.contains("4 draw call(s)"), "{line}");
         assert!(line.contains("1 section(s) stored"), "{line}");
-        assert!(line.contains("dropped 0"), "{line}");
+        assert!(line.contains("0 dropped"), "{line}");
+        assert!(line.contains("present: true"), "{line}");
     }
 
     #[test]
