@@ -800,3 +800,13 @@ sky is no longer unsupported, and a full-fogged terrain quad cannot be expected
 to stay red. The final run updates the rejection to still-unsupported panorama
 and isolates terrain depth from fog; it includes all later End/star checks.
 The following docs-only commit changes no tested source.
+
+
+## Next: launch and parallel-PR plan
+
+The current [launch plan and feature/task matrix](../../docs/design/legacy-gl-launch-plan.md)
+separates tested Frame coverage from actual Game startup and Win7/X1650 qualification.
+It prioritizes the Game facade, resources, platform/input, streaming and playable E2E
+in parallel with the OS/build audit, rather than waiting for every optional visual pass.
+Planned PR IDs, dependencies, file ownership and acceptance gates are documented there;
+no GitHub issues/PRs are automatically created by that plan.
