@@ -25,6 +25,7 @@ jobs:
           shared-key: gl2-lint
       - name: Formatting and clippy of horizon-client-render
         run: |
+          set +e
           cargo +stable fmt --all -- --check > fmt.txt 2>&1
           fmt_exit=$?
           cargo +stable clippy -p horizon-client-render --all-targets --message-format=json -- -D warnings > clippy.json 2> clippy.err
