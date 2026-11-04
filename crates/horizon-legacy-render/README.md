@@ -11,8 +11,8 @@ its actual `TerrainVertex` / `SectionMesh`; it still uses wgpu for gameplay.
 
 - Safe `RenderBackend` interface: create/update/remove RGBA8 textures, indexed
   triangle meshes, ordered frame submission, bounded readback.
-- GL2-only ABI, GLSL110 programs, ordinary uniforms, 4 vertex attributes, 2 texture
-  units. No VAO, UBO, SSBO, instancing, arrays, compute, FBO or GL3 requirement.
+- GL2-only ABI, GLSL110 programs, ordinary uniforms, 7 vertex attributes, 3 texture
+  units (ordinary terrain/GUI vertices still use 4 attributes). No VAO, UBO, SSBO, instancing, arrays, compute, FBO or GL3 requirement.
 - Opaque/cutout/translucent/overlay passes, depth test/write control, standard
   alpha blending, pixel scissor, SDR lightmap and basic spherical fog.
 - POT nearest-filtered 2D atlas pages with extruded borders (level zero only).
@@ -43,13 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-18 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+19 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
-paged GUI streaming with linear gutters, depth continuity and one-page eviction. The runner requires all 18 outcomes; a triangle-only report cannot pass.
+paged GUI streaming with linear gutters, depth continuity and one-page eviction,
+entity material state and independently sampled animated glint. The runner requires all 19 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -59,9 +60,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 24 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 25 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 18 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 19 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -82,8 +83,9 @@ No generated data, downloads or runtime libraries are checked into the repositor
 The game's `gfx::Renderer` is still concrete and wgpu-owned. Device/queue accesses,
 settings/capability policy, creation/surface recovery and game frame construction
 are not switched to `RenderBackend`. There is no legacy gameplay executable,
-playable title/world/inventory path, full GUI glint/portal/CIT support, entities/hand,
-CPU poses, resource animation/reload integration, streaming upload scheduler,
+playable title/world/inventory path, full GUI glint/portal/CIT support, all special
+entity materials, gameplay CPU-pose/frame wiring, resource animation/reload
+integration, streaming upload scheduler,
 resize/event-loop integration, mipmapped/repeating sprite UVs, or final culling.
 Repeating/tiled UVs are rejected explicitly. Fragment-sampled lightmaps and basic
 fog are not claimed to match every vanilla lighting/fog case. Packs/mods and
@@ -229,13 +231,13 @@ lighting (including Nether and independently shaded back faces), and bilinearly
 samples the CPU lightmap per vertex. There is **no vertex texture fetch**: GL2
 can expose zero vertex texture units. Hurt/TNT/white flashes are mixed in GLSL
 **after texture/tint and before lighting**, preserving the game's operation order.
-Supported overlays: 0, 1, 5, 13, 14, 15, 16..31, 32, 35; HDR tier/OIT tags are ignored only as
-they are in classic SDR. Other flags, glint/portal/crumbling/energy/dissolve
+Supported overlays: 0, 1, 5, 7, 8, 13, 14, 15, 16..31, 32, 33, 35, 36; HDR tier/OIT tags are ignored only as
+they are in classic SDR. Glint flags require configured images (see below). Other flags and portal/crumbling/energy/dissolve
 materials are rejected, not flattened into a normal textured quad.
 
-Entity meshes have a checked 76-byte layout (base vertex, back colour, light
-colour); ordinary terrain/GUI meshes stay 44 bytes. Typed mesh/pass mismatches
-and malformed overlays are rejected before clears. Six attributes and GLSL110
+Entity meshes have a checked 84-byte layout (base vertex, back colour, light
+colour, independent glint UV); ordinary terrain/GUI meshes stay 44 bytes. Typed mesh/pass mismatches
+and malformed overlays are rejected before clears. Seven attributes and GLSL110
 varyings fit desktop GL2 minima. Back-face culling, LEQUAL depth and alpha blending
 are selected per material. Ordinary entities and translucent items write depth;
 translucent particles do not. CPU clipping interpolates the extra lighting data
@@ -309,3 +311,41 @@ Final verification of this continuation:
 at `5fa39c0` passed all three jobs, including the scratch-lifetime cleanup and all
 seven actual-game GPU fixtures. The branch workflow now excludes Markdown from
 its crate-wide code globs, avoiding unnecessary builds for README-only updates.
+
+
+## Entity, item, armour and hand glint
+
+`entity::runs_with` accepts codes 7/8/33/36 with explicit `Options::glint`.
+Code 8 retains hurt overlay; 33 retains item depth policy; 36 selects armour
+texture and transforms model UV by scale .16, rotation 10 degrees and the game's
+110000/30000-tick offsets (common period 330000). Ordinary item/entity glint
+coordinates come from the actual vertex stream; atlas paging never remaps them.
+No per-vertex `fract` is applied. The third sampler uses repeat + linear, with
+sampler state reset when that texture later becomes an ordinary atlas image.
+Nonconstant glint images may not alias atlas/lightmap samplers.
+
+Composition follows the existing `entity.wgsl` SDR contract: cutout on
+texture*tint, overlay, light, squared `(strength * foil.rgb)` contribution,
+`max(alpha, strength)`, then fog. Foil image alpha is irrelevant. Strength keeps
+the exact validated finite float in [0,1], not a quantised approximation.
+GLSL110/GL2 minima still suffice; no vertex texture fetch or GL3 features.
+
+`TerrainHudRenderer::set_glint_textures` stages both owned images before swap,
+recomputes the bounded atlas quota and preserves old assets on bad pixels,
+allocation failure or insufficient space for one page. Retired assets are
+collected before next-frame capacity validation/upload. `Geometry::glint`
+supplies strength and clock for both world and independent hand view. The full
+game resource-loading/frame adapter is **not** yet wired to this opt-in method.
+
+The new required `backend_entity_glint` outcome tests repeated/bilinear samples,
+60 independent expected samples across clipped atlas pages, armour clocks and
+image selection, squared half/zero strength, hurt/light/fog order, base cutout,
+alpha restoration in darkness, sampler alias rejection/reset and final cleanup.
+Local Rust 1.88 tests: **27**; OSMesa llvmpipe matrix: **3x19**. The added eighth
+actual-game GPU fixture also covers hand, staged reload rollback, repeated reloads
+and an exact 1164-byte texture / 516-byte transient mesh budget. Own run
+[41785733646](https://github.com/lukintrees/horizon/actions/runs/41785733646)
+at `1ba6133` passed all three jobs: eight actual-game GPU fixtures, full-client
+check/game Clippy, independent matrix and modern Windows x86 probe link. Full
+Python regression suite: **642 tests, 1 skipped**. No Win7 execution is claimed.
+GUI/CIT glint and portal/crumbling/energy/dissolve remain unsupported.

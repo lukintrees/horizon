@@ -230,3 +230,24 @@ Final world-layer validation: own run
 passed all three jobs at `5fa39c0`, including the GUI scratch-lifetime cleanup.
 Markdown-only pushes are now actually excluded by the branch workflow's negative
 path pattern; previous crate-wide globs also matched READMEs.
+
+
+### Animated entity glint continuation
+
+The current validator requires **19 backend outcomes** in each GL2.0/GL2.1/native
+llvmpipe process. `backend_entity_glint` runs the production renderer with an
+independently repeating/linear third sampler and 84-byte entity vertices. It
+compares bilinear/wrap colours and a 60-pixel UV gradient across atlas page seams,
+armour image/clock selection, half/zero strength, hurt-before-light,
+glint-after-light-before-fog, alpha restoration and pre-glint cutout. It also
+rejects sampler aliases before clear, restores normal nearest/clamp state and
+checks all transient resources are reclaimed. Original synthetic pixels only.
+
+Local results: **27 standalone Rust tests**, host Clippy and **3x19 Mesa checks**.
+The full-game coordinator adds an eighth GPU fixture for the real vertex stream,
+world/hand, asset reload/rollback and exact page-budget reclamation. Own run
+[41785733646](https://github.com/lukintrees/horizon/actions/runs/41785733646)
+at `1ba6133` passed all three jobs, including all eight actual-game GPU fixtures,
+full-client check/game Clippy and ordinary Windows x86 probe linking. Full local
+Python regression: **642 tests, 1 skipped**. Startup is
+still wgpu; GUI glint and Win7/X1650 runtime qualification are not complete.

@@ -593,3 +593,38 @@ Markdown из code-path workflow filters добавлены следом; фин
 Windows x86 probe linking. Это последний проверенный code commit этапа. Negative
 Markdown path pattern исправляет прежние crate-wide globs: README-only push
 больше не запускает повторную полную сборку.
+
+
+## 16. Glint: entity/item/armor/hand, без обхода лимитов
+
+Добавлены materials 7/8/33/36 при явно установленных item/armor images. Вершина
+actual `mesher::Vertex` передаёт независимый `glint_uv`; clipping интерполирует его
+вместе с light/back colour, не переупаковывая как atlas UV и не выполняя `fract`
+на вершинах. Новый checked stride — **84 bytes**, семь attributes, три samplers:
+GLSL110/GL2 minima достаточны. Armor использует affine scale .16, rotation 10°,
+110000/30000 tick offsets; общий период 330000, отдельная armor image.
+
+Порядок соответствует существующему `entity.wgsl`: texture*tint → alpha cutout →
+overlay → light → `(strength*foil.rgb)^2` → max(alpha,strength) → fog. Alpha foil
+не участвует; accessibility strength — точный finite f32 [0,1]. Sampler repeat +
+linear, состояние nearest/clamp восстанавливается для обычного atlas draw.
+Nonconstant glint нельзя совмещать с atlas/lightmap texture ID.
+
+Coordinator получает `Geometry::glint` и staged `set_glint_textures`: обе images
+проверяются/выделяются до swap, old assets сохраняются при ошибке/нулевой квоте
+страниц. Retired images удаляются до следующего preflight/page upload. Восьмой
+actual-game GPU fixture проверяет world/hand, оба rollback пути, повторные reloads,
+alpha и точный budget **1164 bytes textures / 516 bytes transient mesh**.
+
+Локально выполнены **27 Rust unit tests**, host Clippy и **3×19 OSMesa llvmpipe
+outcomes**. Новый outcome проверяет repeat/linear, 60 sample positions через швы
+страниц, armor clock/image, half/zero strength, hurt/light/fog, cutout/alpha,
+недопустимый alias, reset sampler state и полное освобождение ресурсов.
+Собственный [run 41785733646](https://github.com/lukintrees/horizon/actions/runs/41785733646)
+на `1ba6133` прошёл все три jobs: **восемь actual-game GPU fixtures**, full-client
+check/game Clippy, independent runtime matrix и modern Windows x86 probe link.
+Полный локальный Python regression: **642 tests, 1 skipped**.
+
+Это не готовая Win7 игра: startup/frame/resource adapter остаётся wgpu, GUI/CIT
+блеск и portal/crumbling/energy/dissolve ещё не реализованы, sky/input/resize и
+реальный Win7/x86/X1650 runtime не квалифицированы.
