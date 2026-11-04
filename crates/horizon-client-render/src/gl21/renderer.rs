@@ -637,7 +637,7 @@ mod tests {
         // And the translucent face's draw comes last of the world's: the section's solid run is
         // stored whole before the see-through one, so it is one run further on.
         let last_world = draws.last().expect("the see-through draw");
-        assert_eq!(last_world, "draw 9+3", "solid then see-through: {draws:?}");
+        assert_eq!(*last_world, "draw 9+3", "solid then see-through: {draws:?}");
     }
 
     #[test]
