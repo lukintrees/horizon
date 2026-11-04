@@ -30,11 +30,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The logs of these runs cannot be downloaded from the sandbox, so the compiler's and the tests'
+      # error lines go out as annotations. A failing test does not stop the window run: its frames
+      # are evidence too. The last step fails the job either way.
       - name: Unit tests (x64)
-        run: cargo test --release
+        id: tests
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo test --release 2>&1 | Out-File -FilePath out\test.log -Encoding utf8
+          $status = $LASTEXITCODE
+          Get-Content out\test.log | Select-String -Pattern '^error|panicked|FAILED|-->|test result' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=unit tests::$($_.Line)" }
+          exit $status
 
       - name: Build the window (x64)
-        run: cargo build --release --bin horizon-client-gl2
+        run: |
+          $ErrorActionPreference = 'Continue'
+          cargo build --release --bin horizon-client-gl2 2>&1 | Out-File -FilePath out\build.log -Encoding utf8
+          $status = $LASTEXITCODE
+          Get-Content out\build.log | Select-String -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=build::$($_.Line)" }
+          exit $status
 
       - name: Mesa llvmpipe for Windows (x64 opengl32.dll)
         working-directory: ${{ github.workspace }}
@@ -72,8 +88,14 @@ jobs:
         run: .\target\release\horizon-client-gl2.exe --frames 120 --out out\window.json
 
       - name: Every frame must pass
+        env:
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
         run: |
           $ErrorActionPreference = 'Stop'
+          if ($env:TESTS_OUTCOME -ne 'success') {
+            Write-Output "::error title=unit tests::the unit tests did not pass (see the annotations above)"
+            $testsFailed = $true
+          }
           $path = 'out/window.json'
           if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
             Write-Output "::error title=window::no report written: the window did not finish"
@@ -90,6 +112,7 @@ jobs:
             Write-Output "::error title=window::did not pass"
             exit 1
           }
+          if ($testsFailed) { exit 1 }
           Write-Output "::notice title=window::the game window presented $($r.frames) frames and passed gate G1"
 
       - name: Upload the report
