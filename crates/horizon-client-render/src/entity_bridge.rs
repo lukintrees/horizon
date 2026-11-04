@@ -1,0 +1,51 @@
+//! Actual camera-relative entity/item/particle vertices -> classic SDR GL2.
+use crate::mesher::Vertex;
+use horizon_render_api::{
+    entity::{self, Error, LitVertex},
+    gui,
+};
+pub fn runs(
+    vertices: &[Vertex],
+    lightmap: &[u8],
+    nether: bool,
+    max_vertices: usize,
+) -> Result<Vec<gui::Run<LitVertex>>, Error> {
+    entity::runs(
+        vertices.iter().map(|v| entity::Input {
+            pos: v.pos,
+            uv: v.uv,
+            layer: v.layer,
+            color: v.color,
+            light: v.light,
+            normal: v.normal,
+        }),
+        lightmap,
+        nether,
+        max_vertices,
+    )
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn real_entity_vertex_retains_coverage_culling_and_particle_material() {
+        let vertex = Vertex {
+            pos: [1., 2., 3.],
+            uv: [0.5; 2],
+            layer: 15,
+            color: 0x80402010,
+            light: 0x8040,
+            normal: crate::mesher::CULL_BACK,
+            glint_uv: [0.; 2],
+        };
+        let runs = runs(&[vertex; 4], &[255; 1024], false, 4).unwrap();
+        assert_eq!(
+            runs[0].vertices[0].base.color,
+            [16. / 255., 32. / 255., 64. / 255., 128. / 255.]
+        );
+        assert_eq!(runs[0].vertices[0].base.light_uv, [17. / 32., 9. / 32.]);
+        assert!(
+            matches!(runs[0].pass, horizon_render_api::Pass::Entity(m) if m.cull && m.particle)
+        );
+    }
+}

@@ -36,6 +36,8 @@ pub mod crash;
 pub mod datapack;
 pub mod dynamic_light;
 pub mod effects;
+#[cfg(feature = "legacy-gl")]
+pub mod entity_bridge;
 pub mod environment;
 pub mod extras;
 pub mod fast_hash;

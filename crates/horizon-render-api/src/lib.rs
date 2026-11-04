@@ -1,6 +1,7 @@
 //! Backend-neutral SDR draw contract. No wgpu, OpenGL, windowing or resource decoder.
 #![forbid(unsafe_code)]
 pub mod atlas;
+pub mod entity;
 pub mod gui;
 pub mod paged_gui;
 pub mod scene;
@@ -31,6 +32,7 @@ pub struct Image<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pass {
     Opaque,
+    Entity(entity::Material),
     Cutout,
     Translucent,
     /// Screen-space geometry uses the supplied projection, without depth testing.
@@ -104,6 +106,11 @@ pub trait RenderBackend {
     ) -> Result<(), Self::Error>;
     fn remove_texture(&mut self, id: TextureId) -> Result<(), Self::Error>;
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, Self::Error>;
+    fn create_entity_mesh(
+        &mut self,
+        vertices: &[entity::LitVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, Self::Error>;
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), Self::Error>;
     fn render(&mut self, frame: &Frame<'_>) -> Result<(), Self::Error>;
     fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, Self::Error>;
@@ -129,6 +136,13 @@ impl<B: RenderBackend + ?Sized> RenderBackend for &mut B {
     }
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, Self::Error> {
         (**self).create_mesh(vertices, indices)
+    }
+    fn create_entity_mesh(
+        &mut self,
+        vertices: &[entity::LitVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, Self::Error> {
+        (**self).create_entity_mesh(vertices, indices)
     }
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), Self::Error> {
         (**self).remove_mesh(id)

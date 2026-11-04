@@ -3,7 +3,7 @@
 //! entities/hand/sky and special pack shaders must be ported before selecting it
 //! from the normal Game startup. Unsupported GUI materials are explicit errors.
 use crate::{
-    gui_bridge,
+    entity_bridge, gui_bridge,
     hud::{HudAtlas, HudBatch},
     mesher::SectionMesh,
     paged_hud::Backing,
@@ -14,7 +14,7 @@ use horizon_render_api::{
     Image, RenderBackend, TextureId,
     atlas::AtlasLayout,
     paged_gui::{self, Cache, Layout},
-    scene::{SceneFrame, SectionKey, WorldScene},
+    scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -23,6 +23,7 @@ pub struct Limits {
     pub sections: usize,
     pub section_vertices: usize,
     pub gui_vertices: usize,
+    pub entity_vertices: usize,
     pub glyph_patch_bytes: usize,
     pub hud_page_size: u32,
     pub hud_resident_pages: usize,
@@ -36,6 +37,7 @@ impl Default for Limits {
             sections: 1024,
             section_vertices: 262144,
             gui_vertices: 262144,
+            entity_vertices: 262144,
             glyph_patch_bytes: 8 << 20,
             hud_page_size: 512,
             hud_resident_pages: 8,
@@ -43,6 +45,15 @@ impl Default for Limits {
             hud_page_count: 4096,
         }
     }
+}
+
+/// Classic CPU geometry already posed relative to the camera. Projection uses
+/// conventional desktop GL depth, not the modern renderer's reversed Z.
+pub struct Geometry<'a> {
+    pub entities: &'a [crate::mesher::Vertex],
+    pub hand: &'a [crate::mesher::Vertex],
+    pub hand_view_projection: [f32; 16],
+    pub nether_lighting: bool,
 }
 
 /// Movable, thread-confined owner: scene -> backend -> native context. No leaked
@@ -53,6 +64,7 @@ pub struct TerrainHudRenderer {
     cache: Cache,
     hud_capacity: usize,
     white: TextureId,
+    lightmap: Vec<u8>,
     retired_hud: Vec<Cache>,
     limits: Limits,
 }
@@ -96,6 +108,7 @@ impl TerrainHudRenderer {
             cache,
             hud_capacity,
             white,
+            lightmap: lightmap.to_vec(),
             retired_hud: Vec::new(),
             limits,
         })
@@ -109,7 +122,9 @@ impl TerrainHudRenderer {
         self.world.unload_section(key).map_err(diagnostic)
     }
     pub fn update_lightmap(&mut self, rgba: &[u8]) -> Result<(), String> {
-        self.world.update_lightmap(rgba).map_err(diagnostic)
+        self.world.update_lightmap(rgba).map_err(diagnostic)?;
+        self.lightmap.copy_from_slice(rgba);
+        Ok(())
     }
     pub fn resident_sections(&self) -> usize {
         self.world.section_count()
@@ -122,6 +137,83 @@ impl TerrainHudRenderer {
     /// not clear the previous world image. This does not silently hide entities:
     /// callers have not yet switched the full game's gfx::Frame to this subset.
     pub fn render(&mut self, world: &SceneFrame<'_>, hud: &HudBatch) -> Result<(), String> {
+        self.render_with_entities(world, hud, &[], false)
+    }
+    /// Classic camera-relative entity stream; special glint/portal/shadow
+    /// materials remain explicit errors. Particles follow translucent terrain.
+    pub fn render_with_entities(
+        &mut self,
+        world: &SceneFrame<'_>,
+        hud: &HudBatch,
+        entities: &[crate::mesher::Vertex],
+        nether: bool,
+    ) -> Result<(), String> {
+        self.render_geometry(
+            world,
+            hud,
+            &Geometry {
+                entities,
+                hand: &[],
+                hand_view_projection: world.view_projection,
+                nether_lighting: nether,
+            },
+        )
+    }
+    pub fn render_geometry(
+        &mut self,
+        world: &SceneFrame<'_>,
+        hud: &HudBatch,
+        geometry: &Geometry<'_>,
+    ) -> Result<(), String> {
+        if geometry
+            .entities
+            .len()
+            .checked_add(geometry.hand.len())
+            .is_none_or(|n| n > self.limits.entity_vertices)
+        {
+            return Err("entity/hand input budget exceeded".into());
+        }
+        if !geometry.hand.is_empty() && geometry.hand_view_projection.iter().any(|v| !v.is_finite())
+        {
+            return Err("invalid hand projection".into());
+        }
+        let hand = entity_bridge::runs(
+            geometry.hand,
+            &self.lightmap,
+            geometry.nether_lighting,
+            self.limits.entity_vertices,
+        )
+        .map_err(diagnostic)?;
+        let hand = paged_gui::split_entities(self.hud.layout(), &hand, self.limits.entity_vertices)
+            .map_err(diagnostic)?;
+        if hand
+            .iter()
+            .any(|r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if m.particle))
+        {
+            return Err("particle material in hand view".into());
+        }
+        let entity = entity_bridge::runs(
+            geometry.entities,
+            &self.lightmap,
+            geometry.nether_lighting,
+            self.limits.entity_vertices,
+        )
+        .map_err(diagnostic)?;
+        let entity =
+            paged_gui::split_entities(self.hud.layout(), &entity, self.limits.entity_vertices)
+                .map_err(diagnostic)?;
+        if entity
+            .iter()
+            .chain(&hand)
+            .try_fold(0usize, |n, r| n.checked_add(r.geometry.vertices.len()))
+            .is_none_or(|n| n > self.limits.entity_vertices)
+        {
+            return Err("entity/hand vertex budget exceeded".into());
+        }
+        let (body, particles): (Vec<_>, Vec<_>) = entity.into_iter().partition(
+            |r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if !m.particle),
+        );
+
         let runs = gui_bridge::runs(hud, self.size(), [1.; 2], self.limits.gui_vertices)
             .map_err(diagnostic)?;
         let runs = paged_gui::split(self.hud.layout(), &runs, self.limits.gui_vertices)
@@ -132,17 +224,68 @@ impl TerrainHudRenderer {
         self.cache.invalidate(&changed);
         self.collect_hud()?;
         self.world.collect_garbage().map_err(diagnostic)?;
+        self.cache.collect_garbage(self.world.backend_mut())?;
         let remaining = self.world.backend_mut().remaining();
         if runs.iter().any(|run| {
             std::mem::size_of_val(run.geometry.vertices.as_slice())
                 + std::mem::size_of_val(run.geometry.indices.as_slice())
                 > remaining.mesh_bytes
-        }) || (!runs.is_empty() && remaining.meshes == 0)
+        }) || body.iter().chain(&particles).chain(&hand).any(|run| {
+            std::mem::size_of_val(run.geometry.vertices.as_slice())
+                + std::mem::size_of_val(run.geometry.indices.as_slice())
+                > remaining.mesh_bytes
+        }) || ((!runs.is_empty()
+            || !body.is_empty()
+            || !particles.is_empty()
+            || !hand.is_empty())
+            && remaining.meshes == 0)
         {
             return Err("no transient mesh capacity for paged HUD".into());
         }
-        self.world.render(world).map_err(diagnostic)?;
+        self.world
+            .render_phase(world, Phase::Solid)
+            .map_err(diagnostic)?;
+        let view = paged_gui::WorldView {
+            view_projection: world.view_projection,
+            camera: world.camera,
+            fog: world.fog,
+            lightmap: self.world.lightmap(),
+        };
         let backing = &self.hud;
+        self.cache
+            .render_world(self.world.backend_mut(), &body, &view, |page| {
+                backing.load(page)
+            })
+            .map_err(diagnostic)?;
+        self.world
+            .render_phase(world, Phase::Translucent)
+            .map_err(diagnostic)?;
+        self.cache
+            .render_world(self.world.backend_mut(), &particles, &view, |page| {
+                backing.load(page)
+            })
+            .map_err(diagnostic)?;
+        if !hand.is_empty() {
+            use horizon_render_api::{Clear, Frame};
+            self.world.backend_mut().render(&Frame {
+                view_projection: geometry.hand_view_projection,
+                camera: world.camera,
+                clear: Clear::Depth,
+                fog: None,
+                draws: &[],
+            })?;
+            let hand_view = paged_gui::WorldView {
+                view_projection: geometry.hand_view_projection,
+                camera: world.camera,
+                fog: None,
+                lightmap: view.lightmap,
+            };
+            self.cache
+                .render_world(self.world.backend_mut(), &hand, &hand_view, |page| {
+                    backing.load(page)
+                })
+                .map_err(diagnostic)?;
+        }
         self.cache
             .render(self.world.backend_mut(), &runs, self.white, |page| {
                 backing.load(page)
@@ -415,5 +558,139 @@ mod tests {
             renderer.read_rgba([32, 32, 1, 1]).unwrap(),
             [64, 128, 192, 255]
         );
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_entities_terrain_particles_hand_and_hud_share_one_page_cache() {
+        use crate::mesher::Vertex;
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 6;
+        atlas.height = 2;
+        atlas.pixels = [
+            255, 0, 0, 128, 255, 0, 0, 128, 0, 255, 0, 128, 0, 255, 0, 128, 0, 0, 255, 128, 0, 0,
+            255, 128,
+        ]
+        .repeat(2);
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255, 255, 255, 128]]).unwrap();
+        let limits = Limits {
+            hud_page_size: 4,
+            gpu: Budget {
+                texture_bytes: 1156,
+                ..Budget::default()
+            },
+            ..Limits::default()
+        };
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[255; 1024],
+            &atlas,
+            limits,
+        )
+        .unwrap();
+        let positions = [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]];
+        let mut terrain = SectionMesh::default();
+        terrain
+            .translucent
+            .extend(positions.map(|p| TerrainVertex::new(p, [0.5; 2], 0, 0xffff0000, 0xf0f0)));
+        renderer.upload_section([0; 3], &terrain).unwrap();
+        let frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: None,
+            solid: &[],
+            translucent: &[[0; 3]],
+        };
+        let quad = |u, depth, layer| {
+            positions.map(|p| Vertex {
+                pos: [p[0], p[1], depth],
+                uv: [u, 0.5],
+                layer,
+                color: u32::MAX,
+                light: 0xf0f0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            })
+        };
+        let entities = [quad(0.1, 0.2, 32), quad(0.5, 0.1, 15)].concat();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.quad(
+            [[0., 0.], [8., 0.], [8., 8.], [0., 8.]],
+            [[0.9, 0.5]; 4],
+            u32::MAX,
+        );
+        renderer
+            .render_with_entities(&frame, &hud, &entities, false)
+            .unwrap();
+        let near = |actual: &[u8], expected: [u8; 3]| {
+            for i in 0..3 {
+                assert!(
+                    (i16::from(actual[i]) - i16::from(expected[i])).abs() <= 2,
+                    "{actual:?} != {expected:?}"
+                );
+            }
+        };
+        near(&renderer.read_rgba([32, 32, 1, 1]).unwrap(), [32, 128, 64]);
+        near(&renderer.read_rgba([4, 60, 1, 1]).unwrap(), [16, 64, 160]);
+        assert_eq!(renderer.world.backend_mut().stats().texture_bytes, 1156);
+        assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 188);
+        // A farther hand must draw on top using its independent projection/depth
+        // view, but the HUD still follows it. The hand's red texel is half alpha.
+        let hand = quad(0.1, 0.9, 0);
+        renderer
+            .render_geometry(
+                &frame,
+                &hud,
+                &Geometry {
+                    entities: &entities,
+                    hand: &hand,
+                    hand_view_projection: IDENTITY,
+                    nether_lighting: false,
+                },
+            )
+            .unwrap();
+        near(&renderer.read_rgba([32, 32, 1, 1]).unwrap(), [144, 64, 32]);
+        near(&renderer.read_rgba([4, 60, 1, 1]).unwrap(), [72, 32, 144]);
+        let before = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        assert!(
+            renderer
+                .render_with_entities(&frame, &hud, &quad(0.1, 0., 7), false)
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), before);
+        let mut invalid = IDENTITY;
+        invalid[0] = f32::NAN;
+        assert!(
+            renderer
+                .render_geometry(
+                    &frame,
+                    &hud,
+                    &Geometry {
+                        entities: &[],
+                        hand: &hand,
+                        hand_view_projection: invalid,
+                        nether_lighting: false
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), before);
+        renderer.update_lightmap(&[0; 1024]).unwrap();
+        renderer
+            .render_with_entities(&frame, &HudBatch::new([64; 2]), &quad(0.1, -0.5, 0), false)
+            .unwrap();
+        near(&renderer.read_rgba([32, 32, 1, 1]).unwrap(), [0; 3]);
     }
 }

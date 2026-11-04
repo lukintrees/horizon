@@ -41,6 +41,7 @@ struct Mesh {
     buffers: [u32; 2],
     count: i32,
     bytes: usize,
+    entity: bool,
 }
 struct Uniforms {
     matrix: i32,
@@ -49,6 +50,8 @@ struct Uniforms {
     fog: i32,
     fog_end: i32,
     force_opaque: i32,
+    entity: i32,
+    overlay: i32,
 }
 
 pub struct Renderer<'a> {
@@ -130,7 +133,7 @@ impl<'a> Renderer<'a> {
             (gl.get_integer)(0x8872, &mut u);
             (t, a, u)
         };
-        if max_texture < 1 || attributes < 4 || units < 2 {
+        if max_texture < 1 || attributes < 6 || units < 2 {
             return Err("insufficient GL2 texture/attribute limits".into());
         }
         let program = program(&gl)?;
@@ -144,6 +147,8 @@ impl<'a> Renderer<'a> {
                 fog: -1,
                 fog_end: -1,
                 force_opaque: -1,
+                entity: -1,
+                overlay: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -168,6 +173,8 @@ impl<'a> Renderer<'a> {
                 fog: location(c"fog")?,
                 fog_end: location(c"fog_end")?,
                 force_opaque: location(c"force_opaque")?,
+                entity: location(c"entity_mode")?,
+                overlay: location(c"overlay")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -199,12 +206,103 @@ impl<'a> Renderer<'a> {
             Err(format!("OpenGL error: {error:#x}"))
         }
     }
+    fn upload_mesh<T>(
+        &mut self,
+        vertices: &[T],
+        indices: &[u16],
+        entity: bool,
+        base: impl Fn(&T) -> &Vertex,
+    ) -> Result<MeshId, String> {
+        if self.stats.meshes >= 65536 {
+            return Err("mesh object limit exceeded".into());
+        }
+        if vertices.is_empty()
+            || vertices.len() > 65536
+            || indices.is_empty()
+            || indices.len() % 3 != 0
+            || indices.len() > i32::MAX as usize
+            || indices.iter().any(|&i| i as usize >= vertices.len())
+            || vertices.iter().any(|value| {
+                let v = base(value);
+                v.pos
+                    .iter()
+                    .chain(&v.uv)
+                    .chain(&v.light_uv)
+                    .chain(&v.color)
+                    .any(|n| !n.is_finite())
+            })
+        {
+            return Err("invalid indexed triangle mesh".into());
+        }
+        let vertex_bytes = size_of_val(vertices);
+        let index_bytes = size_of_val(indices);
+        let bytes = vertex_bytes
+            .checked_add(index_bytes)
+            .ok_or("mesh size overflow")?;
+        if vertex_bytes > isize::MAX as usize || index_bytes > isize::MAX as usize {
+            return Err("GL buffer size overflow".into());
+        }
+        charge(self.stats.mesh_bytes, bytes, self.budget.mesh_bytes)?;
+        let id = MeshId(id()?);
+        self.gl.context.make_current()?;
+        let mut buffers = [0; 2];
+        // SAFETY: repr(C) Vertex contains only floats, no padding; checked byte sizes
+        // match live arrays. GL copies client storage during BufferData.
+        unsafe {
+            (self.gl.gen_buffers)(2, buffers.as_mut_ptr());
+            (self.gl.bind_buffer)(0x8892, buffers[0]);
+            (self.gl.buffer_data)(
+                0x8892,
+                vertex_bytes as isize,
+                vertices.as_ptr().cast(),
+                0x88E4,
+            );
+            (self.gl.bind_buffer)(0x8893, buffers[1]);
+            (self.gl.buffer_data)(
+                0x8893,
+                index_bytes as isize,
+                indices.as_ptr().cast(),
+                0x88E4,
+            );
+        }
+        if let Err(error) = self.check().and_then(|_| {
+            if buffers.contains(&0) {
+                Err("GL buffer allocation failed".into())
+            } else {
+                Ok(())
+            }
+        }) {
+            // SAFETY: generated names; zero entries are ignored.
+            unsafe { (self.gl.delete_buffers)(2, buffers.as_ptr()) };
+            return Err(error);
+        }
+        self.meshes.insert(
+            id,
+            Mesh {
+                buffers,
+                count: indices.len() as i32,
+                bytes,
+                entity,
+            },
+        );
+        self.stats.mesh_bytes += bytes;
+        self.stats.meshes += 1;
+        Ok(id)
+    }
     fn validate_draw(&self, draw: &Draw, frame: &Frame<'_>) -> Result<[f32; 3], String> {
         if !self.meshes.contains_key(&draw.mesh)
             || !self.textures.contains_key(&draw.texture)
             || !self.textures.contains_key(&draw.lightmap)
         {
             return Err("unknown, foreign or released mesh/texture ID".into());
+        }
+        if self.meshes[&draw.mesh].entity != matches!(draw.pass, Pass::Entity(_)) {
+            return Err("entity mesh/pass mismatch".into());
+        }
+        if let Pass::Entity(material) = draw.pass {
+            if material.overlay_color().is_none() {
+                return Err("invalid entity overlay".into());
+            }
         }
         // GL2 texture sampling state belongs to the texture, not to a sampler
         // object. One nonconstant texture cannot be both linear atlas and nearest
@@ -332,79 +430,22 @@ impl RenderBackend for Renderer<'_> {
         self.check()
     }
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, String> {
-        if self.stats.meshes >= 65536 {
-            return Err("mesh object limit exceeded".into());
-        }
-        if vertices.is_empty()
-            || vertices.len() > 65536
-            || indices.is_empty()
-            || indices.len() % 3 != 0
-            || indices.len() > i32::MAX as usize
-            || indices.iter().any(|&i| i as usize >= vertices.len())
-            || vertices.iter().any(|v| {
-                v.pos
-                    .iter()
-                    .chain(&v.uv)
-                    .chain(&v.light_uv)
-                    .chain(&v.color)
-                    .any(|n| !n.is_finite())
-            })
-        {
-            return Err("invalid indexed triangle mesh".into());
-        }
-        let vertex_bytes = size_of_val(vertices);
-        let index_bytes = size_of_val(indices);
-        let bytes = vertex_bytes
-            .checked_add(index_bytes)
-            .ok_or("mesh size overflow")?;
-        if vertex_bytes > isize::MAX as usize || index_bytes > isize::MAX as usize {
-            return Err("GL buffer size overflow".into());
-        }
-        charge(self.stats.mesh_bytes, bytes, self.budget.mesh_bytes)?;
-        let id = MeshId(id()?);
-        self.gl.context.make_current()?;
-        let mut buffers = [0; 2];
-        // SAFETY: repr(C) Vertex contains only floats, no padding; checked byte sizes
-        // match live arrays. GL copies client storage during BufferData.
-        unsafe {
-            (self.gl.gen_buffers)(2, buffers.as_mut_ptr());
-            (self.gl.bind_buffer)(0x8892, buffers[0]);
-            (self.gl.buffer_data)(
-                0x8892,
-                vertex_bytes as isize,
-                vertices.as_ptr().cast(),
-                0x88E4,
-            );
-            (self.gl.bind_buffer)(0x8893, buffers[1]);
-            (self.gl.buffer_data)(
-                0x8893,
-                index_bytes as isize,
-                indices.as_ptr().cast(),
-                0x88E4,
-            );
-        }
-        if let Err(error) = self.check().and_then(|_| {
-            if buffers.contains(&0) {
-                Err("GL buffer allocation failed".into())
-            } else {
-                Ok(())
-            }
+        self.upload_mesh(vertices, indices, false, |v| v)
+    }
+    fn create_entity_mesh(
+        &mut self,
+        vertices: &[horizon_render_api::entity::LitVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, String> {
+        if vertices.iter().any(|v| {
+            v.back_color
+                .iter()
+                .chain(&v.light_color)
+                .any(|f| !f.is_finite())
         }) {
-            // SAFETY: generated names; zero entries are ignored.
-            unsafe { (self.gl.delete_buffers)(2, buffers.as_ptr()) };
-            return Err(error);
+            return Err("invalid entity lighting".into());
         }
-        self.meshes.insert(
-            id,
-            Mesh {
-                buffers,
-                count: indices.len() as i32,
-                bytes,
-            },
-        );
-        self.stats.mesh_bytes += bytes;
-        self.stats.meshes += 1;
-        Ok(id)
+        self.upload_mesh(vertices, indices, true, |v| &v.base)
     }
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), String> {
         self.gl.context.make_current()?;
@@ -465,11 +506,34 @@ impl RenderBackend for Renderer<'_> {
                 (self.gl.uniform4f)(self.uniforms.fog, color[0], color[1], color[2], start);
                 (self.gl.uniform1f)(self.uniforms.fog_end, end);
                 let cutoff = match draw.pass {
-                    Pass::Cutout => 0.1,
+                    Pass::Cutout | Pass::Entity(_) => 0.1,
                     Pass::Overlay | Pass::OverlayAdditive | Pass::OverlayDepth => 0.004,
                     _ => 0.,
                 };
                 (self.gl.uniform1f)(self.uniforms.cutoff, cutoff);
+                let entity = match draw.pass {
+                    Pass::Entity(m) => Some(m),
+                    _ => None,
+                };
+                (self.gl.uniform1f)(self.uniforms.entity, if entity.is_some() { 1. } else { 0. });
+                let overlay = entity
+                    .and_then(|m| m.overlay_color())
+                    .unwrap_or([0., 0., 0., 1.]);
+                (self.gl.uniform4f)(
+                    self.uniforms.overlay,
+                    overlay[0],
+                    overlay[1],
+                    overlay[2],
+                    overlay[3],
+                );
+                (self.gl.front_face)(0x0901);
+                if entity.is_some_and(|m| m.cull) {
+                    (self.gl.enable)(0x0B44);
+                    (self.gl.cull_face)(0x0405);
+                } else {
+                    (self.gl.disable)(0x0B44);
+                }
+
                 (self.gl.uniform1f)(
                     self.uniforms.force_opaque,
                     if draw.pass == Pass::OverlayVignette {
@@ -483,19 +547,24 @@ impl RenderBackend for Renderer<'_> {
                 } else {
                     (self.gl.enable)(0x0B71);
                 }
-                (self.gl.depth_func)(if draw.pass == Pass::OverlayDepth {
-                    0x0203
-                } else {
-                    0x0201
-                });
+                (self.gl.depth_func)(
+                    if draw.pass == Pass::OverlayDepth || matches!(draw.pass, Pass::Entity(_)) {
+                        0x0203
+                    } else {
+                        0x0201
+                    },
+                );
                 let depth_write =
-                    matches!(draw.pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth);
+                    matches!(draw.pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
+                        || matches!(draw.pass, Pass::Entity(m) if !m.particle);
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match draw.pass {
                     Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),
                     Pass::OverlayAdditive => Some((1, 1, 1, 1)),
                     Pass::OverlayVignette => Some((0, 0x0301, 0, 1)),
-                    Pass::Overlay | Pass::OverlayDepth => Some((0x0302, 0x0303, 1, 0x0303)),
+                    Pass::Overlay | Pass::OverlayDepth | Pass::Entity(_) => {
+                        Some((0x0302, 0x0303, 1, 0x0303))
+                    }
                     Pass::Translucent => Some((0x0302, 0x0303, 0x0302, 0x0303)),
                     _ => None,
                 };
@@ -532,10 +601,25 @@ impl RenderBackend for Renderer<'_> {
                         count,
                         0x1406,
                         0,
-                        44,
+                        if mesh.entity { 76 } else { 44 },
                         offset as *const c_void,
                     );
                     (self.gl.enable_attribute)(index);
+                }
+                for (index, offset) in [(4, 44), (5, 60)] {
+                    if mesh.entity {
+                        (self.gl.attribute_pointer)(
+                            index,
+                            4,
+                            0x1406,
+                            0,
+                            76,
+                            offset as *const c_void,
+                        );
+                        (self.gl.enable_attribute)(index);
+                    } else {
+                        (self.gl.disable_attribute)(index);
+                    }
                 }
                 (self.gl.draw_elements)(0x0004, mesh.count, 0x1403, ptr::null());
             }
@@ -618,9 +702,16 @@ fn program(gl: &Gl<'_>) -> Result<u32, String> {
         for &shader in &shaders {
             (gl.attach_shader)(program, shader);
         }
-        for (index, name) in [c"position", c"texcoord", c"lightcoord", c"color"]
-            .iter()
-            .enumerate()
+        for (index, name) in [
+            c"position",
+            c"texcoord",
+            c"lightcoord",
+            c"color",
+            c"back_color",
+            c"light_color",
+        ]
+        .iter()
+        .enumerate()
         {
             (gl.bind_attribute)(program, index as u32, name.as_ptr());
         }

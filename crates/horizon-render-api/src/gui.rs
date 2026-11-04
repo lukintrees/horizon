@@ -28,11 +28,11 @@ pub enum GuiError {
     VertexBudget,
     InvalidAtlas,
 }
-pub struct Run {
+pub struct Run<V = Vertex> {
     pub pass: Pass,
     pub scissor: Option<[u32; 4]>,
     pub clear_depth: bool,
-    pub vertices: Vec<Vertex>,
+    pub vertices: Vec<V>,
     pub indices: Vec<u16>,
 }
 

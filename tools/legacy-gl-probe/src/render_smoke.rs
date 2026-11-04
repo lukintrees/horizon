@@ -377,6 +377,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_gui_compositor");
     paged_gui_compositor(context)?;
     checks.push("backend_paged_gui");
+    paged_entities(context)?;
+    checks.push("backend_paged_entities");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -906,5 +908,188 @@ fn paged_gui_compositor(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "paged GUI cache did not release its textures",
+    )
+}
+
+fn paged_entities(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        entity::{self, Input},
+        paged_gui::{self, Cache, Layout, WorldView},
+    };
+    fn error(e: impl std::fmt::Debug) -> String {
+        format!("paged entities: {e:?}")
+    }
+    let mut renderer = Renderer::new(
+        context,
+        Budget {
+            texture_bytes: 68,
+            ..Budget::default()
+        },
+    )?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let layout = Layout::new([6, 2], 4, 3).map_err(error)?;
+    let mut cache = Cache::new(layout, 1).map_err(error)?;
+    let row = [
+        255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255,
+        255,
+    ];
+    let mut pixels = row.repeat(2);
+    let p = [
+        [-0.9, -0.9, 0.],
+        [0.9, -0.9, 0.],
+        [0.9, 0.9, 0.],
+        [-0.9, 0.9, 0.],
+    ];
+    let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
+    let quad = std::array::from_fn::<_, 4, _>(|i| Input {
+        pos: p[i],
+        uv: uv[i],
+        layer: 0,
+        color: u32::MAX,
+        light: 0xf0f0,
+        normal: [0, 127, 0, -127],
+    });
+    let mut view = WorldView {
+        view_projection: IDENTITY,
+        camera: [30_000_000.; 3],
+        fog: None,
+        lightmap: white,
+    };
+    let clear = frame(&[]);
+    let make = |input: &[Input], light: &[u8]| -> Result<_, String> {
+        let runs = entity::runs(input.iter().copied(), light, false, 100).map_err(error)?;
+        paged_gui::split_entities(layout, &runs, 300).map_err(error)
+    };
+    let runs = make(&quad, &[255; 1024])?;
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    for (x, expected) in [(10, [255, 0, 0]), (32, [0, 255, 0]), (54, [0, 0, 255])] {
+        pixel(&mut renderer, [x, 32], expected)?;
+    }
+    let mut back = quad;
+    back.reverse();
+    let runs = make(&back, &[255; 1024])?;
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 102, 0])?;
+    for v in &mut back {
+        v.normal[3] = -126;
+    }
+    let runs = make(&back, &[255; 1024])?;
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 0, 0])?;
+    pixels = [64, 128, 192, 255].repeat(12);
+    cache.invalidate(&[0, 1, 2]);
+    let hurt = quad.map(|v| Input {
+        layer: 1,
+        normal: [0; 4],
+        ..v
+    });
+    let light = [128, 255, 64, 255].repeat(256);
+    let runs = make(&hurt, &light)?;
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [61, 89, 34])?;
+    // A constant-X world plane remains visible after rotating the camera. Its
+    // XY area is zero, but its 3D triangles must not be discarded by UV clipping.
+    pixels = row.repeat(2);
+    cache.invalidate(&[0, 1, 2]);
+    let wall = std::array::from_fn::<_, 4, _>(|i| Input {
+        pos: [0., p[i][1], p[i][0]],
+        normal: [0; 4],
+        ..quad[i]
+    });
+    view.view_projection = [
+        0., 0., -1., 0., 0., 1., 0., 0., 1., 0., 0., 0., 0., 0., 0., 1.,
+    ];
+    let runs = make(&wall, &[255; 1024])?;
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 255, 0])?;
+    view.view_projection = IDENTITY;
+    // Lightmap samples are interpolated per vertex, not nearest-sampled per
+    // fragment. The same gradient must survive all three clipped texture pages.
+    pixels = [255; 4].repeat(12);
+    cache.invalidate(&[0, 1, 2]);
+    let mut light = vec![0; 1024];
+    for c in light.chunks_exact_mut(4) {
+        c[3] = 255;
+    }
+    light[1020..].fill(255);
+    let gradient = std::array::from_fn::<_, 4, _>(|i| Input {
+        normal: [0; 4],
+        light: if i < 2 { 0 } else { 0xf0f0 },
+        ..quad[i]
+    });
+    let runs = make(&gradient, &light)?;
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |page| {
+            layout.pixels(page, &pixels)
+        })
+        .map_err(error)?;
+    for x in [10, 32, 54] {
+        pixel(&mut renderer, [x, 32], [130; 3])?;
+    }
+    // Ordinary/translucent items write depth; translucent particles do not.
+    pixels = row.repeat(2);
+    for rgba in pixels.chunks_exact_mut(4) {
+        rgba[3] = 128;
+    }
+    cache.invalidate(&[0, 1, 2]);
+    for (layer, expected) in [(32, [128, 0, 0]), (15, [64, 0, 128])] {
+        let mut pair = Vec::new();
+        for (u, z) in [(0.1, -0.3), (0.9, 0.3)] {
+            pair.extend(quad.map(|v| Input {
+                pos: [v.pos[0], v.pos[1], z],
+                uv: [u, 0.5],
+                normal: [0; 4],
+                layer,
+                ..v
+            }));
+        }
+        let runs = make(&pair, &[255; 1024])?;
+        renderer.render(&clear)?;
+        cache
+            .render_world(&mut renderer, &runs, &view, |page| {
+                layout.pixels(page, &pixels)
+            })
+            .map_err(error)?;
+        pixel(&mut renderer, [32, 32], expected)?;
+    }
+    require(
+        renderer.stats().mesh_bytes == 0 && renderer.stats().texture_bytes == 68,
+        "entity stream exceeded capacity or retained transient meshes",
+    )?;
+    cache.release(&mut renderer)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "entity stream cleanup leaked resources",
     )
 }

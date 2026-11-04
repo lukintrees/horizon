@@ -7,6 +7,11 @@ use crate::{
 use std::collections::HashMap;
 
 pub type SectionKey = [i32; 3];
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Solid,
+    Translucent,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SceneError<E> {
@@ -211,7 +216,24 @@ impl<B: RenderBackend> WorldScene<B> {
             .map_err(SceneError::Backend)
     }
 
+    pub fn lightmap(&self) -> TextureId {
+        self.lightmap.unwrap()
+    }
+    pub fn render_phase(
+        &mut self,
+        frame: &SceneFrame<'_>,
+        phase: Phase,
+    ) -> Result<(), SceneError<B::Error>> {
+        self.render_selected(frame, Some(phase))
+    }
     pub fn render(&mut self, frame: &SceneFrame<'_>) -> Result<(), SceneError<B::Error>> {
+        self.render_selected(frame, None)
+    }
+    fn render_selected(
+        &mut self,
+        frame: &SceneFrame<'_>,
+        phase: Option<Phase>,
+    ) -> Result<(), SceneError<B::Error>> {
         self.collect_garbage()?;
         let mut draws = Vec::new();
         for (keys, translucent) in [(frame.solid, false), (frame.translucent, true)] {
@@ -220,6 +242,9 @@ impl<B: RenderBackend> WorldScene<B> {
                     .sections
                     .get(key)
                     .ok_or(SceneError::MissingSection(*key))?;
+                if phase.is_some_and(|p| (p == Phase::Translucent) != translucent) {
+                    continue;
+                }
                 let runs = if translucent {
                     &section.translucent
                 } else {
@@ -241,7 +266,11 @@ impl<B: RenderBackend> WorldScene<B> {
             .render(&Frame {
                 view_projection: frame.view_projection,
                 camera: frame.camera,
-                clear: crate::Clear::ColorDepth(frame.clear),
+                clear: if phase == Some(Phase::Translucent) {
+                    crate::Clear::Load
+                } else {
+                    crate::Clear::ColorDepth(frame.clear)
+                },
                 fog: frame.fog,
                 draws: &draws,
             })
