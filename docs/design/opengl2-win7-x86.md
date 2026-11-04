@@ -478,3 +478,10 @@ streamed frame. CPU GUI conversion и проверка transient mesh capacity �
 hand, sky, специальные pack shaders, input/resize и dedicated Win7 toolchain /
 PE/import/CRT/ICD/runtime qualification остаются незавершёнными. Готового
 playable Win7 EXE этот этап не предоставляет.
+
+После ограничения glyph patch work прошёл также собственный run **41777293951**
+(code `0aa4a05`, все три jobs). Новые CPU tests перебирают все 90 rectangles
+источника 5×3 и сравнивают patched pages с полным rebuild; повторные tiny edge
+writes сверх work budget отклоняются без изменения backing. Полный client check,
+game Clippy, пять actual-game GL2 fixtures, independent matrix и Windows x86
+probe linking повторно прошли. Это последний проверенный code commit этапа.

@@ -210,3 +210,11 @@ pixel readbacks check both sides of a glyph-patched seam. An exhausted transient
 mesh budget fails before erasing the previous frame. Independent readbacks also
 check alpha order, linear seam continuity, depth across evictions, dirty reload
 and complete resource release. No Win7/X1650 gameplay or FPS result is inferred.
+
+Final patch-work verification:
+[41777293951](https://github.com/lukintrees/horizon/actions/runs/41777293951)
+passed all three jobs at `0aa4a05`. The CPU backing suite additionally compares
+all 90 rectangles of a 5x3 source against complete page rebuilds and checks atomic
+rejection of repeated tiny edge writes exceeding the work budget. Full-client
+check, game Clippy, all five actual-game GL2 fixtures, independent runtime matrix
+and ordinary Windows x86 probe linking passed again.
