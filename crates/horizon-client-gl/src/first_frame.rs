@@ -209,9 +209,13 @@ mod tests {
         assert_eq!(f32::from_le_bytes(read(2, 28, 4).try_into().unwrap()), 0.0);
     }
 
-    /// The winding test: two triangles, and the cross product of the first one points up. A
-    /// counter-clockwise quad in XZ seen from +Y has a normal with a positive Y, which is what
-    /// `Cull::Back` needs; the other winding makes the ground invisible from above.
+    /// The winding test: two triangles, and the cross product of each one points up.
+    ///
+    /// In this right-handed frame (X right, Y up, Z toward the viewer) the Y of `ab x ac` is
+    /// `ab.z*ac.x - ab.x*ac.z`, and for the quad's corners it is **+1**: the face points at +Y,
+    /// counter-clockwise seen from above, which is the winding `Cull::Back` keeps. The assertion
+    /// here said `< 0.0` -- "faces down" -- so it could only ever pass for a quad the cull would
+    /// throw away. It is the one thing this test exists to catch, and CI caught the test.
     #[test]
     fn the_quad_winds_counter_clockwise_seen_from_above() {
         let corners = quad_vertices();
@@ -223,7 +227,10 @@ mod tests {
         let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
         // The Y component of ab x ac.
         let normal_y = ab[2] * ac[0] - ab[0] * ac[2];
-        assert!(normal_y < 0.0, "normal_y {normal_y}: the face points down");
+        assert!(
+            normal_y > 0.0,
+            "normal_y {normal_y}: the face points up, which is what Cull::Back keeps"
+        );
         // The second triangle has the same winding, or half the quad disappears.
         let triangle = [0usize, 2, 3];
         let a = corners[triangle[0]].pos;
@@ -232,7 +239,10 @@ mod tests {
         let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
         let normal_y = ab[2] * ac[0] - ab[0] * ac[2];
-        assert!(normal_y < 0.0, "the second triangle winds the other way");
+        assert!(
+            normal_y > 0.0,
+            "normal_y {normal_y}: the second triangle winds the other way"
+        );
     }
 
     #[test]

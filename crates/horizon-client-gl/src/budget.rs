@@ -197,7 +197,7 @@ impl Measured {
 
 /// Reads the declarations out of one stage's GLSL 1.20 source.
 pub fn measure(source: &str, stage: Stage) -> Measured {
-    let code = strip_comments(source);
+    let code = strip_directives(&strip_comments(source));
     let mut out = Measured::default();
 
     for statement in code.split(';') {
@@ -334,6 +334,28 @@ fn parse_name_and_size(part: &str) -> (String, u32, bool) {
 }
 
 /// Removes `//` and `/* */` comments while keeping line numbers.
+/// Drops preprocessor lines, whole.
+///
+/// The statements are split on `;`, so a line like `#define HORIZON_STAGE_FRAGMENT 1` lands in
+/// the same chunk as the declaration after it -- and [`statement_kind`] then sees `#define` as
+/// the chunk's first word and skips a real `uniform vec4 tint;`. The composition this crate does
+/// before compiling puts a `#version` and two `#define`s in front of every shader body, so that
+/// was the *first* declaration of every shader, and the budget under-counted it in silence.
+fn strip_directives(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        if line.trim_start().starts_with('#') {
+            // Keep the newline, so a chunk never runs two declarations together.
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 fn strip_comments(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
@@ -592,6 +614,22 @@ mod tests {
         let m = measure("uniform vec4 lights[MAX_LIGHTS];", Stage::Fragment);
         assert_eq!(m.unknown_array_sizes, vec!["lights[MAX_LIGHTS]"]);
         assert!(check(&m, Stage::Fragment, &Limits::X1650).is_err());
+    }
+
+    #[test]
+    fn a_directive_before_a_declaration_does_not_hide_it() {
+        // What the renderer compiles: directives, then the body. Before `strip_directives` the
+        // statement split on `;` made `#define ... uniform vec4 tint` one chunk whose first
+        // word was `#define`, so the tint was not counted at all.
+        let src = "#version 120\n#define HORIZON_STAGE_FRAGMENT 1\n\
+                   uniform vec4 tint;\nuniform sampler2D atlas;\nvoid main() { }\n";
+        let m = measure(src, Stage::Fragment);
+        let names: Vec<&str> = m.uniforms.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(names, vec!["tint", "atlas"]);
+        // And a directive *between* two declarations does not glue them together either.
+        let src = "uniform vec4 a;\n#define X 1\nuniform vec4 b;\n";
+        let m = measure(src, Stage::Fragment);
+        assert_eq!(m.uniforms.len(), 2);
     }
 
     #[test]

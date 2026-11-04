@@ -253,7 +253,10 @@ jobs:
         if: steps.launcher.outputs.required != 'false'
         working-directory: launcher
         run: |
-          cargo +stable fmt --check
+          # Same reason as the `verify` job's formatting step: a failing step's log is a blob
+          # URL, and `fmt --check` prints a diff, so a red job said only "exit code 101".
+          set -eo pipefail
+          cargo +stable fmt --check 2>&1 | sed 's/^/::error::/'
           cargo +stable clippy --all-targets --locked -- -D warnings
           cargo +stable test --locked --lib
   # Most pull requests leave the harnesses to parity-main, which runs them on main a batch of merges at a time

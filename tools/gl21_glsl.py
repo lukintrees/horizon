@@ -108,6 +108,18 @@ def strip_comments(text):
     return "".join(out)
 
 
+def strip_directives(text):
+    """Drops `#...` lines, keeping the newlines so line numbers stay put.
+
+    The statements are split on `;`, so `#define X 1` lands in the same chunk as whatever
+    declaration follows it and hides it: the Rust half of this budget pass had that bug (a
+    composed shader begins with `#version` and two `#define`s, so the *first* declaration of
+    every shader went uncounted) and this half would have it too.
+    """
+    return "".join("\n" if line.lstrip().startswith("#") else line
+                   for line in text.splitlines(keepends=True))
+
+
 def split_declaration(statement):
     """`uniform vec2 a, b[4]` -> (kind, type, [(name, count)])."""
     # Qualifiers the parser steps over: `flat varying vec4` fails on the target anyway (the
@@ -136,7 +148,7 @@ def measure(path, text):
     """Everything measured and checked about one file."""
     rel = path.relative_to(SHADER_DIR).as_posix() if path.is_relative_to(SHADER_DIR) else path.name
     stage = "vertex" if rel.endswith(".vert") else "fragment"
-    body = strip_comments(text)
+    body = strip_directives(strip_comments(text))
     code = body.split(";")
     findings = []
     decls = {"uniform": [], "varying": [], "attribute": []}

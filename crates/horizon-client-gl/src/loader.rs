@@ -304,9 +304,24 @@ mod tests {
     fn an_unknown_symbol_is_null_and_says_so_rather_than_panicking() {
         // On a machine with a library this asks the driver about a name no driver has; on a
         // machine without one the open fails and there is nothing to ask.
+        //
+        // "A name no driver has" is not true of `glXGetProcAddressARB`: the spec lets it return
+        // a non-null stub for *any* name, and Mesa's does. So the assertion that matters is the
+        // one that holds either way -- the answer is a pointer, null or not, and asking twice
+        // gives the same one -- and the null case is reported, not required.
         if let Ok(lib) = GlLibrary::open() {
-            assert!(!lib.has("glDefinitelyNotAFunction_Horizon"));
-            assert!(lib.symbol("glDefinitelyNotAFunction_Horizon").is_null());
+            let bogus = "glDefinitelyNotAFunction_Horizon";
+            let first = lib.symbol(bogus);
+            let second = lib.symbol(bogus);
+            assert_eq!(first, second, "the answer must be the same twice");
+            assert_eq!(lib.has(bogus), !first.is_null(), "has() is symbol() != null");
+            if !first.is_null() {
+                eprintln!(
+                    "{}: glXGetProcAddress answered for `{bogus}` with {first:?}, which the \
+                     spec allows and Mesa does; nothing calls it.",
+                    lib.name()
+                );
+            }
         }
     }
 }

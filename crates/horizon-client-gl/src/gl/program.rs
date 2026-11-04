@@ -360,7 +360,10 @@ mod tests {
 
     #[test]
     fn the_composed_source_still_measures_within_budget() {
-        // The defines must not look like declarations to the budget pass.
+        // The defines must not look like declarations to the budget pass: the composition adds
+        // a `#version` and two `#define`s and no uniform, so the body's one is the only one.
+        // This assertion was right and `budget::measure` was wrong -- it lost the first
+        // declaration after a directive (see `budget::tests::a_directive_before_a_declaration...`).
         let body = "uniform vec4 tint;\nvoid main() { }\n";
         let composed = compose_source(body, Stage::Fragment, true);
         let measured = budget::measure(&composed, Stage::Fragment);

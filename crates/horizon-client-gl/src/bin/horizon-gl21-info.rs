@@ -25,13 +25,11 @@ use horizon_client_gl::multi_draw::MultiDrawPointers;
 /// Every pair goes through [`budget`] here and through `tools/gl21_glsl.py` in CI. Two
 /// independent measurements of the same files is one more than the job needs, and it is the
 /// arrangement that caught 19 components of dead uniforms in the first drafts.
-const SHADERS: &[(&str, &str, &str)] = &[
-    (
-        "terrain",
-        include_str!("../shaders/terrain/terrain.vert"),
-        include_str!("../shaders/terrain/terrain.frag"),
-    ),
-];
+const SHADERS: &[(&str, &str, &str)] = &[(
+    "terrain",
+    include_str!("../shaders/terrain/terrain.vert"),
+    include_str!("../shaders/terrain/terrain.frag"),
+)];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
