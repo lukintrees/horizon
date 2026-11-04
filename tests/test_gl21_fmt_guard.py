@@ -16,15 +16,35 @@ def found(text):
 
 class ChainTests(unittest.TestCase):
     def test_a_chain_past_sixty_columns_is_one_method_a_line(self):
-        # The line CI turned into five: 69 columns from `.iter()` to the end.
+        # The line CI turned into five: a chain of 77 columns inside an `assert!`.
         line = (
-            '        let width = problems.iter().any(|p| p.contains("a_uv") '
-            '&& p.contains("vec2") && p.contains("z"));\n'
+            '        assert!(problems.iter().any(|p| p.contains("a_uv") '
+            '&& p.contains("vec2") && p.contains("z")));\n'
         )
         self.assertTrue(any("method chain" in message for message in found(line)))
         # A shorter one: rustfmt leaves it on one line.
-        short = '        let ok = problems.iter().any(|p| p.contains("a"));\n'
+        short = '        assert!(problems.iter().any(|p| p.contains("a")));\n'
         self.assertEqual(found(short), [])
+
+    def test_a_chain_that_is_a_statement_is_left_to_max_width(self):
+        # `gfx.rs` has chains of 75 columns as statements and CI accepts them: judging those would
+        # send someone to reformat code rustfmt keeps.
+        statement = "        let x = some.long_call_here(" + "1, " * 12 + "1).collect();\n"
+        self.assertEqual(found(statement), [])
+
+
+class LiteralTests(unittest.TestCase):
+    def test_a_long_string_over_several_lines_is_not_reformatted(self):
+        text = (
+            'const M: &str = "a long message that runs \\\n'
+            "     on and on and on past the hundred-column mark the formatter uses \\\n"
+            '     and ends here";\n'
+        )
+        self.assertEqual(found(text), [])
+
+    def test_a_macro_bracket_reaches_past_max_width_untouched(self):
+        line = "        let a = wgpu::vertex_attr_array![" + "0=>Float32x3," * 10 + "];\n"
+        self.assertEqual(found(line), [])
 
     def test_a_short_chain_and_a_chain_free_line_pass(self):
         self.assertEqual(found("        let screen = self.gl >= (3, 3) && modern;\n"), [])

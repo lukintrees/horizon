@@ -5,10 +5,10 @@
 being written on has no `cargo`. Every rule here was taken from a diff that CI produced for this
 renderer, so they are rustfmt's own decisions and not guesses:
 
-- **`chain_width = 60`** (`use_small_heuristics = "Default"`): a method chain wider than 60 columns,
-  measured from its first `.method` to the end of the line, gets a method a line. A line can be well
-  under the 100-column `max_width` and still be rewritten — which is how `assert!(problems.iter()
-  .any(|p| ...))` came back from CI as five lines.
+- **`chain_width = 60`** (`use_small_heuristics = "Default"`), for a chain inside an
+  `assert!`-family macro: wider than 60 columns from its first `.method`, it gets a method a line.
+  That is how `assert!(problems.iter().any(|p| ...))` came back from CI as five lines. A chain that
+  is a statement of its own is left to `max_width`, which is why the rule is not applied to one.
 - **`merge_derives = true`**: `#[derive(A)]` followed by `#[derive(B)]` is joined into one.
 - **`reorder_imports = true`**: names inside a top-level `use`'s braces, and runs of `mod`
   declarations at the top level, are sorted (`Capabilities` before `glsl_name`).
@@ -18,6 +18,7 @@ renderer, so they are rustfmt's own decisions and not guesses:
 Usage:
     python3 tools/gl21_fmt_guard.py                  # the gl21 files
     python3 tools/gl21_fmt_guard.py path/to/file.rs  # named files
+    python3 tools/gl21_fmt_guard.py --changed        # every Rust file this branch changed
     python3 tools/gl21_fmt_guard.py --list
 
 Exits 1 when it finds a shape rustfmt would change, with the line and what to do about it.
@@ -28,6 +29,7 @@ file it passes can still fail CI, but a file it fails certainly does.
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +39,8 @@ GUARDED = ROOT / "crates" / "horizon-client-render" / "src" / "gl21"
 # rustfmt's `use_small_heuristics = "Default"`, out of a `max_width` of 100.
 CHAIN_WIDTH = 60
 MAX_WIDTH = 100
+# The macros whose arguments rustfmt lays out with `chain_width`.
+MACRO = re.compile(r"\b(assert|assert_eq|assert_ne|debug_assert|debug_assert_eq)!\(")
 
 
 def code_of(line):
@@ -46,16 +50,69 @@ def code_of(line):
     return line if cut < 0 else line[:cut]
 
 
-def chain_width(line):
-    """The width of the line's method chain, from its first `.method`, or None."""
+OPEN_LITERAL = re.compile(r'"[^"]*$')
+
+
+def in_multiline_literal(text, number):
+    """Whether the line at `number` (1-based) belongs to a string literal spread over lines.
+
+    A long literal is written with a trailing backslash per line: rustfmt neither splits nor
+    reflows it, so neither its first line nor the pieces after it are a formatting complaint.
+    """
+    open_literal = False
+    for index, line in enumerate(text.splitlines(), 1):
+        code = code_of(line).rstrip()
+        if index == number:
+            return open_literal or code.endswith("\\")
+        if code.endswith("\\"):
+            open_literal = True
+            continue
+        # A line with an odd number of quotes (escaped ones aside) opens or closes a literal.
+        if len(re.findall(r'(?<!\\)"', code)) % 2 == 1:
+            open_literal = not open_literal
+    return False
+
+
+def code_is_long(line):
+    """Whether the line's code is past `max_width`, leaving out what rustfmt leaves alone.
+
+    Three shapes run long in this repository and are never rewritten: a comment (not reflowed), a
+    string literal (not split, and a long one continues with a trailing backslash), and the inside of
+    a macro's brackets (`vertex_attr_array![..]` reaches 142 columns untouched). What is left is the
+    line's structure, which is what `max_width` measures.
+    """
     code = code_of(line).rstrip()
+    if len(code) <= MAX_WIDTH:
+        return False
+    bare = re.sub(r'"[^"]*"', '""', code)
+    bare = re.sub(r"\w+!\[[^\]]*\]", "macro![..]", bare)
+    bare = re.sub(r"\w+!\([^)]*\)", "macro!(..)", bare)
+    # A literal with a continuation (`.. needs \` / `a driver.."`) leaves a backslash behind.
+    bare = bare.replace("\\", "")
+    return len(bare) > MAX_WIDTH
+
+
+def chain_width(line):
+    """The width of a method chain inside an `assert!`-family macro, or None.
+
+    That is the shape CI broke twice (`assert!(problems.iter().any(..))` came back five lines long):
+    rustfmt measures such a chain against `chain_width` (60) rather than letting it run to
+    `max_width`, while a chain that is a statement of its own (`self.a().b();`, 75 columns in
+    `gfx.rs`) it leaves alone. Rather than model that difference, this only judges the case that
+    has actually bitten, so the tool never sends anyone to reformat code CI accepts.
+    """
+    code = code_of(line).rstrip()
+    macro = MACRO.search(code)
+    if not macro:
+        return None
+    body = code[macro.end():]
     first = None
-    for match in re.finditer(r"\.\w", code):
+    for match in re.finditer(r"\.\w", body):
         first = match.start()
         break
     if first is None:
         return None
-    return len(code) - first
+    return len(body) - first
 
 
 def merged_derives(text):
@@ -130,7 +187,7 @@ def check_text(text, name="<memory>"):
         code = code_of(raw)
         if not code.strip():
             continue
-        if len(code) > MAX_WIDTH:
+        if code_is_long(code) and not in_multiline_literal(text, number):
             problems.append((number, f"{len(code)} columns of code is past rustfmt's {MAX_WIDTH}"))
         width = chain_width(raw)
         if width is not None and width > CHAIN_WIDTH:
@@ -150,12 +207,38 @@ def check_text(text, name="<memory>"):
     return problems
 
 
+def changed_files():
+    """The `.rs` files this branch changed against main: what `cargo fmt --check` looks at.
+
+    A branch's own files are not the only ones it can break: a `_with` helper that moved out of
+    `#[cfg(test)]` is a `gfx.rs` change, and rustfmt judges it the same way.
+    """
+    out = subprocess.run(
+        ["git", "diff", "--name-only", "origin/main...HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"gl21_fmt_guard.py: git diff failed: {out.stderr.strip()}")
+    return [ROOT / line for line in out.stdout.splitlines() if line.endswith(".rs")]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="*")
     parser.add_argument("--list", action="store_true", help="print the files it would check")
+    parser.add_argument(
+        "--changed",
+        action="store_true",
+        help="every .rs file changed against main, which is what `cargo fmt --check` sees",
+    )
     args = parser.parse_args(argv)
-    files = [Path(f) for f in args.files] or sorted(GUARDED.glob("*.rs"))
+    if args.changed:
+        files = changed_files()
+    else:
+        files = [Path(f) for f in args.files] or sorted(GUARDED.glob("*.rs"))
     if args.list:
         for file in files:
             print(file)

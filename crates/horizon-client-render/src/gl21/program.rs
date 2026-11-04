@@ -392,7 +392,9 @@ mod tests {
         assert!(wants_pos, "{problems:?}");
         // Every attribute of the layout it fails to declare is its own problem, and so is every
         // uniform the stage no longer declares: the point is that none of them pass silently.
-        let missing_attributes = problems.iter().filter(|p| p.contains("declared by no shader"));
+        let missing_attributes = problems
+            .iter()
+            .filter(|p| p.contains("declared by no shader"));
         assert_eq!(missing_attributes.count(), TERRAIN.len() + TERRAIN_UNIFORMS.len());
 
         // The same slot with the wrong width: a driver would bind it and read garbage.
