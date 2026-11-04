@@ -38,7 +38,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
@@ -192,6 +192,8 @@ def function_of(node, module: str) -> Function | None:
         for child in params_node.children:
             if child.type == "parameter":
                 params.append(parameter_type(child))
+            elif child.type == "self_parameter":
+                params.append(Param(ty="self"))
             elif child.type == "variadic_parameter":
                 params.append(Param(ty="...", variadic=True))
     return Function(
@@ -256,6 +258,17 @@ def glob_imports_super(node) -> bool:
 
 
 @dataclass
+class Shape:
+    """A struct's or enum variant's fields, for checking a literal against its definition."""
+
+    fields: dict[str, str]
+    tuple_fields: int = 0
+    # Associated constants declared inside the type's `impl` blocks (`Feature::ALL`,
+    # `Limits::X1650`): a path in a value position may name one.
+    constants: set[str] = field(default_factory=set)
+
+
+@dataclass
 class CrateFacts:
     # module path -> function name -> Function, for free functions only (not impl members).
     functions: dict[str, dict[str, Function]]
@@ -268,6 +281,12 @@ class CrateFacts:
     methods: dict[str, dict[str, Function]]
     files: list[Path]
     root: Path
+    # type name -> its fields
+    structs: dict[str, Shape]
+    # enum name -> variant name -> its fields (empty fields for a unit variant)
+    enums: dict[str, dict[str, Shape]]
+    # type name -> constants declared in its `impl` blocks (`Feature::ALL`, `Limits::X1650`)
+    constants: dict[str, set[str]]
 
 
 def read_functions_in(
@@ -297,8 +316,137 @@ def read_functions_in(
     return functions, glob_super
 
 
-def read_methods_in(path: Path) -> dict[str, dict[str, Function]]:
-    """Inherent `impl Type { fn a() }` methods, keyed by the receiver's type name."""
+# The methods a `#[derive(Trait)]` adds: enough to know `Type::default()` exists.
+DERIVED_METHODS = {
+    "Default": "default",
+    "Clone": "clone",
+    "Copy": "clone",
+    "Debug": "fmt",
+    "PartialEq": "eq",
+    "Eq": "eq",
+    "Hash": "hash",
+    "PartialOrd": "partial_cmp",
+    "Ord": "cmp",
+}
+
+
+def derived_methods(node) -> list[str]:
+    """The methods a node's `#[derive(..)]` attribute adds."""
+    out: list[str] = []
+    previous = node.prev_named_sibling
+    while previous is not None and previous.type == "attribute_item":
+        raw = node_text(previous)
+        if "derive" in raw:
+            inside = raw[raw.find("(") + 1 : raw.rfind(")")]
+            for name in inside.split(","):
+                name = name.strip()
+                if name in DERIVED_METHODS:
+                    out.append(DERIVED_METHODS[name])
+        previous = previous.prev_named_sibling
+    return out
+
+
+def read_derives_in(path: Path) -> dict[str, list[str]]:
+    """Type name -> the methods its `#[derive(..)]` adds, read where the derive is written."""
+    p = parser()
+    source = path.read_bytes()
+    tree = p.parse(source)
+    out: dict[str, list[str]] = {}
+    for node in walk(tree.root_node):
+        if node.type not in ("struct_item", "enum_item"):
+            continue
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            continue
+        names = derived_methods(node)
+        if names:
+            out[node_text(name_node)] = names
+    return out
+
+
+def read_shapes_in(path: Path) -> tuple[dict[str, Shape], dict[str, dict[str, Shape]]]:
+    """Structs and enums of one file, with their fields and variants."""
+    p = parser()
+    source = path.read_bytes()
+    tree = p.parse(source)
+    structs: dict[str, Shape] = {}
+    enums: dict[str, dict[str, Shape]] = {}
+    for node in walk(tree.root_node):
+        if node.type == "struct_item":
+            name_node = node.child_by_field_name("name")
+            body = node.child_by_field_name("body")
+            if name_node is None:
+                continue
+            shape = Shape(fields={})
+            if body is None:
+                # `struct Unit;` has no fields at all, which a literal cannot fill.
+                pass
+            elif body.type == "field_declaration_list":
+                for child in body.children:
+                    if child.type != "field_declaration":
+                        continue
+                    fname = child.child_by_field_name("name")
+                    fty = child.child_by_field_name("type")
+                    if fname is not None:
+                        shape.fields[node_text(fname)] = (
+                            normalize_type(node_text(fty)) if fty is not None else ""
+                        )
+            elif body.type == "ordered_field_declaration_list":
+                shape.tuple_fields = len([c for c in body.children if c.is_named])
+            structs[node_text(name_node)] = shape
+        elif node.type == "enum_item":
+            name_node = node.child_by_field_name("name")
+            body = node.child_by_field_name("body")
+            if name_node is None or body is None:
+                continue
+            variants: dict[str, Shape] = {}
+            for child in body.children:
+                if child.type != "enum_variant":
+                    continue
+                vname = child.child_by_field_name("name")
+                if vname is None:
+                    continue
+                shape = Shape(fields={})
+                # A variant's payload is an unnamed child of the variant node.
+                payload = next(
+                    (
+                        c
+                        for c in child.children
+                        if c.type
+                        in ("field_declaration_list", "ordered_field_declaration_list")
+                    ),
+                    None,
+                )
+                if payload is not None:
+                    if payload.type == "field_declaration_list":
+                        for field in payload.children:
+                            if field.type != "field_declaration":
+                                continue
+                            fname = field.child_by_field_name("name")
+                            fty = field.child_by_field_name("type")
+                            if fname is not None:
+                                shape.fields[node_text(fname)] = (
+                                    normalize_type(node_text(fty)) if fty is not None else ""
+                                )
+                    elif payload.type == "ordered_field_declaration_list":
+                        shape.tuple_fields = len(
+                            [c for c in payload.children if c.is_named]
+                        )
+                variants[node_text(vname)] = shape
+            enums[node_text(name_node)] = variants
+    return structs, enums
+
+
+def read_methods_in(
+    path: Path, associated_constants: dict[str, set[str]] | None = None
+) -> dict[str, dict[str, Function]]:
+    """Inherent `impl Type { fn a() }` methods, keyed by the receiver's type name.
+
+    `associated_constants` is filled in as a side effect: `Type::NAME` in a value position is
+    legal when NAME is one, and only the impl block says so.
+    """
+    if associated_constants is None:
+        associated_constants = {}
     p = parser()
     source = path.read_bytes()
     tree = p.parse(source)
@@ -312,12 +460,20 @@ def read_methods_in(path: Path) -> dict[str, dict[str, Function]]:
             continue
         ty = normalize_type(node_text(ty_node))
         table: dict[str, Function] = {}
+        constants: set[str] = set()
         for child in body.children:
+            if child.type == "const_item":
+                name_node = child.child_by_field_name("name")
+                if name_node is not None:
+                    constants.add(node_text(name_node))
+                continue
             if child.type != "function_item":
                 continue
             fn = function_of(child, module_path(node))
             if fn is not None:
                 table[fn.name] = fn
+        if constants:
+            associated_constants.setdefault(ty.split("::")[-1], set()).update(constants)
         if table:
             out.setdefault(ty, {}).update(table)
     return out
@@ -328,16 +484,31 @@ def read_crate(root: Path) -> CrateFacts:
     origins: dict[str, set[str]] = {}
     glob_super: dict[str, bool] = {}
     methods: dict[str, dict[str, Function]] = {}
+    structs: dict[str, Shape] = {}
+    enums: dict[str, dict[str, Shape]] = {}
+    constants: dict[str, set[str]] = {}
+    derived: dict[str, list[str]] = {}
     files = sorted(root.rglob("*.rs"))
     for path in files:
+        file_structs, file_enums = read_shapes_in(path)
+        structs.update(file_structs)
+        enums.update(file_enums)
+        derived.update(read_derives_in(path))
         file_functions, file_glob = read_functions_in(path, root)
         for module, table in file_functions.items():
             functions.setdefault(module, {}).update(table)
             for name in table:
                 origins.setdefault(name, set()).add(str(path))
         glob_super.update(file_glob)
-        for ty, table in read_methods_in(path).items():
+        for ty, table in read_methods_in(path, constants).items():
             methods.setdefault(ty, {}).update(table)
+    for ty, names in derived.items():
+        table = methods.setdefault(ty, {})
+        for name in names:
+            table.setdefault(name, Function(name=name, params=[], ret=ty, module=ty, line=0))
+    for ty, names in constants.items():
+        if ty in structs:
+            structs[ty].constants |= names
     return CrateFacts(
         functions=functions,
         origins=origins,
@@ -345,6 +516,9 @@ def read_crate(root: Path) -> CrateFacts:
         methods=methods,
         files=files,
         root=root,
+        structs=structs,
+        enums=enums,
+        constants=constants,
     )
 
 
@@ -369,6 +543,9 @@ def read_glow(root: Path) -> tuple[dict[str, Function], set[str]]:
                     continue
                 fn = function_of(child, "glow::HasContext")
                 if fn is not None:
+                    # Every `gl.*` call passes the context implicitly: the trait's `&self` is
+                    # not an argument at the call site.
+                    fn.params = [p for p in fn.params if p.ty != "self"]
                     methods[fn.name] = fn
         elif node.type in ("const_item", "static_item"):
             name_node = node.child_by_field_name("name")
@@ -430,6 +607,24 @@ def check_callee(fn: Function, args: list[tuple[str, str]]) -> str | None:
         if allowed is not None and kind not in allowed:
             return f"{fn.name} expects {param.ty} here, the call passes {kind}"
     return None
+
+
+def closure_names(function) -> set[str]:
+    """Names bound to a closure in one function: `let has = |name| ..` is not the method `has`."""
+    out: set[str] = set()
+    body = function.child_by_field_name("body")
+    if body is None:
+        return out
+    for node in walk(body):
+        if node.type != "let_declaration":
+            continue
+        value = node.child_by_field_name("value")
+        pattern = node.child_by_field_name("pattern")
+        if value is None or pattern is None or pattern.type != "identifier":
+            continue
+        if value.type == "closure_expression":
+            out.add(node_text(pattern))
+    return out
 
 
 def typed_locals(function) -> dict[str, str]:
@@ -509,6 +704,7 @@ def check_file(path: Path, facts: CrateFacts, glow: dict[str, Function], constan
         inner = module_path(function)
         module = file_mod if not inner else file_mod + inner[len("crate"):]
         locals_ = typed_locals(function)
+        shadows = closure_names(function)
         for node in walk(function):
             if node.type != "call_expression":
                 continue
@@ -518,7 +714,7 @@ def check_file(path: Path, facts: CrateFacts, glow: dict[str, Function], constan
             args = argument_list(node)
             if fn_node.type == "identifier":
                 name = node_text(fn_node)
-                target = resolve_free(name, module, rel, facts)
+                target = None if name in shadows else resolve_free(name, module, rel, facts)
                 if target is not None:
                     problem = check_callee(target, args)
                     if problem:
@@ -538,28 +734,192 @@ def check_file(path: Path, facts: CrateFacts, glow: dict[str, Function], constan
                     problem = check_callee(glow[method], args)
                     if problem:
                         add(node, problem)
-                elif receiver in facts.methods and method in facts.methods[receiver]:
-                    problem = check_callee(facts.methods[receiver][method], args)
-                    if problem:
-                        add(node, problem)
+                else:
+                    table = find_method_table(facts.methods, receiver) if receiver else None
+                    if table is not None and method in table:
+                        # `value.method(..)`: the receiver is `self`, passed implicitly.
+                        fn = table[method]
+                        without_self = Function(
+                            name=fn.name,
+                            params=[p for p in fn.params if p.ty != "self"],
+                            ret=fn.ret,
+                            module=fn.module,
+                            line=fn.line,
+                        )
+                        problem = check_callee(without_self, args)
+                        if problem:
+                            add(node, problem)
                 # Any other receiver: the checker cannot name the type, so it says nothing.
             elif fn_node.type == "scoped_identifier":
-                raw = node_text(fn_node)
-                if raw.startswith("glow::"):
-                    name = raw.split("::")[-1]
-                    if is_constant_name(name) and name not in constants:
-                        add(node, f"glow::{name} is not a constant glow defines")
+                complain_about_glow_constant(node, fn_node, constants, add)
 
+    # A struct literal: every field must exist on the struct, no field may repeat, and every
+    # field the struct declares must be given (or the whole thing came from `..rest`).
+    for node in walk(tree.root_node):
+        if node.type != "struct_expression":
+            continue
+        name_node = node.child_by_field_name("name")
+        body = node.child_by_field_name("body")
+        if name_node is None or body is None:
+            continue
+        name = normalize_type(node_text(name_node)).split("::")[-1]
+        shape = facts.structs.get(name)
+        if shape is None:
+            continue
+        seen: list[str] = []
+        spread = False
+        for child in body.children:
+            if child.type == "shorthand_field_initializer":
+                seen.append(node_text(child))
+            elif child.type in ("field_initializer", "field_initializer_shorthand"):
+                field = child.child_by_field_name("field")
+                if field is not None:
+                    seen.append(node_text(field))
+            elif child.type == "base_field_initializer":
+                spread = True
+        unknown = [field for field in seen if field not in shape.fields]
+        for field in unknown:
+            add(
+                node,
+                f"{name} has no field `{field}` (its fields are "
+                + ", ".join(sorted(shape.fields))
+                + ")",
+            )
+        if not spread and not unknown:
+            missing = [f for f in shape.fields if f not in seen]
+            if missing:
+                add(
+                    node,
+                    f"{name} literal is missing " + ", ".join(f"`{m}`" for m in sorted(missing)),
+                )
+
+    # `Type::method(...)` and `Type::Variant(...)`: a path the checker can resolve by name.
+    for node in walk(tree.root_node):
+        if node.type != "call_expression":
+            continue
+        fn_node = node.child_by_field_name("function")
+        if fn_node is None or fn_node.type != "scoped_identifier":
+            continue
+        raw = node_text(fn_node)
+        if raw.startswith("glow::"):
+            continue
+        parts = raw.split("::")
+        if len(parts) != 2:
+            continue
+        type_name, member = parts
+        args = argument_list(node)
+        table = find_method_table(facts.methods, type_name)
+        if table is not None and member not in table and member[:1].islower():
+            known = ", ".join(sorted(table))
+            add(node, f"{type_name} has no method `{member}` (it has {known})")
+            continue
+        if table is not None and member in table:
+            # `Type::method(value, ..)` is UFCS: the receiver is the first argument, and it is
+            # there in the call, so the full parameter list applies.
+            problem = check_callee(table[member], args)
+            if problem:
+                add(node, f"{type_name}::{problem}")
+            continue
+        variants = find_variants(facts.enums, type_name)
+        if variants is None:
+            continue
+        if member not in variants:
+            add(
+                node,
+                f"{type_name} has no variant `{member}` (it has "
+                + ", ".join(sorted(variants))
+                + ")",
+            )
+        elif variants[member].tuple_fields and len(args) != variants[member].tuple_fields:
+            add(
+                node,
+                f"{type_name}::{member} takes {variants[member].tuple_fields} value(s), "
+                f"the call passes {len(args)}",
+            )
+
+    # `Type::member` in a value position (a unit variant, an associated constant).
     for node in walk(tree.root_node):
         if node.type != "scoped_identifier":
             continue
         raw = node_text(node)
-        if not raw.startswith("glow::"):
+        if raw.startswith("glow::"):
             continue
-        name = raw.split("::")[-1]
-        if is_constant_name(name) and name not in constants:
-            add(node, f"glow::{name} is not a constant glow defines")
+        parts = raw.split("::")
+        if len(parts) != 2:
+            continue
+        type_name, member = parts
+        # A unit variant or an associated constant may stand alone as a value; nothing else
+        # may. Only names that are supposed to be one of those are checked, so a module-level
+        # `Type::thing` path cannot be reported by mistake.
+        if not member[:1].isupper():
+            continue
+        variants = find_variants(facts.enums, type_name)
+        associated = facts.constants.get(type_name, set())
+        if variants is None and not associated:
+            # A type this crate does not define as an enum and whose impl declares no
+            # constants: only an associated function could be here, which the call check
+            # covers. Nothing to say about a value position.
+            continue
+        variants = variants or {}
+        if member not in variants and member not in associated:
+            # A call's own path was already checked as a method; this pass would say "no
+            # variant" about a method name, so skip a path that is a call's callee.
+            if node.parent is not None and node.parent.type == "call_expression":
+                continue
+            names = sorted(set(variants) | associated)
+            add(
+                node,
+                f"{type_name} has no variant or constant `{member}` (it has "
+                + ", ".join(names)
+                + ")",
+            )
+
+    for node in walk(tree.root_node):
+        if node.type != "scoped_identifier":
+            continue
+        complain_about_glow_constant(node, node, constants, add)
     return findings
+
+
+def complain_about_glow_constant(node, path_node, glow_constants: set[str], add) -> None:
+    """`glow::NAME`: NAME must be a constant glow defines.
+
+    The parameter is named `glow_constants` on purpose: a local called `constants` earlier in
+    `check_file` once shadowed the set of glow's constants and turned 34 legal calls into
+    findings, which is exactly the kind of false positive that makes a checker useless.
+    """
+    raw = node_text(path_node)
+    if not raw.startswith("glow::"):
+        return
+    name = raw.split("::")[-1]
+    if is_constant_name(name) and name not in glow_constants:
+        add(node, f"glow::{name} is not a constant glow defines")
+
+
+def find_method_table(
+    methods: dict[str, dict[str, Function]], type_name: str
+) -> dict[str, Function] | None:
+    """The method table for `type_name`, however the `impl` spelled it.
+
+    `impl Executor` keys on `Executor`, `impl<T> Foo<T>` normalises to `Foo`, and a call may
+    write `crate::gl::Target::create`: the last segment is what all three agree on.
+    """
+    if type_name in methods:
+        return methods[type_name]
+    for key, table in methods.items():
+        if key.split("::")[-1] == type_name.split("::")[-1]:
+            return table
+    return None
+
+
+def find_variants(
+    enums: dict[str, dict[str, Shape]], type_name: str
+) -> dict[str, Shape] | None:
+    """The variants of `type_name`: `find_method_table`'s rule, for enums."""
+    short = type_name.split("::")[-1]
+    if short in enums:
+        return enums[short]
+    return None
 
 
 def is_constant_name(name: str) -> bool:
@@ -730,13 +1090,19 @@ pub const DEPTH_TEST: u32 = 0x0B71;
 pub const COLOR_BUFFER_BIT: u32 = 0x4000;
 """
     own_src = """
-pub struct Thing { n: u32 }
+pub struct Thing {
+    pub n: u32,
+    pub name: &'static str,
+}
 impl Thing {
     pub fn two(&self, a: u32, b: &str) -> u32 { a }
     pub fn one(&mut self) {}
+    pub const EMPTY: Thing = Thing { n: 0, name: "" };
 }
 fn takes_two(a: u32, b: &str) -> u32 { a }
 fn takes_one(a: bool) {}
+
+pub enum Shape2 { Point, Line(u32), Area { w: u32 } }
 
 pub mod good {
     use super::*;
@@ -747,6 +1113,13 @@ pub mod good {
         takes_two(3, "x");
         takes_one(true);
         t.two(1, "y");
+        let _ = Thing { n: 1, name: "a" };
+        let _ = Thing { n: 1, ..*t };
+        let _ = Thing::EMPTY;
+        let _ = Thing::two(t, 1, "z");
+        let _ = Shape2::Point;
+        let _ = Shape2::Line(4);
+        let _ = Shape2::Area { w: 3 };
     }
 }
 
@@ -759,6 +1132,12 @@ pub mod bad {
         takes_two(3);
         takes_two(3, "x", "y");
         takes_one(3);
+        let _ = Thing { n: 1, nam: "typo" };
+        let _ = Thing { n: 1 };
+        let _ = Shape2::Missing;
+        let _ = Shape2::Line(1, 2);
+        let _ = Thing::EMPTYY;
+        let _ = Thing::onet(1);
     }
 }
 
@@ -814,12 +1193,21 @@ pub mod outer {
         problems.append(f"a module-scoped call was misattributed: {[f.message for f in scoped]}")
     messages = " | ".join(f.message for f in bad)
     expected = [
+        # calls
         "glow's HasContext has no `disable` method",
         "clear_color takes 4 argument(s), the call passes 3",
         "glow::NOT_A_CONSTANT is not a constant glow defines",
         "takes_two takes 2 argument(s), the call passes 1",
         "takes_two takes 2 argument(s), the call passes 3",
         "takes_one expects bool here, the call passes integer",
+        # struct literals
+        "Thing has no field `nam`",
+        "Thing literal is missing `name`",
+        # enums, tuple payloads and associated constants
+        "Shape2 has no variant or constant `Missing`",
+        "Shape2::Line takes 1 value(s), the call passes 2",
+        "Thing has no variant or constant `EMPTYY`",
+        "Thing has no method `onet`",
     ]
     for want in expected:
         if want not in messages:

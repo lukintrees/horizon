@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn summary_names_what_is_missing() {
-        let s = Caps::strict_over(x1650_caps()).summary();
+        let s = x1650_caps().strict_over().summary();
         assert!(s.contains("2.1"));
         assert!(s.contains("strict"));
         assert!(s.contains("storage") || s.contains("4.3") || s.contains("not"));
