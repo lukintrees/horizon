@@ -60,9 +60,13 @@ impl AttributeKind {
 }
 
 impl Attribute {
-    /// The GLSL type the shader must declare for this slot: `vec3`, `vec2`, `vec4`.
+    /// The GLSL type the shader must declare for this slot: `float`, `vec2`, `vec3`, `vec4`.
     pub fn glsl(&self) -> String {
-        format!("vec{}", self.size)
+        if self.size == 1 {
+            "float".to_string()
+        } else {
+            format!("vec{}", self.size)
+        }
     }
 
     /// One past the attribute's last byte in a vertex.

@@ -64,8 +64,8 @@ jobs:
           set +e
           cargo +stable test -p horizon-client-render --lib > /tmp/test.txt 2>&1
           status=$?
-          grep -E "^(error|warning: unused|test result|failures:|---- )" /tmp/test.txt | head -80
-          tail -60 /tmp/test.txt
+          grep -E "^(error|test result|failures:)" /tmp/test.txt | head -40
+          grep -A6 "panicked at" /tmp/test.txt | head -160
           echo "status=$status" >> "$GITHUB_OUTPUT"
       - name: Turn the test failures into annotations
         if: steps.tests.outputs.status != '0'

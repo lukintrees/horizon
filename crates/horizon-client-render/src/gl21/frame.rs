@@ -171,6 +171,8 @@ impl Frame {
                 break;
             }
             self.restart();
+            // What the first attempt could not fit says nothing about this one.
+            self.dropped = 0;
         }
         self.order(sections, present);
         // Sections that left the view distance take their ranges with them (their vertices stay in
@@ -559,6 +561,7 @@ mod tests {
             false,
         );
         assert_eq!(frame.stored(), 2);
+        let _ = frame.uploads();
         frame.build(&[section(2, 2.0, &b, &[])], None, false);
         assert_eq!(frame.stored(), 1);
         assert_eq!(frame.draws().len(), 1);
