@@ -30,8 +30,11 @@ DEFAULT_LIMIT = 50
 # How much of a diagnostic's rendered form to keep. The rendered text carries the `-->` line and
 # the source excerpt, which is the part a reader needs; the rest is repetition.
 RENDERED_LINES = 12
-# How much plain output to attach when there were no structured diagnostics.
-RAW_TAIL_LINES = 30
+# How much plain output to attach when there were no structured diagnostics. libtest's summary
+# is the *last* thing a failing test run prints, and GitHub truncates an annotation that is too
+# long -- from the end, which is where the reason is. `-n 200` (the workflow's own tail) plus 30
+# was over the limit, and the annotation that came back had lost "error: test failed".
+RAW_TAIL_LINES = 120
 
 
 def escape(text: str) -> str:
@@ -120,7 +123,10 @@ def report(payloads, plain, limit: int = DEFAULT_LIMIT):
         return
     tail = [line for line in plain if line.strip()][-RAW_TAIL_LINES:]
     if tail:
-        yield f"::error::{escape(chr(10).join(tail))}"
+        # libtest's summary lines first: they survive a truncation that eats the middle.
+        summary = [line for line in tail if line.startswith(("error", "failures", "test result"))]
+        yield "::error::" + escape(chr(10).join(summary + tail))
+        yield f"::notice::the tail is {len(tail)} lines; the job log has all of it"
 
 
 def main(argv):

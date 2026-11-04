@@ -60,7 +60,10 @@ fn main() -> ExitCode {
         })
         .collect();
     if !unknown.is_empty() {
-        eprintln!("horizon-gl21-info: unknown argument(s): {}", unknown.join(" "));
+        eprintln!(
+            "horizon-gl21-info: unknown argument(s): {}",
+            unknown.join(" ")
+        );
         eprintln!("try --help");
         return ExitCode::from(2);
     }

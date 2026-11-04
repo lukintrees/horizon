@@ -211,8 +211,19 @@ jobs:
       # which is why --strict exists), the shader budgets, and the JSON a bug report carries.
       - name: GL 2.1 capability and budget report
         run: |
-          cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info
-          cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- --check-shaders --strict
+          # An exit status here produced no annotation at all: the step's output below the tests'
+          # tail never reached GitHub, so "exit code 1" was the whole report. Each run's own
+          # stderr becomes an annotation now, and the exit status stays the step's.
+          set +e
+          status=0
+          for args in "" "--check-shaders --strict"; do
+            # shellcheck disable=SC2086
+            cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args \
+              2>&1 | sed 's/^/::error::/'
+            status=$(( status + ${PIPESTATUS[0]} ))
+          done
+          set -e
+          [ "$status" -eq 0 ]
           cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- --json > gl21-report.json
           python -c "import json; json.load(open('gl21-report.json'))"
 
