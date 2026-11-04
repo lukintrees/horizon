@@ -18,9 +18,19 @@ use horizon_client_gl::budget::{self, Stage};
 use horizon_client_gl::caps::{Caps, Feature, Limits, Version};
 use horizon_client_gl::loader::GlLibrary;
 
-/// The shaders that ship with the legacy path, embedded so the binary can check them without
-/// a prepared game install. Added to as the port's shaders land (M2).
-const SHADERS: &[(&str, &str, &str)] = &[];
+/// The shaders that ship with the legacy path, embedded so the binary can check them without a
+/// prepared game install: a name, its vertex source, its fragment source.
+///
+/// Every pair goes through [`budget`] here and through `tools/gl21_glsl.py` in CI. Two
+/// independent measurements of the same files is one more than the job needs, and it is the
+/// arrangement that caught 19 components of dead uniforms in the first drafts.
+const SHADERS: &[(&str, &str, &str)] = &[
+    (
+        "terrain",
+        include_str!("../shaders/terrain/terrain.vert"),
+        include_str!("../shaders/terrain/terrain.frag"),
+    ),
+];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -214,7 +224,16 @@ fn check_shaders(caps: &Caps) -> Vec<Measurement> {
     for (path, vertex, fragment) in SHADERS {
         for (stage, source) in [(Stage::Vertex, *vertex), (Stage::Fragment, *fragment)] {
             let measured = budget::measure(source, stage);
-            let error = budget::check(&measured, stage, &caps.limits).err();
+            let mut error = budget::check(&measured, stage, &caps.limits).err();
+            if stage == Stage::Vertex {
+                // The pair is checked once, when both sources have been read: a varying
+                // declared differently in the two stages is the target linker's silent
+                // failure, and the reason this loop keeps the vertex measurement.
+                let fragment = budget::measure(fragment, Stage::Fragment);
+                if error.is_none() {
+                    error = budget::check_linked(&measured, &fragment).err();
+                }
+            }
             out.push(Measurement {
                 path: format!("{path} ({})", stage.name()),
                 uniform_components: measured.uniform_components,

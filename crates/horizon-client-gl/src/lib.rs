@@ -20,8 +20,9 @@
 //! | [`caps`] | what the device may do; strict mode substitutes the target's table | to detect |
 //! | [`budget`] | measures GLSL against 512 uniform components, 44 varyings, 16 samplers, 0 vertex textures, static loops | **no** |
 //! | [`draw`] | one frame described once: passes, draws, state, requirements | **no** |
+//! | [`exec`] | executes a recorded frame: state, programs, uniforms, geometry | **yes** |
 //! | [`loader`] | finding libGL/opengl32 and their entry points, with a sentence on failure | to open |
-//! | [`gl`] | programs, buffers, the shared vertex format, the context | **yes** |
+//! | [`gl`] | programs, buffers, textures, framebuffers, the state cache, the context | **yes** |
 //!
 //! The GPU-free half is the half that carries the risk of the port (a shader that works on
 //! llvmpipe and not on the target), so it is the half written and tested first.
@@ -38,6 +39,7 @@ pub mod budget;
 pub mod caps;
 pub mod draw;
 pub mod error;
+pub mod exec;
 pub mod gl;
 pub mod loader;
 

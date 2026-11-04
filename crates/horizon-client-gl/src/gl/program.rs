@@ -13,7 +13,6 @@
 //!    line; the backend prepends `#version 120` (and the strict-mode defines), so the
 //!    version is never a property of a file that could drift from the context.
 
-use std::collections::BTreeMap;
 
 use glow::HasContext;
 
@@ -57,10 +56,15 @@ pub struct Sources<'a> {
 /// Where a program's uniform went.
 #[derive(Clone, Debug)]
 pub struct UniformSlot {
+    /// The GLSL name, as the shader declares it: what the budget pass and the driver agree on.
+    pub name: String,
     /// The location, or `None` when the linker dropped the member because nothing reads it.
     /// Setting a dead uniform is a no-op, which is what makes optional features usable.
     pub location: Option<glow::UniformLocation>,
     pub ty: Type,
+    /// Elements in the array, 1 for a plain uniform. Set a whole array by handing over
+    /// `count` times the type's values.
+    pub count: u32,
 }
 
 impl UniformSlot {
@@ -73,7 +77,9 @@ impl UniformSlot {
 pub struct Program {
     raw: Option<glow::Program>,
     purpose: Purpose,
-    uniforms: BTreeMap<String, UniformSlot>,
+    /// `ordered[i]` is `UniformId(i)`: the declaration order, which is the only order two
+    /// stages and every driver agree on.
+    ordered: Vec<UniformSlot>,
     vertex: Measured,
     fragment: Measured,
 }
@@ -82,7 +88,7 @@ impl std::fmt::Debug for Program {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Program")
             .field("purpose", &self.purpose)
-            .field("uniforms", &self.uniforms.len())
+            .field("uniforms", &self.ordered.len())
             .field("live", &self.raw.is_some())
             .finish()
     }
@@ -181,25 +187,68 @@ impl Program {
             program
         };
 
-        let uniforms = resolve_uniforms(gl, raw, &vertex, &fragment);
-        Ok(Self {
+        let ordered = resolve_uniforms(gl, raw, &vertex, &fragment);
+        let program = Self {
             raw: Some(raw),
             purpose: sources.purpose,
-            uniforms,
+            ordered,
             vertex,
             fragment,
-        })
+        };
+        ctx.note_program(&program);
+        log::debug!(
+            "linked {} program: vertex {} uniform components, fragment {}",
+            program.purpose.label(),
+            program.vertex.uniform_components,
+            program.fragment.uniform_components
+        );
+        Ok(program)
     }
 
-    /// The uniform table: names as the GLSL declares them.
-    pub fn uniforms(&self) -> &BTreeMap<String, UniformSlot> {
-        &self.uniforms
+    /// The uniform table, in declaration order: `uniforms()[id.0]` is the slot `id` names.
+    pub fn uniforms(&self) -> &[UniformSlot] {
+        &self.ordered
     }
 
-    /// One uniform, `None` when the source never declared it (a typo in a caller, and a
-    /// cheap one to find in a test).
+    /// One uniform by name, `None` when the source never declared it (a typo in a caller, and
+    /// a cheap one to find in a test).
     pub fn uniform(&self, name: &str) -> Option<&UniformSlot> {
-        self.uniforms.get(name)
+        self.find(name)
+    }
+
+    fn find(&self, name: &str) -> Option<&UniformSlot> {
+        self.ordered.iter().find(|slot| slot.name == name)
+    }
+
+    /// The id a caller records in a draw list. Resolved once, at startup, and then an index.
+    pub fn uniform_id(&self, name: &str) -> Option<crate::draw::UniformId> {
+        self.ordered
+            .iter()
+            .position(|slot| slot.name == name)
+            .map(|i| crate::draw::UniformId(i as u16))
+    }
+
+    /// How many components a stage of this program declared, for the log.
+    pub fn declared_uniform_components(&self) -> (u32, u32) {
+        (
+            self.vertex.uniform_components,
+            self.fragment.uniform_components,
+        )
+    }
+
+    /// The slot a [`UniformId`](crate::draw::UniformId) refers to, if the program declares it.
+    pub fn slot(&self, id: crate::draw::UniformId) -> Option<&UniformSlot> {
+        self.ordered.get(usize::from(id.0))
+    }
+
+    /// A slot's location, for a setter that does not need the rest of the slot.
+    pub fn location(&self, id: crate::draw::UniformId) -> Option<&glow::UniformLocation> {
+        self.slot(id).and_then(|slot| slot.location.as_ref())
+    }
+
+    /// The GL name of a live program, for `glUseProgram`.
+    pub fn raw_program(&self) -> Option<glow::Program> {
+        self.raw
     }
 
     pub fn purpose(&self) -> Purpose {
@@ -232,25 +281,29 @@ fn named(error: Error, purpose: &str) -> Error {
     }
 }
 
+/// The uniform table in declaration order: `ordered[i]` is the slot whose id is `i`.
+///
+/// Order matters twice. A `UniformId` is computed once from the declaration list, so a caller
+/// that sets a uniform by position costs an array index rather than a string lookup; and the
+/// declaration order is the only order two stages, two drivers and the budget pass agree on.
 fn resolve_uniforms(
     gl: &glow::Context,
     program: glow::Program,
     vertex: &Measured,
     fragment: &Measured,
-) -> BTreeMap<String, UniformSlot> {
-    let mut out = BTreeMap::new();
+) -> Vec<UniformSlot> {
+    let mut out: Vec<UniformSlot> = Vec::new();
     for decl in vertex.uniforms.iter().chain(fragment.uniforms.iter()) {
-        if out.contains_key(&decl.name) {
+        if out.iter().any(|slot| slot.name == decl.name) {
             continue;
         }
         let location = unsafe { gl.get_uniform_location(program, &decl.name) };
-        out.insert(
-            decl.name.clone(),
-            UniformSlot {
-                location,
-                ty: decl.ty,
-            },
-        );
+        out.push(UniformSlot {
+            name: decl.name.clone(),
+            location,
+            ty: decl.ty,
+            count: decl.count,
+        });
     }
     out
 }

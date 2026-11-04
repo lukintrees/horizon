@@ -107,6 +107,63 @@ jobs:
           # recompiling the workspace with a different dependency graph.
           cargo +stable test --workspace --lib --bins --tests mod_content::tests:: -- --ignored
           cargo +stable test --workspace --doc
+  # The OpenGL 2.1 renderer (crates/horizon-client-gl, docs/gl21-x1650-plan.ru.md). Its own job
+  # because it is the one crate that must build against an *old* GL and the one whose author
+  # had no compiler at hand: here it is compiled, linted and tested on every change, and the
+  # numbers the plan is written in (uniform components, varyings, samplers) are printed by the
+  # binary itself next to the static measurement. `--glow-cargo` reads glow's sources from the
+  # registry cache instead of a checkout, so the API check cannot drift from the pinned version.
+  gl21:
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "linux", "playhorizon-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: runner.environment == 'github-hosted'
+        with:
+          python-version: '3.12'
+      # The GPU-free half of the path's testing: source checks, no toolchain needed, so this
+      # step catches a bad shader or a wrong call even when the build below is broken.
+      - name: OpenGL 2.1 static checks
+        run: |
+          python tools/gl21_budget.py --check
+          python tools/gl21_glsl.py --check --verbose
+          python tools/gl21_rustsyntax.py crates/horizon-client-gl
+      - name: Install Rust
+        env:
+          HOSTED: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          if [ "$HOSTED" = true ]; then
+            # Nothing links against a system library yet; the GL library is dlopen'd at run
+            # time, so the crate builds on a runner with no GPU and no libGL.
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+          fi
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
+        with:
+          shared-key: gl21
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The compiler this crate was written without. `-D warnings` because a warning here is
+      # usually an unused import left behind by a rewrite.
+      - name: Build, lint and test the OpenGL 2.1 renderer
+        run: |
+          cargo fetch
+          cargo +stable clippy -p horizon-client-gl --all-targets -- -D warnings
+          cargo +stable fmt -p horizon-client-gl -- --check
+          cargo +stable test -p horizon-client-gl --lib --bins --tests
+      # The calls the crate makes into glow, checked against the sources Cargo actually pinned.
+      - name: Check calls against glow's API
+        run: python tools/gl21_typecheck.py --glow-cargo --verbose
+      # The binary's own report: what this runner's GL offers (llvmpipe, GL 4.5: not the target,
+      # which is why --strict exists), the shader budgets, and the JSON a bug report carries.
+      - name: GL 2.1 capability and budget report
+        run: |
+          cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info
+          cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- --check-shaders --strict
+          cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- --json > gl21-report.json
+          python -c "import json; json.load(open('gl21-report.json'))"
+
   # The launcher is its own workspace (launcher/Cargo.toml), so verify's cargo runs never build it. A pull request that
   # changes it or a crate it builds is checked here, and so is every push to main: two pull requests can each pass
   # alone and break it together (#2059 and the registry ratings did, 2026-10-26).

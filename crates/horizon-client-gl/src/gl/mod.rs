@@ -7,9 +7,13 @@
 
 pub mod buffer;
 pub mod program;
+pub mod state;
+pub mod target;
 pub mod texture;
 
 pub use buffer::{Attribute, AttributeType, Buffer, BufferUsage, VertexFormat};
+pub use state::{StateCache, StateKey};
+pub use target::{ColorFormat, DepthFormat, MultisampleTarget, Target};
 pub use texture::{SpriteRect, Texture};
 pub use program::{attribs, compose_source, Program, Purpose, Sources, UniformSlot};
 
@@ -34,6 +38,21 @@ pub struct Context {
     /// Programs created and destroyed, for the leak check at the end of a run.
     programs_created: std::sync::atomic::AtomicU32,
     programs_destroyed: std::sync::atomic::AtomicU32,
+    /// Programs linked so far: what the leak check asks about after a resource reload.
+    programs_live: std::sync::atomic::AtomicU32,
+    /// Uniforms set through a program's table since startup, and since the last frame: the
+    /// number the plan's frame budget is stated in, measured rather than estimated.
+    uniforms_set: std::sync::atomic::AtomicU64,
+    uniforms_set_frame: std::sync::atomic::AtomicU64,
+    /// Bytes uploaded since the last frame began: the atlas re-upload on a resource reload is
+    /// visible here, and a per-frame upload that should not exist shows up as a steady rate.
+    uploaded_frame: std::sync::atomic::AtomicU64,
+    /// The drawable's size in pixels, set by the platform layer on every resize. The executor
+    /// needs it to turn a top-left viewport into GL's bottom-left one, and nothing else in
+    /// this crate knows about a window.
+    drawable: std::sync::atomic::AtomicU32,
+    /// Whether the driver reported a 2.1 core profile without a compatibility context: a
+    /// "core" 2.1 context has no fixed function, which some drivers offer by default.
     library: GlLibrary,
     /// `HORIZON_GL21_TRACE`: log every pass and its draw count.
     trace: bool,
@@ -133,6 +152,11 @@ impl Context {
             uploaded: std::sync::atomic::AtomicU64::new(0),
             programs_created: std::sync::atomic::AtomicU32::new(0),
             programs_destroyed: std::sync::atomic::AtomicU32::new(0),
+            programs_live: std::sync::atomic::AtomicU32::new(0),
+            uniforms_set: std::sync::atomic::AtomicU64::new(0),
+            uniforms_set_frame: std::sync::atomic::AtomicU64::new(0),
+            uploaded_frame: std::sync::atomic::AtomicU64::new(0),
+            drawable: std::sync::atomic::AtomicU32::new(0),
             library,
             trace: options.trace,
         })
@@ -157,6 +181,8 @@ impl Context {
     pub(crate) fn count_upload(&self, bytes: usize) {
         self.uploaded
             .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+        self.uploaded_frame
+            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn uploaded_bytes(&self) -> u64 {
@@ -176,11 +202,60 @@ impl Context {
     pub(crate) fn note_program(&self, _program: &Program) {
         self.programs_created
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.programs_live
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(crate) fn note_program_destroyed(&self) {
         self.programs_destroyed
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.programs_live
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Counts one `glUniform*` call: the executor reports these per frame.
+    pub(crate) fn count_uniform(&self) {
+        self.uniforms_set
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.uniforms_set_frame
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn uniforms_set(&self) -> u64 {
+        self.uniforms_set.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn uniforms_set_this_frame(&self) -> u64 {
+        self.uniforms_set_frame
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn uploaded_this_frame(&self) -> u64 {
+        self.uploaded_frame
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Called by the renderer at the start of a frame, so the per-frame counters mean what
+    /// their names say.
+    pub fn begin_frame(&self) {
+        self.uniforms_set_frame
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.uploaded_frame
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The drawable's size in pixels, as the platform layer last reported it.
+    pub fn drawable_size(&self) -> (u32, u32) {
+        let packed = self.drawable.load(std::sync::atomic::Ordering::Relaxed);
+        (packed >> 16, packed & 0xFFFF)
+    }
+
+    /// Records the drawable's size. Called on every resize, before the first frame that uses
+    /// the new size: the executor's viewport flip reads it.
+    pub fn set_drawable_size(&self, width: u32, height: u32) {
+        let packed = ((width & 0xFFFF) << 16) | (height & 0xFFFF);
+        self.drawable
+            .store(packed, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Asks the driver for an error after a call that has no return value. `where_` names the

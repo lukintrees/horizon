@@ -2,13 +2,20 @@
 # Sets up (or inspects) the development environment for the OpenGL 2.1 port.
 #
 #   tools/gl21_preflight.sh                 # report what is here and what is missing
-#   tools/gl21_preflight.sh --install       # install the Python-side gates into .local/gl21-env
-#   tools/gl21_preflight.sh --mirror URL    # use a PyPI mirror (also: PIP_INDEX_URL=...)
+#   tools/gl21_preflight.sh --setup         # provision everything it can: Rust, the Python
+#                                           # gates, and glow's source for the API check
+#   tools/gl21_preflight.sh --install       # only the Python-side gates into .local/gl21-env
+#   tools/gl21_preflight.sh --mirror URL    # PyPI mirror (also: PIP_INDEX_URL=...).
+#                                           # Rust mirrors: GL21_RUSTUP_DIST_SERVER and
+#                                           # GL21_CARGO_REGISTRY (defaults: rsproxy.cn)
+#   tools/gl21_preflight.sh --glow          # fetch glow's source for tools/gl21_typecheck.py
 #   tools/gl21_preflight.sh --json out.json # machine-readable report
 #
-# It never installs system packages and never writes outside .local/: on a machine
-# without apt rights (containers, CI, this sandbox) that is the difference between a
-# script that helps and one that fails half way through with a half-built toolchain.
+# It never installs system packages and never writes outside .local/ and CARGO_HOME/.local/cargo:
+# on a machine without apt rights (containers, CI, the sandbox this crate was written in) that
+# is the difference between a script that helps and one that fails half way through with a
+# half-built toolchain. Everything it downloads, it downloads from a mirror whose URL is a
+# variable, because the direct sites are what a restricted network blocks first.
 #
 # Two environments matter, and they are not the same:
 #
@@ -25,16 +32,26 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ENVDIR="$ROOT/.local/gl21-env"
 JSON=""
 INSTALL=0
+SETUP=0
+GLOW=0
+GlowDir="$ROOT/.local/glow"
+RUSTUP_DIST_SERVER="${GL21_RUSTUP_DIST_SERVER:-https://rsproxy.cn}"
+CARGO_REGISTRY="${GL21_CARGO_REGISTRY:-sparse+https://rsproxy.cn/index/}"
+# glow 0.17.0, the version Cargo.lock pins: the type check must read the same API the crate
+# compiles against, or it reports a difference that is not one.
+GLOW_VERSION="0.17.0"
 MIRROR="${PIP_INDEX_URL:-}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --install) INSTALL=1 ;;
+    --setup) SETUP=1; INSTALL=1; GLOW=1 ;;
+    --glow) GLOW=1 ;;
     --mirror) MIRROR="${2:-}"; shift ;;
     --mirror=*) MIRROR="${1#*=}" ;;
     --json) JSON="${2:-}"; shift ;;
     --json=*) JSON="${1#*=}" ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -158,6 +175,71 @@ else
   add warn glslang "no glslangValidator: shaders are checked by the lexical gate only"
 fi
 
+# --- provisioning ----------------------------------------------------------
+# Ordered so the cheap, offline checks come first: fetching a toolchain over a mirror to find
+# out that Python is missing would waste the download.
+if [ "$SETUP" = 1 ] && ! have rustc; then
+  echo "rust: no rustc — fetching rustup and the stable toolchain"
+  echo "  RUSTUP_DIST_SERVER=$RUSTUP_DIST_SERVER"
+  if have curl && curl -fsSL --connect-timeout 10 "$RUSTUP_DIST_SERVER/rustup/dist/x86_64-unknown-linux-gnu/rustup-init" \
+      -o "$ROOT/.local/rustup-init" 2>/dev/null; then
+    chmod +x "$ROOT/.local/rustup-init"
+    RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER" CARGO_HOME="$ROOT/.local/cargo" \
+      RUSTUP_HOME="$ROOT/.local/rustup" "$ROOT/.local/rustup-init" -y --profile minimal \
+      --component clippy,rustfmt --no-modify-path \
+      && echo "  installed: rustc and cargo in .local/rustup (add .local/cargo/bin to PATH)" \
+      || echo "  failed: rustup-init did not install (mirror blocked or the toolchain is not there)"
+  else
+    echo "  failed: no rustup-init from $RUSTUP_DIST_SERVER"
+    echo "  this is the sandbox docs/gl21-dev-env.md describes: build on another machine, or"
+    echo "  let CI compile it (.github/workflows/ci.yml, job gl21)"
+  fi
+  echo
+fi
+
+if [ "$SETUP" = 1 ] && ! have cargo; then
+  if [ -x "$ROOT/.local/cargo/bin/cargo" ]; then
+    add note cargo "installed at .local/cargo/bin/cargo (not on PATH yet)"
+  fi
+fi
+
+if [ "$GLOW" = 1 ]; then
+  if [ -f "$GlowDir/src/lib.rs" ]; then
+    add ok glow-source "$GlowDir (src/lib.rs present)"
+  else
+    echo "glow: fetching $GLOW_VERSION for tools/gl21_typecheck.py"
+    mkdir -p "$ROOT/.local"
+    fetched=0
+    # 1. the registry cache, if a build has already filled it
+    if have cargo; then
+      RUSTUP_TOOLCHAIN= CARGO_HOME="$ROOT/.local/cargo" \
+        cargo fetch -p glow@$GLOW_VERSION >/dev/null 2>&1 || true
+      cached=$(find "$ROOT/.local/cargo/registry/src" -maxdepth 2 -type d -name "glow-$GLOW_VERSION" 2>/dev/null | head -1)
+      if [ -n "$cached" ]; then
+        ln -sfn "$cached" "$GlowDir"
+        fetched=1
+      fi
+    fi
+    # 2. the mirror the registry is configured against
+    if [ "$fetched" = 0 ] && have curl; then
+      url="https://rsproxy.cn/api/v1/crates/glow/$GLOW_VERSION/download"
+      if curl -fsSL --connect-timeout 10 "$url" -o "$ROOT/.local/glow.crate" 2>/dev/null; then
+        mkdir -p "$GlowDir"
+        if tar -xzf "$ROOT/.local/glow.crate" -C "$ROOT/.local" "glow-$GLOW_VERSION" 2>/dev/null; then
+          mv "$ROOT/.local/glow-$GLOW_VERSION" "$GlowDir"
+          rm -f "$ROOT/.local/glow.crate"
+          fetched=1
+        fi
+      fi
+    fi
+    if [ "$fetched" = 1 ]; then
+      add ok glow-source "$GlowDir"
+    else
+      add warn glow-source "not fetched: tools/gl21_typecheck.py needs --glow or --glow-cargo"
+    fi
+  fi
+fi
+
 echo
 if [ "$INSTALL" = 1 ]; then
   echo "installing the Python gates into .local/gl21-env"
@@ -170,6 +252,21 @@ if [ "$INSTALL" = 1 ]; then
   python3 -m pip install $pip_args tree-sitter tree-sitter-rust \
     && echo "installed: tree-sitter, tree-sitter-rust"
   echo "add to PYTHONPATH: $ENVDIR"
+  if [ "$SETUP" = 1 ]; then
+    mkdir -p "$ROOT/.local/cargo"
+    if [ ! -f "$ROOT/.local/cargo/config.toml" ]; then
+      cat > "$ROOT/.local/cargo/config.toml" <<EOF
+# Written by tools/gl21_preflight.sh --setup. The direct crates.io index is blocked on the
+# network this crate was developed on; the mirror is a source replacement, so Cargo.lock still
+# pins the same versions and the same checksums.
+[source.crates-io]
+replace-with = "mirror"
+[source.mirror]
+registry = "$CARGO_REGISTRY"
+EOF
+      echo "wrote .local/cargo/config.toml (registry: $CARGO_REGISTRY)"
+    fi
+  fi
 fi
 
 if [ -n "$JSON" ]; then

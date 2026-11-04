@@ -119,12 +119,15 @@ not touch them, on purpose.
 | --- | --- | --- |
 | `tools/gl21_budget.py` | Python 3.9+ | anywhere, including a sandbox with no compiler |
 | `tools/gl21_glsl.py` | Python 3.9+ | anywhere (GLSL 1.20 gate: budgets, grammar, stage pairs) |
-| `tools/gl21_preflight.sh` | bash | anywhere (says what this machine has and lacks) |
+| `tools/gl21_preflight.sh` | bash | anywhere (says what this machine has and lacks; `--setup` provisions what it can) |
+| `tools/gl21_typecheck.py` | Python 3.9+ + tree-sitter | anywhere **with glow's sources** (`--glow-cargo` from a cargo cache, or `--glow <checkout>`) |
 | `tools/gl21_rustsyntax.py` | `tree-sitter`, `tree-sitter-rust` (`.local/gl21-env`) | anywhere |
 | `cargo test -p horizon-client-gl` | rustc | build machine |
 | `cargo test -p horizon-client-gl -- --ignored` (context tests) | rustc + a GL 2.1+ driver | build machine with Mesa |
 | `cargo run -p horizon-client-gl --bin horizon-gl21-info -- --probe` | rustc (+ a driver for the second half) | build machine |
-| `cargo test -p horizon-client-gl` | rustc only: caps, budgets, the draw list, the vertex format and the sprite maths | **any machine with rustc** |
+| `cargo test -p horizon-client-gl` | rustc only: caps, budgets, the draw list, the executor, state, targets, the vertex format and the sprite maths | **any machine with rustc** |
+| `python3 tools/gl21_typecheck.py --self-test` | tree-sitter only: proves the checker itself still flags what it must | anywhere |
+| the `gl21` job in `.github/workflows/ci.yml` | nothing local: it is the compiler, the linter, the tests and the API check | **GitHub** |
 | `tools/gl21_compare.py` (planned, M2) | rustc + Mesa + a captured scene | build machine |
 | playability (frame times, driver quirks) | the real X1650 | target machine only |
 
@@ -144,3 +147,33 @@ Crash-in-driver has no message. The renderer already logs each startup step
 where the driver died. For the legacy path the same rule applies from the first commit: log
 before `wglCreateContext`, before the first `glGetIntegerv`, before the first program link,
 and flush.
+
+## Where the compiler actually runs
+
+The machine this crate was written on has no rustc and no libGL: every Rust mirror and every
+package mirror is blocked there (`docs/gl21-dev-env.md`, the network matrix above). That is a
+development-environment fact, not a reason to stop, and the arrangement that replaces a local
+compiler has three parts:
+
+1. **`.github/workflows/ci.yml`, job `gl21`** — the real build: `cargo +stable clippy
+   -p horizon-client-gl --all-targets -- -D warnings`, `fmt --check`, `test`, then
+   `tools/gl21_typecheck.py --glow-cargo` against the glow sources `Cargo.lock` pins, then
+   the binary's own report. Every push to this branch runs it; a pull request runs it too.
+   Push and read the log — that is the `cargo check` the sandbox cannot give.
+2. **`tools/gl21_rustsyntax.py`** — parses every file with tree-sitter: catches a missing
+   brace, an unbalanced `impl`, a stray token, in under a second and with no toolchain.
+3. **`tools/gl21_typecheck.py`** — reads glow's `HasContext` trait and the crate's own
+   functions, and reports a call with the wrong arity, a method glow does not have, a
+   `glow::CONSTANT` glow does not define, or a literal of the wrong type. It is the cheap
+   approximation of the compiler's most common complaint, and it is deliberately silent when
+   it cannot name a receiver's type rather than guessing.
+
+None of the three is a substitute for the fourth thing, which is a person running the game on
+the X1650. `HORIZON_GL21_STRICT=1` plus the `gl21` job gets the code to the point where that
+run is worth doing; it cannot make llvmpipe's GL 4.5 behave like Catalyst 9.3.
+
+`tools/gl21_preflight.sh --setup` writes the environment those three expect: it fetches the
+Rust toolchain from `GL21_RUSTUP_DIST_SERVER` (default `https://rsproxy.cn`), the Python gates
+from `--mirror`, glow's source for the type check, and a `CARGO_HOME` registry replacement at
+`GL21_CARGO_REGISTRY`. On this sandbox every one of those downloads is refused; the script says
+so in one line each and points at the job above.

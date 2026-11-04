@@ -263,7 +263,7 @@ impl Feature {
             Feature::PointSprite => "particles",
             Feature::SwapControl => "VSync",
             Feature::Fog => "distance fog",
-            Feature::UniformBuffers => "wgpu-походный стиль uniform'ов (не используется здесь)",
+            Feature::UniformBuffers => "uniform blocks in one binding point",
             Feature::StorageBuffers => "GPU-side buffers (not on this path)",
             Feature::TextureStorage => "immutable textures",
             Feature::TextureArrays => "one sampler per sprite array",

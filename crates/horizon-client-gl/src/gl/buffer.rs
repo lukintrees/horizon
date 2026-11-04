@@ -139,6 +139,22 @@ impl Buffer {
     }
 
     /// Binds it. A backend's state cache calls this only when the binding changes.
+    /// Writes `data` at `offset`, growing the buffer when the slice does not fit.
+    ///
+    /// The terrain path writes a section's vertices once, then patches a few of them when a
+    /// block is placed: a patch is `write_at` and must not re-specify the whole buffer, because
+    /// on the target a `glBufferData` of an in-use buffer is a stall of the whole pipeline.
+    pub fn ensure(&mut self, ctx: &Context, offset: usize, data: &[u8]) -> Result<()> {
+        let end = offset + data.len();
+        if end > self.size {
+            // Re-specify rather than `glBufferSubData` past the end: the driver's only report
+            // for that is `GL_INVALID_VALUE`, and on the target sometimes nothing at all.
+            self.write(ctx, &vec![0; end])
+        } else {
+            self.write_at(ctx, offset, data)
+        }
+    }
+
     pub fn bind(&self, ctx: &Context) {
         unsafe { ctx.gl().bind_buffer(self.target, self.raw) };
     }

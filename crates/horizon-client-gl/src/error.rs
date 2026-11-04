@@ -49,7 +49,7 @@ impl fmt::Display for Error {
     }
 }
 
-fn feature_name(feature: crate::caps::Feature) -> String {
+pub fn feature_name(feature: crate::caps::Feature) -> String {
     let debug = format!("{feature:?}");
     let mut out = String::new();
     for (i, c) in debug.char_indices() {

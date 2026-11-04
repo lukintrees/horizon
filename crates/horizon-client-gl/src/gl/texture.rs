@@ -79,7 +79,25 @@ impl Sampling {
         mag: Filter::Linear,
         anisotropy: 0,
     };
+
+    /// This sampling with another's wrap and filters but its own anisotropy: the one the
+    /// executor applies, because a 2.1 context has no sampler objects and wrap/filter are
+    /// therefore texture state that a pass borrows rather than a separate object it binds.
+    pub fn with_wrap_and_filters(self, other: Sampling) -> Sampling {
+        Sampling {
+            wrap: other.wrap,
+            min: other.min,
+            mag: other.mag,
+            anisotropy: self.anisotropy,
+        }
+    }
 }
+
+/// `GL_SRGB8_ALPHA8_EXT`: the internal format a texture upload uses when the driver has
+/// `EXT_texture_sRGB`. glow's constant set has `SRGB8_ALPHA8`, which is the 3.0 number; the
+/// extension defines the same value, so the literal is the extension's name rather than a
+/// second constant that could drift.
+pub const SRGB8_ALPHA8_EXT: u32 = 0x8C43;
 
 /// A 2D texture.
 #[derive(Debug)]
@@ -89,6 +107,9 @@ pub struct Texture {
     height: u32,
     sampling: Sampling,
     has_mips: bool,
+    /// Uploaded in sRGB, so the driver linearizes on sample: gamma stays right without a 3.0
+    /// `GL_FRAMEBUFFER_SRGB`.
+    srgb: bool,
     label: &'static str,
 }
 
@@ -118,8 +139,35 @@ impl Texture {
             height,
             sampling,
             has_mips: false,
+            srgb: false,
             label,
         })
+    }
+
+    /// A copy of `texture` that reports a different sampling but owns nothing: the executor
+    /// uses it to re-upload wrap and filter parameters that a 2.1 context keeps on the texture
+    /// itself, because there are no sampler objects to hold them. Dropping it destroys nothing.
+    pub fn describe(texture: &Texture, sampling: Sampling) -> Self {
+        Self {
+            raw: texture.raw,
+            width: texture.width,
+            height: texture.height,
+            sampling,
+            has_mips: texture.has_mips,
+            srgb: texture.srgb,
+            label: texture.label,
+        }
+    }
+
+    /// Uploads sRGB texels: the driver turns them into linear values when the shader samples
+    /// them. On the target that is `EXT_texture_sRGB`, not `GL_FRAMEBUFFER_SRGB` (3.0), which
+    /// is also why this path has no sRGB framebuffer to get wrong.
+    pub fn set_srgb(&mut self, srgb: bool) {
+        self.srgb = srgb;
+    }
+
+    pub fn is_srgb(&self) -> bool {
+        self.srgb
     }
 
     pub fn raw(&self) -> Option<glow::Texture> {

@@ -151,6 +151,10 @@ pub enum Cull {
     Front,
 }
 
+/// `GL_TRIANGLES`, named here so the draw list owns the one primitive the path uses and the
+/// executor does not reach into `glow` for it.
+pub const PRIMITIVE_TRIANGLES_GL: u32 = 0x0004;
+
 /// A uniform's identity in a program: resolved when the program is linked, then an index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UniformId(pub u16);
