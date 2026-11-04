@@ -1,0 +1,24 @@
+# OpenGL 2.x probe for the Radeon X1650 path (docs/plans/opengl21-radeon-x1650.md, phase 0).
+#
+# A separate workspace on purpose: it is not part of the game's locked workspace, so its
+# dependencies cannot change the game's Cargo.lock. Run it from this directory.
+[package]
+name = "horizon-gl2"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Headless OpenGL 2.x context, capability report and GLSL 1.10 render check"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gl2-probe"
+path = "src/main.rs"
+
+[dependencies]
+glow = "0.17"
+libloading = "0.8"
+
+[workspace]

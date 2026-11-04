@@ -40,7 +40,7 @@ impl Missing {
     fn size(&self) -> [u32; 2] {
         self.renderer
             .as_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height])
+            .map_or([1280, 720], |r| r.surface_size())
     }
 
     /// `f` over a Ui of the window's size, the cursor where the pointer is.

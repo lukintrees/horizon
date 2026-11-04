@@ -1,0 +1,270 @@
+# Phase 0 of docs/plans/opengl21-radeon-x1650.md. Three jobs on crates/horizon-gl2:
+#   probe        Linux, EGL on Mesa llvmpipe: unit tests, then the probe three ways (the driver as it
+#                is, capped to the Radeon X1650's OpenGL 2.1 / GLSL 1.20, and the floor 2.0 / GLSL 1.10).
+#   windows-wgl  Windows x64, WGL on Mesa llvmpipe (opengl32.dll from pal1000/mesa-dist-win): the same
+#                three modes through the path Catalyst uses on Windows.
+#   win7-i686    Builds the probe for i686-win7-windows-msvc (Windows 7 32-bit, tier 3, build-std),
+#                checks its imports for Windows 8+, and uploads the exe to run on the card.
+# llvmpipe is a CPU rasteriser: these check what the API allows, not speed and not the X1650's driver.
+name: GL 2.x probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/**]
+    paths:
+      - crates/horizon-gl2/**
+      - .github/workflows/gl2-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: crates/horizon-gl2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mesa llvmpipe (EGL and desktop OpenGL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libegl-mesa0 libgl1 libgl1-mesa-dri
+
+      - name: Unit tests
+        run: cargo test
+
+      # Each probe runs even when an earlier one fails: the reports say which mode broke.
+      - name: Probe, driver as it is
+        continue-on-error: true
+        run: cargo run --quiet -- --out out/native.json
+
+      - name: "Probe, capped to OpenGL 2.1 and GLSL 1.20 (the X1650's reported versions)"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.1"
+          MESA_GLSL_VERSION_OVERRIDE: "120"
+        run: cargo run --quiet -- --out out/gl21.json --frame out/gl21-frame.png
+
+      - name: "Probe, the floor: OpenGL 2.0 and GLSL 1.10"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.0"
+          MESA_GLSL_VERSION_OVERRIDE: "110"
+        run: cargo run --quiet -- --out out/gl20.json
+
+      # The reports come back to the author as annotations, the only channel that survives the sandbox:
+      # artifacts and logs cannot be downloaded from there. Annotations are capped per step, so each mode
+      # gets one line of checks, and details appear only for the checks that failed.
+      - name: Every probe must pass
+        run: |
+          status=0
+          for report in out/native.json out/gl21.json out/gl20.json; do
+            name=$(basename "$report" .json)
+            if [ ! -s "$report" ]; then
+              echo "::error title=$name::no report written"
+              status=1
+              continue
+            fi
+            echo "::notice title=$name::GL $(jq -r '.gl_version // "-"' "$report") | GLSL $(jq -r '.glsl_version // "-"' "$report") | $(jq -r '.renderer // "-"' "$report") | error: $(jq -r '.error // "none"' "$report") | checks: $(jq -r '[(.checks // [])[] | "\(.name)=\(if .ok then "ok" else "FAIL" end)"] | join(" ")' "$report")"
+            jq -r '(.checks // [])[] | select(.ok | not) | (if .required then "R" else "I" end) + " " + .name + ": " + .detail' "$report" \
+              | while IFS= read -r line; do
+                  case "$line" in
+                    R*) echo "::error title=$name::${line#R }" ;;
+                    *)  echo "::notice title=$name::${line#I } (not required)" ;;
+                  esac
+                done
+            if ! jq -e '.pass == true' "$report" > /dev/null; then
+              echo "::error title=$name::did not pass"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gl2-probe-reports
+          path: crates/horizon-gl2/out/
+          if-no-files-found: warn
+
+  windows-wgl:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: crates/horizon-gl2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the probe (x64)
+        run: cargo build --release --bin gl2-probe
+
+      # Catalyst gives OpenGL on Windows through opengl32.dll (WGL). Mesa's Windows build provides
+      # the same entry point with llvmpipe behind it. The DLLs go next to the exe, which Windows
+      # searches before System32, so they replace the Microsoft 1.1 implementation.
+      - name: Mesa llvmpipe for Windows (x64 opengl32.dll)
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Failures are printed as annotations: the logs of this sandbox's runs cannot be read.
+          try {
+            $url = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-mingw.7z'
+            Invoke-WebRequest -Uri $url -OutFile mesa.7z -UseBasicParsing
+            $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+            if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
+            & $sevenZip x mesa.7z -omesa -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE (using $sevenZip)" }
+            # Mesa on Windows builds its software driver as opengl32sw.dll; the probe needs it under the
+            # name opengl32.dll, which is what the exe loads and what Windows searches for first.
+            $names = @(Get-ChildItem -Path mesa -Recurse -Filter '*.dll' | ForEach-Object { $_.Name } | Sort-Object -Unique)
+            Write-Output "::notice title=mesa::DLL names in the archive: $($names -join ' ')"
+            $candidates = @(Get-ChildItem -Path mesa -Recurse -Filter 'opengl32*.dll')
+            $gl = $candidates | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            if (-not $gl -and $candidates.Count -eq 1) { $gl = $candidates[0] }
+            if (-not $gl) { throw 'no x64 opengl32*.dll in the Mesa archive' }
+            $source = $gl.DirectoryName
+            $dllFiles = @(Get-ChildItem -Path $source -Filter '*.dll')
+            $dllFiles | Copy-Item -Destination crates/horizon-gl2/target/release/
+            Copy-Item -Path $gl.FullName -Destination crates/horizon-gl2/target/release/opengl32.dll -Force
+            Write-Output "::notice title=mesa::copied $($dllFiles.Count) DLLs from $source; $($gl.Name) as opengl32.dll"
+          } catch {
+            Write-Output "::error title=mesa::$($_.Exception.Message)"
+            exit 1
+          }
+
+      - name: Probe, driver as it is
+        continue-on-error: true
+        run: .\target\release\gl2-probe.exe --out out\native.json
+
+      - name: "Probe, capped to OpenGL 2.1 and GLSL 1.20 (the X1650's reported versions)"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.1"
+          MESA_GLSL_VERSION_OVERRIDE: "120"
+        run: .\target\release\gl2-probe.exe --out out\gl21.json --frame out\gl21-frame.png
+
+      # The same frame, drawn into a visible window and presented for two seconds: the window part of gate G1.
+      - name: "Window, capped to OpenGL 2.1 and GLSL 1.20 (the frame on screen)"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.1"
+          MESA_GLSL_VERSION_OVERRIDE: "120"
+        run: .\target\release\gl2-probe.exe --window --out out\window.json --frame out\window-frame.png
+
+      - name: "Probe, the floor: OpenGL 2.0 and GLSL 1.10"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.0"
+          MESA_GLSL_VERSION_OVERRIDE: "110"
+        run: .\target\release\gl2-probe.exe --out out\gl20.json
+
+      - name: Every probe must pass
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $status = 0
+          foreach ($name in 'native', 'gl21', 'window', 'gl20') {
+            $path = "out/$name.json"
+            if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
+              Write-Output "::error title=$name::no report written"
+              $status = 1
+              continue
+            }
+            $r = Get-Content $path -Raw | ConvertFrom-Json
+            $checks = @($r.checks)
+            $summary = ($checks | ForEach-Object { if ($_.ok) { "$($_.name)=ok" } else { "$($_.name)=FAIL" } }) -join ' '
+            Write-Output "::notice title=$name::GL $($r.gl_version) | GLSL $($r.glsl_version) | $($r.renderer) | error: $($r.error) | checks: $summary"
+            foreach ($check in $checks) {
+              if ($check.ok) { continue }
+              if ($check.required) {
+                Write-Output "::error title=$name::$($check.name): $($check.detail)"
+              } else {
+                Write-Output "::notice title=$name::$($check.name): $($check.detail) (not required)"
+              }
+            }
+            if ($r.pass -ne $true) {
+              Write-Output "::error title=$name::did not pass"
+              $status = 1
+            }
+          }
+          exit $status
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gl2-probe-windows-reports
+          path: crates/horizon-gl2/out/
+          if-no-files-found: warn
+
+  win7-i686:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: crates/horizon-gl2
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Windows 7 target is tier 3: no prebuilt std, so it is built from rust-src with build-std.
+      - name: Nightly toolchain with rust-src
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+
+      - name: Build the probe for i686-win7-windows-msvc
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: cargo +nightly build --release --bin gl2-probe --target i686-win7-windows-msvc -Z build-std=std,panic_abort
+
+      # Rust 1.78+ std calls Windows 8+ APIs on the normal Windows targets, so a binary built for them
+      # will not start on Windows 7. The check fails on API-set imports and on known Windows 8+ names.
+      - name: Imports must stay within Windows 7
+        run: |
+          python -m pip install --quiet pefile
+          python scripts/check_win7_imports.py target/i686-win7-windows-msvc/release/gl2-probe.exe
+
+      - name: Upload the Windows 7 probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: gl2-probe-win7-i686
+          path: crates/horizon-gl2/target/i686-win7-windows-msvc/release/gl2-probe.exe
+          if-no-files-found: error
+
+      # No 32-bit Mesa build is published (the archives carry x64 only), so the 32-bit exe runs here
+      # with Microsoft's own opengl32.dll under WOW64. That driver is OpenGL 1.1, so this is a smoke
+      # test, not a render: the exe must start, create its window and pixel format, get the legacy
+      # context, report through WGL, and refuse to render below OpenGL 2.0.
+      - name: 32-bit smoke run on the system OpenGL 1.1 (WOW64)
+        run: |
+          $ErrorActionPreference = 'Continue'
+          .\target\i686-win7-windows-msvc\release\gl2-probe.exe --out out\win32-system.json
+          $exit = $LASTEXITCODE
+          $path = 'out/win32-system.json'
+          if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
+            Write-Output "::error title=win32::no report written (exit $exit): the 32-bit exe did not finish"
+            exit 1
+          }
+          $r = Get-Content $path -Raw | ConvertFrom-Json
+          $checks = @($r.checks)
+          $ctx = $checks | Where-Object { $_.name -eq 'context_2_1' } | Select-Object -First 1
+          $render = $checks | Where-Object { $_.name -eq 'render_check' } | Select-Object -First 1
+          $ok = $true
+          if ($r.error) { Write-Output "::error title=win32::$($r.error)"; $ok = $false }
+          if ($r.gl_version -notmatch '^1\.1') { Write-Output "::error title=win32::expected the system OpenGL 1.1, got '$($r.gl_version)'"; $ok = $false }
+          if (-not $render -or $render.ok) { Write-Output "::error title=win32::render_check should be skipped below OpenGL 2.0"; $ok = $false }
+          Write-Output "::notice title=win32::exit $exit | GL $($r.gl_version) | $($r.renderer) | context_2_1 ok=$($ctx.ok) | render_check: $($render.detail)"
+          if ($ok) { Write-Output "::notice title=win32::32-bit WGL path ran end to end" ; exit 0 }
+          exit 1
+
+      - name: Upload the 32-bit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gl2-probe-win32-report
+          path: crates/horizon-gl2/out/
+          if-no-files-found: warn

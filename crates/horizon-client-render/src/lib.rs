@@ -1,6 +1,8 @@
 //! The client's world data, rendering and screens: chunks, meshing, light, streaming, the renderer,
 //! the HUD, menus and settings. Gameplay (horizon-client) builds on it; nothing here reaches gameplay.
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: every GL call in the OpenGL 2 path (`gl2`) is an `unsafe` glow function, and only that
+// module allows it.
+#![deny(unsafe_code)]
 pub mod assets;
 pub mod atlas_sources;
 pub mod audio;
@@ -43,6 +45,8 @@ pub mod fog;
 pub mod font;
 pub mod fusion;
 pub mod gfx;
+#[allow(unsafe_code)]
+pub mod gl2;
 pub mod graphics;
 pub mod graphics_style;
 pub mod graphics_ui;
@@ -82,6 +86,7 @@ pub mod post_glsl;
 pub mod potent_sulfur;
 pub mod preedit;
 pub mod providers;
+pub mod renderer;
 pub mod screen_draw;
 pub mod screen_effects;
 pub mod sculk;

@@ -330,7 +330,7 @@ impl Game<'_> {
             )]));
             draws.extend(charts);
             if self.debug_charts.lightmap
-                && let Some(r) = &self.renderer
+                && let Some(r) = self.renderer.as_ref().and_then(|r| r.wgpu())
             {
                 draws.extend(horizon_client::debug_chart::lightmap(
                     &r.lightmap_pixels,
@@ -348,6 +348,7 @@ impl Game<'_> {
         let present = self
             .renderer
             .as_ref()
+            .and_then(|r| r.wgpu())
             .map_or("", |r| match r.config.present_mode {
                 wgpu::PresentMode::Immediate => " (immediate)",
                 wgpu::PresentMode::Mailbox => " (mailbox)",
@@ -404,7 +405,12 @@ impl Game<'_> {
         d.line("Filtering: None");
         d.line(format!(
             "Terrain Rendering: {}",
-            if self.renderer.as_ref().is_some_and(|r| r.multi_draw) {
+            if self
+                .renderer
+                .as_ref()
+                .and_then(|r| r.wgpu())
+                .is_some_and(|r| r.multi_draw)
+            {
                 "multidrawindirect"
             } else {
                 "naive"
@@ -417,7 +423,7 @@ impl Game<'_> {
         d: &mut debug_overlay::Displayer,
         framebuffer: [i32; 2],
     ) {
-        if let Some(r) = self.renderer.as_ref() {
+        if let Some(r) = self.renderer.as_ref().and_then(|r| r.wgpu()) {
             static CPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
             d.group(
                 "system",

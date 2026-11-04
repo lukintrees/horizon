@@ -580,7 +580,7 @@ impl<'a> Split<'a> {
         let renderers = std::iter::once(&mut self.host.renderer)
             .chain(self.guests.iter_mut().map(|g| &mut g.game.renderer));
         for renderer in renderers.flatten() {
-            renderer.paced_elsewhere = true;
+            renderer.set_paced_elsewhere(true);
             renderer.wait_in_flight();
         }
         presented

@@ -38,6 +38,7 @@ cpal = { version = "0.16", optional = true }
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 glam = "0.30"
+glow = "0.17"
 log = "0.4"
 miniz_oxide = "0.8"
 naga = { version = "30.0.1", features = ["wgsl-in", "glsl-in", "hlsl-out"] }

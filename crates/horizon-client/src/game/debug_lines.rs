@@ -258,7 +258,7 @@ impl Game<'_> {
         let total = side * side * (self.world.layout().height() / 16) as usize;
         d.line(format!(
             "C: {}/{total} (s) D: {distance}, pC: {:03}, aB: {:02}",
-            r.drawn_sections,
+            r.drawn_sections(),
             self.streaming.pending(),
             0
         ));

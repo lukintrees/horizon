@@ -88,10 +88,7 @@ impl Game<'_> {
     }
     /// `Camera.getNearPlane` at the FOV option, as `getFluidInCamera` asks for it.
     pub(super) fn near_plane(&self) -> NearPlane {
-        let [width, height] = self
-            .renderer
-            .as_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let [width, height] = self.renderer.as_ref().map_or([1, 1], |r| r.surface_size());
         self.view.near_plane(
             self.settings.fov as i32 as f32,
             width as f32,

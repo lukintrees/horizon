@@ -9036,11 +9036,7 @@ impl Game<'_> {
     }
     /// A container click: the server answers with the authoritative slots.
     pub(super) fn remote_click(&mut self, right: bool) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return;
         };
         let batch = HudBatch::new(size);

@@ -1,0 +1,113 @@
+# The game's OpenGL 2.1 backend (crates/horizon-client-render/src/gl2, docs/plans/opengl21-radeon-x1650.md).
+#   windows-tests  Windows x64: the unit tests of the OpenGL 2 renderer (`gl2`), and the GPU test that
+#                  starts it on the window the game gets and draws a section on Mesa llvmpipe capped to
+#                  OpenGL 2.1 and GLSL 1.20.
+#   windows-game   Windows x64: builds the game (a release build takes most of an hour).
+# llvmpipe is a CPU rasteriser: these check what the API allows, not speed and not the X1650's driver.
+name: GL 2.1 game backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/**]
+    paths:
+      - crates/horizon-client-render/**
+      - crates/horizon-client/**
+      - .github/workflows/gl2-game.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      # The logs of these runs cannot be downloaded from the sandbox, so the errors go out as annotations.
+      - name: Build the renderer's tests (x64)
+        id: build_tests
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo test --release -p horizon-client-render --no-run 2>&1 | Out-File -FilePath out\build_tests.log -Encoding utf8
+          $status = $LASTEXITCODE
+          Get-Content out\build_tests.log | Select-String -CaseSensitive -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=test build::$($_.Line)" }
+          exit $status
+
+      - name: Mesa llvmpipe for Windows (x64 opengl32.dll)
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $url = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-mingw.7z'
+            Invoke-WebRequest -Uri $url -OutFile mesa.7z -UseBasicParsing
+            $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
+            if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
+            & $sevenZip x mesa.7z -omesa -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE (using $sevenZip)" }
+            $candidates = @(Get-ChildItem -Path mesa -Recurse -Filter 'opengl32*.dll')
+            $gl = $candidates | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            if (-not $gl -and $candidates.Count -eq 1) { $gl = $candidates[0] }
+            if (-not $gl) { throw 'no x64 opengl32*.dll in the Mesa archive' }
+            $source = $gl.DirectoryName
+            # The test executables load the DLLs from their own folder, which is where they are built.
+            $target = 'target\release\deps'
+            New-Item -ItemType Directory -Force $target | Out-Null
+            $dllFiles = @(Get-ChildItem -Path $source -Filter '*.dll')
+            $dllFiles | Copy-Item -Destination $target
+            Copy-Item -Path $gl.FullName -Destination "$target\opengl32.dll" -Force
+            Write-Output "::notice title=mesa::copied $($dllFiles.Count) DLLs from $source; $($gl.Name) as opengl32.dll"
+          } catch {
+            Write-Output "::error title=mesa::$($_.Exception.Message)"
+            exit 1
+          }
+
+      - name: Renderer tests, the GPU test on llvmpipe (OpenGL 2.1, GLSL 1.20)
+        id: tests
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.1"
+          MESA_GLSL_VERSION_OVERRIDE: "120"
+        run: |
+          $ErrorActionPreference = 'Continue'
+          cargo test --release -p horizon-client-render gl2:: --no-fail-fast 2>&1 | Out-File -FilePath out\tests.log -Encoding utf8
+          $status = $LASTEXITCODE
+          Get-Content out\tests.log | Select-String -CaseSensitive -Pattern '^error|panicked|FAILED|test result' | Select-Object -First 60 | ForEach-Object { Write-Output "::error title=renderer tests::$($_.Line)" }
+          exit $status
+
+      - name: Every step must pass
+        env:
+          BUILD_OUTCOME: ${{ steps.build_tests.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+          if ($env:BUILD_OUTCOME -ne 'success') { Write-Output "::error title=test build::the renderer's tests do not build"; $failed = $true }
+          if ($env:TESTS_OUTCOME -ne 'success') { Write-Output "::error title=renderer tests::the OpenGL 2 renderer's tests did not pass (see the annotations above)"; $failed = $true }
+          if ($failed) { exit 1 }
+          Write-Output "::notice title=gl2-game::the OpenGL 2 renderer's tests pass, and the GPU test draws a section on llvmpipe"
+
+  windows-game:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the game (x64)
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo build --release -p horizon-client 2>&1 | Out-File -FilePath out\game.log -Encoding utf8
+          $status = $LASTEXITCODE
+          Get-Content out\game.log | Select-String -CaseSensitive -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=game build::$($_.Line)" }
+          exit $status
+

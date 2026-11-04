@@ -1,0 +1,589 @@
+//! The GL2 terrain (docs/plans/opengl21-radeon-x1650.md, phase 2): every section with faces gets one
+//! vertex buffer; each frame the sections outside the view frustum are skipped, and each remaining one
+//! is one draw call. GLSL 1.20, OpenGL 2.0 calls, no instancing, no uniform buffers, no texture arrays:
+//! the atlas is one 64x64 texture, and the fog is computed per vertex.
+
+use std::time::Instant;
+
+use glow::HasContext;
+use horizon_gl2::report::Check;
+
+use crate::frame::{self, Pixels};
+use crate::math::{self, Mat4, Vec3};
+use crate::world::{self, World, FLOATS_PER_VERTEX};
+
+/// The horizon colour: the sky at the horizon line and the fog, so distant ground fades into the sky.
+pub const HORIZON: [u8; 4] = [153, 204, 255, 255];
+/// The colour straight up. The sky is a linear gradient from the horizon line to the top of the frame.
+pub const ZENITH: [u8; 3] = [70, 120, 220];
+/// The sky is computed on the GPU, so it may differ from the CPU mirror by rounding.
+const SKY_TOLERANCE: u8 = 3;
+/// Bytes between the starts of two vertices.
+const STRIDE: i32 = (FLOATS_PER_VERTEX * 4) as i32;
+
+const VERTEX_SHADER: &str = r#"#version 120
+attribute vec3 a_pos;
+attribute vec2 a_uv;
+attribute float a_shade;
+uniform mat4 u_view_proj;
+uniform vec3 u_eye;
+uniform float u_fog_start;
+uniform float u_fog_end;
+varying vec2 v_uv;
+varying float v_shade;
+varying float v_fog;
+void main() {
+    v_uv = a_uv;
+    v_shade = a_shade;
+    gl_Position = u_view_proj * vec4(a_pos, 1.0);
+    float d = distance(a_pos, u_eye);
+    v_fog = clamp((d - u_fog_start) / (u_fog_end - u_fog_start), 0.0, 1.0);
+}
+"#;
+
+/// The sky: one screen-filling quad, drawn before the terrain with the depth test off. Its colour depends
+/// only on the height in normalised device coordinates, so it has the same gradient as `sky_at`.
+const SKY_VERTEX_SHADER: &str = r#"#version 120
+attribute vec2 a_clip;
+varying float v_y;
+void main() {
+    v_y = a_clip.y;
+    gl_Position = vec4(a_clip, 0.0, 1.0);
+}
+"#;
+
+const SKY_FRAGMENT_SHADER: &str = r#"#version 120
+uniform float u_horizon;
+uniform vec3 u_horizon_color;
+uniform vec3 u_zenith_color;
+varying float v_y;
+void main() {
+    float t = clamp((v_y - u_horizon) / max(1.0 - u_horizon, 0.001), 0.0, 1.0);
+    gl_FragColor = vec4(mix(u_horizon_color, u_zenith_color, t), 1.0);
+}
+"#;
+
+const FRAGMENT_SHADER: &str = r#"#version 120
+uniform sampler2D u_atlas;
+uniform vec3 u_fog_color;
+varying vec2 v_uv;
+varying float v_shade;
+varying float v_fog;
+void main() {
+    vec3 lit = texture2D(u_atlas, v_uv).rgb * v_shade;
+    gl_FragColor = vec4(mix(lit, u_fog_color, v_fog), 1.0);
+}
+"#;
+
+/// Where the terrain is seen from, and how far the fog reaches.
+#[derive(Clone, Copy, Debug)]
+pub struct Camera {
+    pub eye: Vec3,
+    pub target: Vec3,
+    pub fovy: f32,
+    pub near: f32,
+    pub far: f32,
+    pub fog_start: f32,
+    pub fog_end: f32,
+}
+
+impl Camera {
+    /// The view of the terrain check on frame `frame`: above the hills, looking down at the centre of the
+    /// world from 62 blocks out, and circling it at 3 degrees a frame from the south-west corner. Frame 0
+    /// is at about (20.2, 26, 20.2), so the culling changes from frame to frame, as it does when the player moves.
+    pub fn orbit(frame: u32) -> Self {
+        let centre = [64.0, 10.0, 64.0];
+        let angle = (225.0 + 3.0 * frame as f32).to_radians();
+        let radius = 62.0;
+        Self {
+            eye: [centre[0] + radius * angle.cos(), 26.0, centre[2] + radius * angle.sin()],
+            target: centre,
+            fovy: 60.0,
+            near: 0.5,
+            far: 300.0,
+            fog_start: 80.0,
+            fog_end: 160.0,
+        }
+    }
+}
+
+/// What one frame cost, in the units the plan budgets: sections and draw calls, not frames per second.
+/// `frame_ms` is the CPU time of the frame, including the GPU's work up to the readback. llvmpipe is
+/// a CPU rasteriser, so this number says nothing about the Radeon X1650.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Stats {
+    pub sections: u32,
+    pub empty: u32,
+    pub culled: u32,
+    pub drawn: u32,
+    pub draw_calls: u32,
+    pub triangles: u64,
+    /// Height of the horizon line in normalised device coordinates (-1 bottom, 1 top).
+    pub horizon_ndc: f32,
+    /// Bytes of vertex data on the GPU for the whole terrain, not per frame.
+    pub buffer_bytes: u64,
+    pub frame_ms: f64,
+}
+
+struct Section {
+    min: Vec3,
+    max: Vec3,
+    buffer: glow::Buffer,
+    vertices: i32,
+}
+
+pub struct Terrain {
+    program: glow::Program,
+    sky_program: glow::Program,
+    sky_buffer: glow::Buffer,
+    atlas: glow::Texture,
+    sections: Vec<Section>,
+    total: u32,
+    empty: u32,
+    buffer_bytes: u64,
+}
+
+impl Terrain {
+    /// Meshes every section of `world` and uploads the non-empty ones. Needs a current context.
+    pub fn new(gl: &glow::Context, world: &World) -> Result<Self, String> {
+        let program = frame::link(gl, VERTEX_SHADER, FRAGMENT_SHADER, &[(0, "a_pos"), (1, "a_uv"), (2, "a_shade")])?;
+        let sky_program = frame::link(gl, SKY_VERTEX_SHADER, SKY_FRAGMENT_SHADER, &[(0, "a_clip")])?;
+        let sky_buffer = upload_sky_quad(gl)?;
+        let atlas = upload_atlas(gl)?;
+        let mut sections = Vec::new();
+        let (mut total, mut empty, mut buffer_bytes) = (0, 0, 0u64);
+        let sections_xz = world.size_xz() / world::SECTION;
+        for sy in 0..world.size_y() / world::SECTION {
+            for sz in 0..sections_xz {
+                for sx in 0..sections_xz {
+                    total += 1;
+                    let mesh = world::build_section(world, sx, sy, sz);
+                    if mesh.faces == 0 {
+                        empty += 1;
+                        continue;
+                    }
+                    let bytes: Vec<u8> = mesh.vertices.iter().flat_map(|v| v.to_ne_bytes()).collect();
+                    buffer_bytes += bytes.len() as u64;
+                    // SAFETY: the context is current, as the caller guarantees.
+                    let buffer = unsafe {
+                        let buffer = gl.create_buffer()?;
+                        gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer));
+                        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, &bytes, glow::STATIC_DRAW);
+                        buffer
+                    };
+                    let min = [sx * world::SECTION, sy * world::SECTION, sz * world::SECTION].map(|v| v as f32);
+                    let max = min.map(|v| v + world::SECTION as f32);
+                    sections.push(Section { min, max, buffer, vertices: mesh.vertex_count() as i32 });
+                }
+            }
+        }
+        Ok(Self { program, sky_program, sky_buffer, atlas, sections, total, empty, buffer_bytes })
+    }
+
+    /// Draws the terrain from `camera` into a `width` x `height` window and reads the frame back.
+    pub fn draw(&self, gl: &glow::Context, width: u32, height: u32, camera: &Camera) -> Result<(Pixels, Stats), String> {
+        let started = Instant::now();
+        let aspect = width as f32 / height as f32;
+        let view = math::look_at(camera.eye, camera.target, [0.0, 1.0, 0.0]);
+        let proj = math::perspective(camera.fovy, aspect, camera.near, camera.far);
+        let view_proj: Mat4 = math::mul(&proj, &view);
+        let planes = math::frustum_planes(&view_proj);
+        let horizon = horizon_ndc(camera);
+
+        let mut stats = Stats {
+            sections: self.total,
+            empty: self.empty,
+            buffer_bytes: self.buffer_bytes,
+            horizon_ndc: horizon,
+            ..Stats::default()
+        };
+        let horizon_rgb = HORIZON.map(|c| f32::from(c) / 255.0);
+        let zenith_rgb = ZENITH.map(|c| f32::from(c) / 255.0);
+        // SAFETY: the context is current on this thread; every handle was made on it.
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.viewport(0, 0, width as i32, height as i32);
+            gl.clear_color(horizon_rgb[0], horizon_rgb[1], horizon_rgb[2], 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+
+            // The sky first, over the whole frame, with no depth test.
+            gl.disable(glow::DEPTH_TEST);
+            gl.use_program(Some(self.sky_program));
+            gl.uniform_1_f32(gl.get_uniform_location(self.sky_program, "u_horizon").as_ref(), horizon);
+            gl.uniform_3_f32(gl.get_uniform_location(self.sky_program, "u_horizon_color").as_ref(), horizon_rgb[0], horizon_rgb[1], horizon_rgb[2]);
+            gl.uniform_3_f32(gl.get_uniform_location(self.sky_program, "u_zenith_color").as_ref(), zenith_rgb[0], zenith_rgb[1], zenith_rgb[2]);
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.sky_buffer));
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 8, 0);
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            gl.disable_vertex_attrib_array(0);
+
+            gl.enable(glow::DEPTH_TEST);
+            gl.depth_func(glow::LESS);
+            gl.use_program(Some(self.program));
+            gl.uniform_matrix_4_f32_slice(gl.get_uniform_location(self.program, "u_view_proj").as_ref(), false, &view_proj);
+            gl.uniform_3_f32(gl.get_uniform_location(self.program, "u_eye").as_ref(), camera.eye[0], camera.eye[1], camera.eye[2]);
+            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_fog_start").as_ref(), camera.fog_start);
+            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_fog_end").as_ref(), camera.fog_end);
+            gl.uniform_3_f32(
+                gl.get_uniform_location(self.program, "u_fog_color").as_ref(),
+                horizon_rgb[0],
+                horizon_rgb[1],
+                horizon_rgb[2],
+            );
+            gl.uniform_1_i32(gl.get_uniform_location(self.program, "u_atlas").as_ref(), 0);
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas));
+
+            gl.enable_vertex_attrib_array(0);
+            gl.enable_vertex_attrib_array(1);
+            gl.enable_vertex_attrib_array(2);
+            for section in &self.sections {
+                if !math::aabb_visible(&planes, section.min, section.max) {
+                    stats.culled += 1;
+                    continue;
+                }
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(section.buffer));
+                gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, STRIDE, 0);
+                gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, STRIDE, 12);
+                gl.vertex_attrib_pointer_f32(2, 1, glow::FLOAT, false, STRIDE, 20);
+                gl.draw_arrays(glow::TRIANGLES, 0, section.vertices);
+                stats.drawn += 1;
+                stats.draw_calls += 1;
+                stats.triangles += (section.vertices / 3) as u64;
+            }
+            gl.disable_vertex_attrib_array(0);
+            gl.disable_vertex_attrib_array(1);
+            gl.disable_vertex_attrib_array(2);
+            gl.finish();
+        }
+        let pixels = frame::read_back(gl, width, height)?;
+        stats.frame_ms = started.elapsed().as_secs_f64() * 1000.0;
+        Ok((pixels, stats))
+    }
+}
+
+/// The checks of the terrain frame: the terrain is drawn and culled, the top of the frame is sky, the
+/// centre is ground, and the ground covers part of the frame.
+pub fn checks(pixels: &Pixels, stats: &Stats) -> Vec<Check> {
+    let mut checks = Vec::new();
+
+    let drawn_ok = stats.drawn > 0 && stats.draw_calls == stats.drawn;
+    checks.push(Check {
+        name: "terrain_sections_drawn",
+        required: true,
+        ok: drawn_ok,
+        detail: format!("{} sections drawn in {} draw calls of {} with faces", stats.drawn, stats.draw_calls, stats.sections - stats.empty),
+    });
+
+    let culled_ok = stats.culled > 0 && stats.drawn + stats.culled + stats.empty == stats.sections;
+    checks.push(Check {
+        name: "terrain_culling",
+        required: true,
+        ok: culled_ok,
+        detail: format!("{} sections outside the frustum, {} empty, of {}", stats.culled, stats.empty, stats.sections),
+    });
+
+    let (w, h) = (pixels.width, pixels.height);
+    let sky_on = |y: u32, got: [u8; 4]| is_sky(got, row_ndc(y, h), stats.horizon_ndc);
+    let top_is_sky = (0..w).step_by(8).all(|x| sky_on(h - 1, pixels.at_bottom_up(x, h - 1)) && sky_on(h - 2, pixels.at_bottom_up(x, h - 2)));
+    checks.push(Check {
+        name: "terrain_sky_top",
+        required: true,
+        ok: top_is_sky,
+        detail: format!("the top two rows of the frame follow the sky gradient up to {ZENITH:?}"),
+    });
+
+    let centre = pixels.at_bottom_up(w / 2, h / 2);
+    checks.push(Check {
+        name: "terrain_centre_is_ground",
+        required: true,
+        ok: !sky_on(h / 2, centre),
+        detail: format!("the centre pixel is {centre:?}, the sky there is {:?}", sky_at(row_ndc(h / 2, h), stats.horizon_ndc)),
+    });
+
+    let total = (w * h) as usize;
+    let sky_pixels: usize = (0..h).map(|y| (0..w).filter(|&x| sky_on(y, pixels.at_bottom_up(x, y))).count()).sum();
+    let ground_share = 1.0 - sky_pixels as f64 / total as f64;
+    checks.push(Check {
+        name: "terrain_coverage",
+        required: true,
+        ok: (0.3..=0.95).contains(&ground_share),
+        detail: format!("ground covers {:.1}% of the frame (expected 30% to 95%)", ground_share * 100.0),
+    });
+    checks
+}
+
+/// The normalised device height of row `y` (counted from the bottom) of a frame `height` rows high.
+fn row_ndc(y: u32, height: u32) -> f32 {
+    2.0 * (y as f32 + 0.5) / height as f32 - 1.0
+}
+
+/// The sky colour at height `y` (normalised device coordinates) with the horizon at `horizon`:
+/// the horizon colour at and below the horizon line, and a linear blend up to the zenith.
+/// This is the CPU mirror of `SKY_FRAGMENT_SHADER`.
+pub fn sky_at(y: f32, horizon: f32) -> [u8; 4] {
+    let t = ((y - horizon) / (1.0 - horizon).max(0.001)).clamp(0.0, 1.0);
+    let mut out = [0, 0, 0, 255];
+    for channel in 0..3 {
+        let (from, to) = (f32::from(HORIZON[channel]), f32::from(ZENITH[channel]));
+        out[channel] = (from + (to - from) * t).round() as u8;
+    }
+    out
+}
+
+/// Whether `got` is the sky at height `y`, within the rounding of the GPU.
+fn is_sky(got: [u8; 4], y: f32, horizon: f32) -> bool {
+    let want = sky_at(y, horizon);
+    got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= SKY_TOLERANCE)
+}
+
+/// Where the horizon line falls in normalised device coordinates for `camera`. The camera looks down at
+/// the angle `theta` below the horizontal; a point at infinity on the horizon is then `tan(theta) /
+/// tan(fovy / 2)` of the half-height above the centre.
+pub fn horizon_ndc(camera: &Camera) -> f32 {
+    let d = [camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1], camera.target[2] - camera.eye[2]];
+    let horizontal = (d[0] * d[0] + d[2] * d[2]).sqrt();
+    let theta = (-d[1]).atan2(horizontal);
+    theta.tan() / (camera.fovy.to_radians() / 2.0).tan()
+}
+
+/// A text picture of a terrain frame for the CI log: `cols` by `rows` characters, a space where the
+/// sky is (the same test as the checks) and a brightness ramp for the ground. Rows go top to bottom.
+pub fn preview(pixels: &Pixels, horizon: f32, cols: u32, rows: u32) -> Vec<String> {
+    const RAMP: &[u8] = b" .:-=+*#@";
+    let (w, h) = (pixels.width, pixels.height);
+    (0..rows)
+        .map(|r| {
+            let top_down = (((r as f32 + 0.5) * h as f32 / rows as f32) as u32).min(h - 1);
+            let y = h - 1 - top_down;
+            (0..cols)
+                .map(|c| {
+                    let x = (((c as f32 + 0.5) * w as f32 / cols as f32) as u32).min(w - 1);
+                    let got = pixels.at_bottom_up(x, y);
+                    if is_sky(got, row_ndc(y, h), horizon) {
+                        ' '
+                    } else {
+                        let lum = 0.3 * f32::from(got[0]) + 0.59 * f32::from(got[1]) + 0.11 * f32::from(got[2]);
+                        let index = ((lum / 256.0) * RAMP.len() as f32) as usize;
+                        char::from(RAMP[index.min(RAMP.len() - 1)])
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn upload_sky_quad(gl: &glow::Context) -> Result<glow::Buffer, String> {
+    let quad: [f32; 12] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0];
+    let bytes: Vec<u8> = quad.iter().flat_map(|v| v.to_ne_bytes()).collect();
+    // SAFETY: the context is current on this thread.
+    unsafe {
+        let buffer = gl.create_buffer()?;
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer));
+        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, &bytes, glow::STATIC_DRAW);
+        Ok(buffer)
+    }
+}
+
+/// The atlas tile colours, in `world::Tile` order.
+const GRASS: [u8; 3] = [96, 156, 56];
+const DIRT: [u8; 3] = [134, 96, 67];
+const STONE: [u8; 3] = [124, 124, 124];
+
+/// A 64x64 atlas of four 16x16 tiles: grass top, grass side (a green band over dirt), dirt, stone.
+/// Each texel has a deterministic speckle so the faces are not flat.
+fn atlas_bytes() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(64 * 64 * 4);
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let tile = (y / 16) * 4 + x / 16;
+            let ly = y % 16;
+            let base = match tile {
+                0 => GRASS,
+                1 if ly < 4 => GRASS,
+                1 => DIRT,
+                2 => DIRT,
+                _ => STONE,
+            };
+            let speckle = noise(x, y);
+            for channel in base {
+                bytes.push((i32::from(channel) + speckle).clamp(0, 255) as u8);
+            }
+            bytes.push(255);
+        }
+    }
+    bytes
+}
+
+fn noise(x: u32, y: u32) -> i32 {
+    let mut h = x.wrapping_mul(0x9E37_79B1) ^ y.wrapping_mul(0x85EB_CA77);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    ((h >> 8) % 17) as i32 - 8
+}
+
+/// Every level of the atlas's mipmap chain, level 0 first, each a square of `size` texels a side.
+/// The levels are made on the CPU and uploaded one by one, so no GL 3.0 call is needed.
+fn mip_chain(base: Vec<u8>, size: usize) -> Vec<(usize, Vec<u8>)> {
+    let mut levels = vec![(size, base)];
+    while levels.last().map_or(false, |(s, _)| *s > 1) {
+        let (s, prev) = levels.last().expect("the chain is never empty");
+        let s = *s;
+        let next_size = s / 2;
+        let mut next = vec![0u8; next_size * next_size * 4];
+        for y in 0..next_size {
+            for x in 0..next_size {
+                for channel in 0..4 {
+                    let at = |xx: usize, yy: usize| u32::from(prev[(yy * s + xx) * 4 + channel]);
+                    let sum = at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1);
+                    next[(y * next_size + x) * 4 + channel] = ((sum + 2) / 4) as u8;
+                }
+            }
+        }
+        levels.push((next_size, next));
+    }
+    levels
+}
+
+fn upload_atlas(gl: &glow::Context) -> Result<glow::Texture, String> {
+    let levels = mip_chain(atlas_bytes(), 64);
+    // SAFETY: the context is current on this thread.
+    unsafe {
+        let texture = gl.create_texture()?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST_MIPMAP_LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        for (level, (size, bytes)) in levels.iter().enumerate() {
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                level as i32,
+                glow::RGBA as i32,
+                *size as i32,
+                *size as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(bytes.as_slice())),
+            );
+        }
+        Ok(texture)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame_with(width: u32, height: u32, fill: impl Fn(u32, u32) -> [u8; 4]) -> Pixels {
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for row in 0..height {
+            for x in 0..width {
+                rgba.extend_from_slice(&fill(x, height - 1 - row));
+            }
+        }
+        Pixels { width, height, rgba }
+    }
+
+    /// The horizon of the test frames: the 45 bottom rows of 64 are ground, the rest sky.
+    const TEST_HORIZON: f32 = 0.4;
+
+    fn sky_row(y: u32, height: u32) -> [u8; 4] {
+        sky_at(row_ndc(y, height), TEST_HORIZON)
+    }
+
+    fn stats(sections: u32, empty: u32, culled: u32, drawn: u32) -> Stats {
+        Stats { sections, empty, culled, drawn, draw_calls: drawn, horizon_ndc: TEST_HORIZON, ..Stats::default() }
+    }
+
+    fn passed(checks: &[Check]) -> Vec<&'static str> {
+        checks.iter().filter(|c| c.ok).map(|c| c.name).collect()
+    }
+
+    #[test]
+    fn a_frame_with_sky_on_top_and_ground_below_passes_every_check() {
+        // Ground from the bottom up to 70% of the height, sky above.
+        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { sky_row(y, 64) });
+        let result = checks(&pixels, &stats(128, 20, 40, 68));
+        assert_eq!(passed(&result).len(), result.len(), "{result:?}");
+    }
+
+    #[test]
+    fn a_frame_of_only_sky_fails_the_ground_checks() {
+        let pixels = frame_with(64, 64, |_, y| sky_row(y, 64));
+        let result = checks(&pixels, &stats(128, 20, 40, 68));
+        let failed: Vec<_> = result.iter().filter(|c| !c.ok).map(|c| c.name).collect();
+        assert_eq!(failed, ["terrain_centre_is_ground", "terrain_coverage"]);
+    }
+
+    #[test]
+    fn a_frame_drawn_without_any_section_fails_the_drawn_check() {
+        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { sky_row(y, 64) });
+        let result = checks(&pixels, &stats(128, 20, 108, 0));
+        assert!(!result.iter().find(|c| c.name == "terrain_sections_drawn").unwrap().ok);
+    }
+
+    #[test]
+    fn the_orbit_starts_at_the_first_view_and_keeps_its_height_and_distance() {
+        // 225 degrees puts the eye at 62 * cos(45 degrees) short of the centre on both horizontal axes.
+        let start = Camera::orbit(0);
+        let expected = 64.0 - 62.0 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!((start.eye[0] - expected).abs() < 1e-3 && (start.eye[2] - expected).abs() < 1e-3, "{:?}", start.eye);
+        for frame in [1, 17, 59] {
+            let c = Camera::orbit(frame);
+            assert_eq!(c.eye[1], 26.0);
+            let horizontal = ((c.eye[0] - 64.0).powi(2) + (c.eye[2] - 64.0).powi(2)).sqrt();
+            assert!((horizontal - 62.0).abs() < 1e-3, "frame {frame}: {horizontal}");
+        }
+    }
+
+    #[test]
+    fn the_sky_is_the_horizon_colour_at_the_line_and_the_zenith_at_the_top() {
+        assert_eq!(sky_at(TEST_HORIZON, TEST_HORIZON), HORIZON);
+        assert_eq!(sky_at(-1.0, TEST_HORIZON), HORIZON, "below the horizon the ground covers it");
+        assert_eq!(sky_at(1.0, TEST_HORIZON), [ZENITH[0], ZENITH[1], ZENITH[2], 255]);
+        let middle = sky_at(0.7, TEST_HORIZON);
+        assert!(middle[0] < HORIZON[0] && middle[0] > ZENITH[0], "{middle:?}");
+    }
+
+    #[test]
+    fn the_preview_shows_sky_on_top_and_ground_below() {
+        let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { sky_row(y, 64) });
+        let lines = preview(&pixels, TEST_HORIZON, 8, 4);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].chars().all(|c| c == ' '), "{lines:?}");
+        assert!(lines[3].chars().all(|c| c != ' '), "{lines:?}");
+    }
+
+    #[test]
+    fn the_horizon_is_at_the_centre_for_a_level_camera_and_above_it_when_looking_down() {
+        let mut level = Camera::orbit(0);
+        level.eye[1] = level.target[1];
+        assert!(horizon_ndc(&level).abs() < 1e-6);
+        let down = horizon_ndc(&Camera::orbit(0));
+        assert!((0.40..0.50).contains(&down), "{down}");
+    }
+
+    #[test]
+    fn the_mip_chain_halves_down_to_one_texel_and_averages_the_texels() {
+        // Red 0, 255, 255, 255 in a 2x2 image: the average is (765 + 2) / 4 = 191.
+        let base = vec![0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255];
+        let levels = mip_chain(base, 2);
+        assert_eq!(levels.len(), 2);
+        assert_eq!((levels[1].0, levels[1].1.as_slice()), (1, &[191, 0, 0, 255][..]));
+        let atlas = mip_chain(atlas_bytes(), 64);
+        assert_eq!(atlas.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [64, 32, 16, 8, 4, 2, 1]);
+    }
+
+    #[test]
+    fn the_atlas_has_four_by_four_tiles_of_sixteen_texels() {
+        let bytes = atlas_bytes();
+        assert_eq!(bytes.len(), 64 * 64 * 4);
+        // The tile to the right of the grass top is the grass side: its top band is green, its lower part dirt.
+        let texel = |x: usize, y: usize| &bytes[(y * 64 + x) * 4..(y * 64 + x) * 4 + 3];
+        assert!(texel(16 + 2, 1)[1] > texel(16 + 2, 1)[0], "green band on the side");
+        assert!(texel(16 + 2, 10)[0] > texel(16 + 2, 10)[1], "dirt below it");
+    }
+}
