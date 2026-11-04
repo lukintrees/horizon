@@ -427,7 +427,9 @@ mod tests {
         assert_eq!(
             plan[0]
                 .vertices
-                .chunks_exact(6)
+                .as_chunks::<6>()
+                .0
+                .iter()
                 .map(|q| q[0].position[2])
                 .collect::<Vec<_>>(),
             [10., 6., 2.]
@@ -446,7 +448,9 @@ mod tests {
         assert_eq!(
             plan[0]
                 .vertices
-                .chunks_exact(6)
+                .as_chunks::<6>()
+                .0
+                .iter()
                 .map(|q| q[0].position[2])
                 .collect::<Vec<_>>(),
             [2., 6., 10.]
@@ -466,7 +470,9 @@ mod tests {
         assert_eq!(
             plan[0]
                 .vertices
-                .chunks_exact(6)
+                .as_chunks::<6>()
+                .0
+                .iter()
                 .map(|q| q[0].position[2])
                 .collect::<Vec<_>>(),
             [2., 10., 6.]
@@ -478,7 +484,9 @@ mod tests {
             .unwrap();
         let colors = plan[0]
             .vertices
-            .chunks_exact(6)
+            .as_chunks::<6>()
+            .0
+            .iter()
             .map(|q| q[0].color)
             .collect::<Vec<_>>();
         let half = 128.0 / 255.0;
@@ -489,7 +497,9 @@ mod tests {
         assert_eq!(
             plan[0]
                 .vertices
-                .chunks_exact(6)
+                .as_chunks::<6>()
+                .0
+                .iter()
                 .map(|q| q[0].position[2])
                 .collect::<Vec<_>>(),
             [2., 6., 10.]

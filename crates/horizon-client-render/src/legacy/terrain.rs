@@ -178,7 +178,7 @@ pub(super) fn rebake(
     if let Some(order) = order {
         debug_assert_eq!(order.len(), source.len() / 4);
     }
-    for (index, quad) in mesh.vertices.chunks_exact_mut(6).enumerate() {
+    for (index, quad) in mesh.vertices.as_chunks_mut::<6>().0.iter_mut().enumerate() {
         let source_index = order.map_or(index, |ids| ids[index]);
         let input = &source[source_index * 4..source_index * 4 + 4];
         for (vertex, i) in quad.iter_mut().zip([0, 1, 2, 0, 2, 3]) {
