@@ -147,6 +147,15 @@ compute и уходит на CPU). Не хватает ровно того сл�
 
 Выход: гейты описаны, харнесс зелёный на пустом наборе, ничего в игре не меняется.
 
+**Сделано (phase 0):** `crates/horizon-client-render/src/gl21/` — профиль карты (`profile.rs`,
+`Profile::X1650`) и переключатели (`HORIZON_GL_PROFILE`, `HORIZON_GL21_PATHS`), которые на любой
+машине включают самые бедные пути существующего рендерера (CPU-анимация спрайтов, без occlusion
+culling, без flat draws, без translucent batching, без GPU-culling, без OIT, без visbuffer, без
+компактного формата квадов, одна текстурная аррай-полоса). Линтер шейдеров —
+`tools/gl21_shaders.py` (+16 тестов в `tests/test_gl21_shaders.py`) и первые два GLSL 1.20 файла
+(`gl21/present.vert`, `gl21/present.frag`). Как это запускать и что именно выключается:
+[gl21-paths.md](gl21-paths.md).
+
 ### Phase 1 — окно, контекст, цикл (1–2 недели)
 
 1. Контекст GL 2.1: `glutin` (0.32) — WGL на Windows, GLX/EGL на Linux; профиль
@@ -379,11 +388,9 @@ GL_EXT_texture_lod_bias        желательно
 
 ### 9.3 Что делать на этой неделе (первые 5 шагов)
 
-1. Завести issue «OpenGL 2.1 renderer for R500-class GPUs (X1650)» со ссылкой на этот документ;
-   в нём — чеклист Phase 0–2.
-2. `HORIZON_GL_PROFILE=x1650` + `tools/gl21_shaders.py` (Phase 0.2–0.3): это самая дешёвая часть
-   плана и она сразу проверяема в CI.
-3. Прототип окна на glutin + glow с `#version 120` и одним текстурным квадом (Phase 1) — три дня,
+1. ~~Завести issue и чеклист~~, ~~`HORIZON_GL_PROFILE=x1650`~~, ~~`tools/gl21_shaders.py`~~ —
+   сделано в phase 0 ([gl21-paths.md](gl21-paths.md)).
+2. Прототип окна на glutin + glow с `#version 120` и одним текстурным квадом (Phase 1) — три дня,
    чтобы убедиться, что стек собирается на целевых ОС.
 4. Прогнать `tools/gl21_shaders.py` по существующим WGSL после ручного перевода одного
    шейдера (`screen.wgsl`) — оценить реальную стоимость перевода (Phase 2.4).

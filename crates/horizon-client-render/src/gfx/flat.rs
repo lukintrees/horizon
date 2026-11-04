@@ -209,6 +209,10 @@ pub fn is_broken_intel_vulkan(info: &wgpu::AdapterInfo) -> bool {
 }
 
 fn supported(adapter: &wgpu::Adapter, device: &wgpu::Device) -> bool {
+    // Flat draws copy the frame's draws with compute into storage buffers.
+    if crate::gl21::poorest_paths() {
+        return false;
+    }
     let flags = adapter.get_downlevel_capabilities().flags;
     let limits = device.limits();
     flags.contains(wgpu::DownlevelFlags::VERTEX_STORAGE | wgpu::DownlevelFlags::COMPUTE_SHADERS)

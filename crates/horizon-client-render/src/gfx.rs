@@ -94,7 +94,14 @@ fn occlusion_culling_requested(info: &wgpu::AdapterInfo, env: Option<&str>) -> b
 /// Frames drawn flat (Metal, Intel Gen11/Gen12's Vulkan driver) take it too: their
 /// translucent calls then come one per page of its arena rather than about one per section.
 fn translucent_batchable(info: &wgpu::AdapterInfo, multi_draw: bool) -> bool {
-    multi_draw && info.backend != wgpu::Backend::Gl
+    translucent_batchable_with(info, multi_draw, crate::gl21::poorest_paths())
+}
+/// `translucent_batchable`, with the poorest paths (`HORIZON_GL_PROFILE=x1650`) given rather than
+/// read from the environment: the batching draws its sorted pages with the GPU's own multi-draw
+/// counts and a storage arena.
+#[cfg(test)]
+fn translucent_batchable_with(info: &wgpu::AdapterInfo, multi_draw: bool, poorest: bool) -> bool {
+    !poorest && multi_draw && info.backend != wgpu::Backend::Gl
 }
 
 /// The vertices flat draws bind for a call's page key: a page of the section arena, or of
@@ -1278,6 +1285,20 @@ fn layer_split(
     requested: Option<u32>,
     layers: u32,
 ) -> std::result::Result<u32, String> {
+    layer_split_with(max_layers, gl, requested, layers, crate::gl21::poorest_paths())
+}
+/// `layer_split`, with the poorest paths (`HORIZON_GL_PROFILE=x1650`) given rather than read from
+/// the environment: they keep one array of `SPRITE_SPLIT` layers, the split the CPU mip chains were
+/// cut by.
+#[cfg(test)]
+fn layer_split_with(
+    max_layers: u32,
+    gl: bool,
+    requested: Option<u32>,
+    layers: u32,
+    poorest: bool,
+) -> std::result::Result<u32, String> {
+    let requested = requested.or_else(|| poorest.then_some(SPRITE_SPLIT));
     let mut split = requested.unwrap_or(SPRITE_SPLIT).min(max_layers).max(1);
     if split > 1 && array_layers(split, gl) > max_layers {
         split -= 1;
@@ -4079,6 +4100,20 @@ impl Renderer {
                 .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
         let batchable = translucent_batchable(&adapter.get_info(), multi_draw);
         crate::graphics::offer_translucent_batching(batchable);
+        if let Some(profile) = crate::gl21::selected() {
+            log::warn!(
+                "Horizon: HORIZON_GL_PROFILE forces the poorest renderer paths (GL {}.{}, GLSL {}): \
+                 {}",
+                profile.gl.0,
+                profile.gl.1,
+                profile.glsl,
+                if profile.runs_horizons_renderer() {
+                    "this profile can run the wgpu renderer"
+                } else {
+                    "this profile needs the separate renderer docs/opengl21-plan.md describes"
+                }
+            );
+        }
         let translucent_batching = batchable && translucent_batching;
         let gpu_culling_supported = gpu_culling::supported(
             &adapter.get_info(),
@@ -11255,6 +11290,27 @@ mod tests {
             assert_eq!(super::array_layers(count, true), gl);
             assert_eq!(super::array_layers(count, false), count);
         }
+    }
+    /// The poorest paths (`HORIZON_GL_PROFILE=x1650`) keep the picture but take every degrading
+    /// branch: a device with the full feature set still ends up on them.
+    #[test]
+    fn the_x1650_profile_takes_the_poor_paths_on_a_capable_device() {
+        let capable = wgpu::AdapterInfo {
+            backend: wgpu::Backend::Vulkan,
+            name: "a 2020 GPU".into(),
+            ..Default::default()
+        };
+        assert!(super::translucent_batchable_with(&capable, true, false));
+        assert!(!super::translucent_batchable_with(&capable, true, true));
+        // The split is the one the CPU mip chains were cut by, not the adapter's 2048.
+        assert_eq!(
+            super::layer_split_with(2048, false, None, 64, true),
+            Ok(super::SPRITE_SPLIT)
+        );
+        assert_eq!(super::layer_split_with(2048, false, None, 64, false), Ok(2048));
+        // A card that cannot name SPRITE_SPLIT layers still gets the largest split that fits, as
+        // before: the profile does not override the adapter's limit.
+        assert_eq!(super::layer_split_with(1024, false, None, 64, true), Ok(1024));
     }
     #[test]
     fn entity_shader_validates_with_its_overlay_constants() {

@@ -352,7 +352,10 @@ pub(super) fn supported(
     multi_draw: bool,
     flat_min_sections: Option<usize>,
 ) -> bool {
-    super::translucent_batchable(info, multi_draw)
+    // Away from the poorest paths: the culling is a compute pass and its draws read the GPU's own
+    // counts (`HORIZON_GL_PROFILE=x1650`).
+    !crate::gl21::poorest_paths()
+        && super::translucent_batchable(info, multi_draw)
         && flat_min_sections.is_none_or(|min| min == usize::MAX)
         && features.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT)
         && downlevel.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
