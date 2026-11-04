@@ -10,6 +10,7 @@ mod app {
         gfx::capture::{self, AtlasCheck, Scene},
         hud::HudBatch,
         legacy::{
+            animation::SpriteAnimator,
             atlas::Atlas,
             scene,
             world::{SectionKey, World},
@@ -20,6 +21,7 @@ mod app {
         ffi::{CStr, c_void},
         path::PathBuf,
         sync::Arc,
+        time::{Duration, Instant},
     };
     #[cfg(target_os = "linux")]
     use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
@@ -37,6 +39,9 @@ mod app {
         window: Arc<Window>,
         scene: Scene,
         world: World,
+        animator: SpriteAnimator,
+        started: Instant,
+        next_frame: Instant,
         visible: Vec<SectionKey>,
     }
     impl Drop for State {
@@ -121,6 +126,31 @@ mod app {
             }
             let hud = HudBatch::new([size.width, size.height]);
             let frame = state.scene.frame(&hud);
+            let elapsed_ticks =
+                (state.started.elapsed().as_millis() / 50).min(u128::from(u64::MAX)) as u64;
+            state
+                .animator
+                .advance(
+                    state.world.atlas_mut(),
+                    frame.ticks.saturating_add(elapsed_ticks),
+                    None,
+                )
+                .map_err(|e| format!("sprite animation: {e}"))?;
+            let dirty: Vec<_> = state.animator.dirty().collect();
+            for (page, rect) in dirty {
+                let source = &state.world.atlas().pages()[page];
+                renderer
+                    .update_page_region(
+                        page,
+                        Page {
+                            side: source.side,
+                            pixels: &source.pixels,
+                        },
+                        rect,
+                    )
+                    .map_err(|e| format!("sprite upload: {e:?}"))?;
+                state.animator.uploaded(page).map_err(|e| e.to_string())?;
+            }
             let fog = scene::frame_fog(&frame);
             viewport(0, 0, size.width as i32, size.height as i32);
             clear_color(fog.color[0], fog.color[1], fog.color[2], 1.0);
@@ -231,6 +261,8 @@ mod app {
                     "Loaded {} near sections. This replay omits the game loop, HUD, entities, sky and LOD.",
                     visible.len()
                 );
+                let animator = SpriteAnimator::new(&assets.animations, world.atlas());
+                let started = Instant::now();
                 window.request_redraw();
                 Ok(State {
                     renderer: Some(renderer),
@@ -238,6 +270,9 @@ mod app {
                     window,
                     scene,
                     world,
+                    animator,
+                    started,
+                    next_frame: started + Duration::from_millis(50),
                     visible,
                 })
             })();
@@ -271,6 +306,17 @@ mod app {
                     }
                 }
                 _ => {}
+            }
+        }
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            if let Some(state) = &mut self.state {
+                let now = Instant::now();
+                if now >= state.next_frame {
+                    state.window.request_redraw();
+                    state.next_frame = now + Duration::from_millis(50);
+                }
+                event_loop
+                    .set_control_flow(winit::event_loop::ControlFlow::WaitUntil(state.next_frame));
             }
         }
         fn exiting(&mut self, _: &ActiveEventLoop) {
