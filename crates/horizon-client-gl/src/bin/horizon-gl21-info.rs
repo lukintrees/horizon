@@ -17,6 +17,7 @@ use std::process::ExitCode;
 use horizon_client_gl::budget::{self, Stage};
 use horizon_client_gl::caps::{Caps, Feature, Limits, Version};
 use horizon_client_gl::loader::GlLibrary;
+use horizon_client_gl::multi_draw::MultiDrawPointers;
 
 /// The shaders that ship with the legacy path, embedded so the binary can check them without a
 /// prepared game install: a name, its vertex source, its fragment source.
@@ -127,9 +128,15 @@ fn main() -> ExitCode {
 
     // 2. The capability table. From a real context when asked and possible, else from the
     //    target's table, so the check is still meaningful on a machine that cannot draw.
+    // The multi-draw pointers, when a context exists to ask: `None` means the question was
+    // not answered (no context), which is different from an answered "the driver has neither".
+    let mut multi_draw: Option<MultiDrawPointers> = None;
     let caps = if want_context {
         match real_caps(strict) {
-            Ok(caps) => caps,
+            Ok((caps, pointers)) => {
+                multi_draw = Some(pointers);
+                caps
+            }
             Err(message) => {
                 if json {
                     println!("{{\"context\": null, \"error\": {message:?}}}");
@@ -183,6 +190,42 @@ fn main() -> ExitCode {
         println!("{}", feature_table(&caps));
     }
 
+    // The one extension whose string and entry points can disagree, printed whenever a context
+    // answered for it. A driver that claims the extension and exports nothing gets the
+    // per-draw fallback, which is 30-60 ms of CPU a frame on the target (plan §11): this line
+    // is how that is seen before a play session rather than in a frame-time log.
+    if let Some(pointers) = multi_draw {
+        if json {
+            println!(
+                "{{\"multi_draw\": {{\"arrays\": {}, \"elements\": {}}}}}",
+                pointers.arrays.is_some(),
+                pointers.elements.is_some()
+            );
+        } else {
+            println!();
+            println!(
+                "multi-draw: arrays {}, elements {}",
+                if pointers.arrays.is_some() {
+                    "present"
+                } else {
+                    "missing"
+                },
+                if pointers.elements.is_some() {
+                    "present"
+                } else {
+                    "missing"
+                }
+            );
+            if pointers.elements.is_none() && caps.has(Feature::MultiDrawArrays) {
+                println!(
+                    "  the driver lists {} without glMultiDrawElementsEXT: one call per section",
+                    Feature::MultiDrawArrays.source()
+                );
+                failed = true;
+            }
+        }
+    }
+
     ExitCode::from(if failed { 1 } else { 0 })
 }
 
@@ -202,7 +245,7 @@ fn target_caps(strict: bool) -> Caps {
     caps
 }
 
-fn real_caps(strict: bool) -> Result<Caps, String> {
+fn real_caps(strict: bool) -> Result<(Caps, MultiDrawPointers), String> {
     let library = GlLibrary::open().map_err(|e| e.message)?;
     let mut options = horizon_client_gl::gl::Options::from_env();
     options.strict = strict;
@@ -210,7 +253,11 @@ fn real_caps(strict: bool) -> Result<Caps, String> {
     // context because the context keeps it.
     let context = unsafe { horizon_client_gl::gl::Context::new(library, options) }
         .map_err(|e| e.to_string())?;
-    Ok(context.caps().clone())
+    // The multi-draw pointers are the one thing the extension string cannot answer: a driver
+    // that lists `GL_EXT_multi_draw_arrays` and does not export `glMultiDrawElementsEXT` is
+    // the case this binary exists to find before the game is started.
+    let multi = horizon_client_gl::multi_draw::MultiDraw::load(&context);
+    Ok((context.caps().clone(), multi.pointers()))
 }
 
 struct Measurement {
