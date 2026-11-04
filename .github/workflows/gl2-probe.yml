@@ -66,8 +66,13 @@ jobs:
               continue
             fi
             echo "::notice title=$name::GL $(jq -r '.gl_version // "-"' "$report") | GLSL $(jq -r '.glsl_version // "-"' "$report") | $(jq -r '.renderer // "-"' "$report") | error: $(jq -r '.error // "none"' "$report") | checks: $(jq -r '[(.checks // [])[] | "\(.name)=\(if .ok then "ok" else "FAIL" end)"] | join(" ")' "$report")"
-            jq -r '(.checks // [])[] | select(.ok | not) | "\(.name): \(.detail)"' "$report" \
-              | while IFS= read -r line; do echo "::error title=$name::$line"; done
+            jq -r '(.checks // [])[] | select(.ok | not) | (if .required then "R" else "I" end) + " " + .name + ": " + .detail' "$report" \
+              | while IFS= read -r line; do
+                  case "$line" in
+                    R*) echo "::error title=$name::${line#R }" ;;
+                    *)  echo "::notice title=$name::${line#I } (not required)" ;;
+                  esac
+                done
             if ! jq -e '.pass == true' "$report" > /dev/null; then
               echo "::error title=$name::did not pass"
               status=1
