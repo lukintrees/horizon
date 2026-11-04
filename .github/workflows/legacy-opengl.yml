@@ -15,6 +15,7 @@ on:
       - 'tools/pe_imports.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
+      - 'tools/win7_link_inputs.py'
       - 'tests/test_pe_imports.py'
       - '.github/workflows/legacy-opengl.yml'
   pull_request:
@@ -32,6 +33,7 @@ on:
       - 'tools/pe_imports.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
+      - 'tools/win7_link_inputs.py'
       - 'tests/test_pe_imports.py'
       - '.github/workflows/legacy-opengl.yml'
   workflow_dispatch:
@@ -221,6 +223,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: win7-link-trace
-          path: ${{ runner.temp }}/win7-link-trace.txt
+          path: |
+            ${{ runner.temp }}/win7-link-trace.txt
+            ${{ runner.temp }}/win7-link-inputs.txt
           if-no-files-found: ignore
           retention-days: 2
