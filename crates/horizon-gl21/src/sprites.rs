@@ -168,8 +168,8 @@ fn levels_of(atlas: &Atlas, pixels: &[u8]) -> AtlasLevels {
     }
 }
 
-/// `levels` as the sprite atlas's upload.
-pub fn upload(levels: &[Level<'_>]) -> Upload<'_> {
+/// `levels` as the sprite atlas's upload: the same breadcrumbs, with the texture's own name.
+pub fn upload<'a>(levels: &'a [Level<'a>]) -> Upload<'a> {
     Upload {
         texture: TextureId::SpriteAtlas,
         levels,
