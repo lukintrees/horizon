@@ -884,7 +884,7 @@ impl Game<'_> {
                 arg(1)?;
                 // The rest of the line: a path may hold spaces.
                 let path = line.trim_start().strip_prefix("screenshot").unwrap_or("");
-                renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
+                renderer.request_screenshot(horizon_client::gfx::ScreenshotRequest {
                     path: path.trim().into(),
                     size: None,
                     scaled: false,
@@ -1279,7 +1279,7 @@ impl Game<'_> {
             let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
             json!({ "pos": hit.pos, "block": &*self.res.facts().get(state).name })
         });
-        let renderer = self.renderer.as_ref().map(|r| {
+        let renderer = self.renderer.as_ref().and_then(|r| r.wgpu()).map(|r| {
             let [arena_bytes, section_vertex_bytes] = r.section_vertex_bytes();
             // Device memory by the backend's allocator (Vulkan; absent elsewhere).
             let memory = r.device.generate_allocator_report();
@@ -1295,9 +1295,9 @@ impl Game<'_> {
                     wgpu::DeviceType::Other => "other",
                 },
                 "backend": format!("{:?}", r.info.backend),
-                "size": [r.config.width, r.config.height],
+                "size": r.surface_size(),
                 "present_mode": format!("{:?}", r.config.present_mode),
-                "drawn_sections": r.drawn_sections,
+                "drawn_sections": r.drawn_sections(),
                 "section_draws": r.section_draws,
                 "section_draw_calls": r.section_draw_calls,
                 "culled_sections": r.culled_sections(),

@@ -160,7 +160,8 @@ impl Game<'_> {
     /// CycleButton: the next value, or the previous one with Shift.
     fn cycle_debug_gui_scale(&mut self, back: bool) {
         let size = self.renderer.as_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
+            let [width, height] = r.surface_size();
+            [width as i32, height as i32]
         });
         let max = horizon_client::window::calculate_scale(size, 0, self.settings.force_unicode);
         let current = self.settings.file.int("debugGuiScale").clamp(-1, max);
@@ -182,7 +183,7 @@ impl Game<'_> {
         let size = self
             .renderer
             .as_ref()
-            .map_or([w as u32, h as u32], |r| [r.config.width, r.config.height]);
+            .map_or([w as u32, h as u32], |r| r.surface_size());
         self.draw_debug_overlay_under(batch, size);
         let atlas = &self.gui.atlas;
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, true);

@@ -1,0 +1,42 @@
+name: GL2 compile diagnostics
+# Temporary: type-checks the renderer and the game with every compiler message kept, and prints them as one
+# annotation (the only channel that survives the sandbox). Removed once the OpenGL 2 path builds.
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/**]
+    paths:
+      - crates/**
+      - .github/workflows/gl2-check.yml
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+          rustup toolchain install stable --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: verify
+          save-if: false
+      - name: Check with every message listed
+        run: |
+          set +e
+          cargo +stable clippy -p horizon-client-render -p horizon-client --all-targets --message-format=short > check.txt 2>&1
+          code=$?
+          python3 - "$code" <<'PY'
+          import re, sys
+          code = sys.argv[1]
+          lines = open("check.txt", errors="replace").read().splitlines()
+          keep = [l.rstrip() for l in lines if re.search(r"error|warning: unused|warning: .*never|does not|not found", l)]
+          text = f"exit={code}\n" + "\n".join(keep)
+          tail = "\n".join(lines[-30:])
+          text = (text + "\n--- tail ---\n" + tail)[:40000]
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=gl2-check::{esc}")
+          PY

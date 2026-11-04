@@ -420,7 +420,7 @@ impl Loading {
     }
     pub(super) fn apply_menu_settings(&mut self) {
         if let Some(renderer) = &mut self.renderer {
-            renderer.gamma = self.settings.gamma;
+            renderer.set_gamma(self.settings.gamma);
             renderer.set_present_mode(self.settings.vsync, self.settings.horizon.present_mode);
         }
         horizon_client::hud::GUI_SCALE.store(self.settings.gui_scale, Ordering::Relaxed);
@@ -467,7 +467,7 @@ impl Loading {
     fn menu_size(&self) -> [u32; 2] {
         self.renderer
             .as_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height])
+            .map_or([1280, 720], |r| r.surface_size())
     }
 
     fn save_menu_address(&mut self) {
@@ -1020,7 +1020,7 @@ impl Loading {
                     let size = self
                         .renderer
                         .as_ref()
-                        .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+                        .map_or([1280, 720], |r| r.surface_size());
                     let b = HudBatch::new(size);
                     title.drag(self.menu.cursor, (b.width, b.height));
                     title.drag_field(&self.gui.as_ref().unwrap().atlas, self.menu.cursor.0);

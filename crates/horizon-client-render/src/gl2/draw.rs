@@ -7,6 +7,7 @@ use glow::HasContext;
 
 use super::atlas::{Atlas, PAGE};
 use super::batch::{Batch, Run, Vertex};
+use super::shader;
 
 /// Vertex attributes, in the order of their locations. Matches `batch::Vertex`'s field layout.
 const ATTRIBUTES: [&str; 7] = ["a_pos", "a_uv", "a_origin", "a_sprite", "a_light", "a_tint", "a_opaque"];
@@ -24,15 +25,14 @@ attribute vec3 a_tint;
 attribute float a_opaque;
 uniform mat4 u_view_proj;
 uniform vec3 u_section_origin;
-uniform float u_fog_start;
-uniform float u_fog_end;
 varying vec2 v_uv;
 varying vec2 v_origin;
 varying float v_sprite;
 varying vec2 v_light;
 varying vec3 v_tint;
 varying float v_opaque;
-varying float v_fog;
+varying float v_spherical;
+varying float v_cylindrical;
 void main() {
     vec3 pos = a_pos + u_section_origin;
     gl_Position = u_view_proj * vec4(pos, 1.0);
@@ -42,7 +42,8 @@ void main() {
     v_light = a_light;
     v_tint = a_tint;
     v_opaque = a_opaque;
-    v_fog = clamp((length(pos) - u_fog_start) / (u_fog_end - u_fog_start), 0.0, 1.0);
+    v_spherical = length(pos);
+    v_cylindrical = length(pos.xz);
 }
 "#;
 
@@ -51,13 +52,21 @@ uniform sampler2D u_page;
 uniform sampler2D u_lightmap;
 uniform float u_page_size;
 uniform vec3 u_fog_color;
+uniform vec4 u_fog;
 varying vec2 v_uv;
 varying vec2 v_origin;
 varying float v_sprite;
 varying vec2 v_light;
 varying vec3 v_tint;
 varying float v_opaque;
-varying float v_fog;
+varying float v_spherical;
+varying float v_cylindrical;
+// fog: linear_fog in terrain.wgsl. The fog is the larger of the spherical and the cylindrical term.
+float linear_fog(float d, float start, float end) {
+    if (d <= start) { return 0.0; }
+    if (d >= end) { return 1.0; }
+    return (d - start) / (end - start);
+}
 void main() {
     // The texel of the sprite at this point: the sprite repeats every whole unit of uv.
     vec2 cell = floor(fract(v_uv) * v_sprite);
@@ -69,15 +78,17 @@ void main() {
     vec2 light = clamp(vec2(v_light.y, v_light.x) * 16.0 / 256.0 + 0.5 / 16.0,
                        vec2(0.5 / 16.0), vec2(15.5 / 16.0));
     vec3 lit = texel.rgb * v_tint * texture2D(u_lightmap, light).rgb;
-    gl_FragColor = vec4(mix(lit, u_fog_color, v_fog), 1.0);
+    float fogged = max(linear_fog(v_spherical, u_fog.x, u_fog.y),
+                       linear_fog(v_cylindrical, u_fog.z, u_fog.w));
+    gl_FragColor = vec4(mix(lit, u_fog_color, fogged), 1.0);
 }
 "#;
 
-/// The fog of a frame: linear between `start` and `end` blocks from the eye.
+/// The fog of a frame, as terrain.wgsl's `Globals`: `range` is `[spherical start, spherical end,
+/// cylindrical start, cylindrical end]` in blocks from the eye, and the colour the fog turns into.
 #[derive(Clone, Copy, Debug)]
 pub struct Fog {
-    pub start: f32,
-    pub end: f32,
+    pub range: [f32; 4],
     pub color: [f32; 3],
 }
 
@@ -98,7 +109,7 @@ impl Terrain {
     /// Builds the program and uploads the atlas pages and the 16x16 lightmap (`lightmap_pixels` in
     /// the renderer: RGBA rows of sky level by block level). Needs a current context.
     pub fn new(gl: &glow::Context, atlas: &Atlas, lightmap_pixels: &[u8; 16 * 16 * 4]) -> Result<Self, String> {
-        let program = link(gl)?;
+        let program = shader::program(gl, VERTEX_SHADER, FRAGMENT_SHADER, &ATTRIBUTES)?;
         let mut pages = Vec::with_capacity(atlas.pages.len());
         for page in &atlas.pages {
             pages.push(upload_page(gl, page)?);
@@ -124,6 +135,27 @@ impl Terrain {
         unsafe { gl.delete_buffer(section.buffer) };
     }
 
+    /// Replaces the lightmap's texels (RGBA, 16 by 16).
+    pub fn set_lightmap(&self, gl: &glow::Context, pixels: &[u8; 16 * 16 * 4]) {
+        // SAFETY: the context is current on this thread and the lightmap was made on it.
+        unsafe {
+            gl.active_texture(glow::TEXTURE1);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.lightmap));
+            gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                16,
+                16,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(pixels.as_slice())),
+            );
+            gl.active_texture(glow::TEXTURE0);
+        }
+    }
+
     /// Starts a frame: the program, the camera's clip matrix (column-major), the fog, the page and
     /// lightmap units. Then `draw` each section.
     pub fn begin(&self, gl: &glow::Context, view_proj: &[f32; 16], fog: Fog) {
@@ -131,8 +163,13 @@ impl Terrain {
         unsafe {
             gl.use_program(Some(self.program));
             gl.uniform_matrix_4_f32_slice(gl.get_uniform_location(self.program, "u_view_proj").as_ref(), false, view_proj);
-            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_fog_start").as_ref(), fog.start);
-            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_fog_end").as_ref(), fog.end);
+            gl.uniform_4_f32(
+                gl.get_uniform_location(self.program, "u_fog").as_ref(),
+                fog.range[0],
+                fog.range[1],
+                fog.range[2],
+                fog.range[3],
+            );
             gl.uniform_3_f32(gl.get_uniform_location(self.program, "u_fog_color").as_ref(), fog.color[0], fog.color[1], fog.color[2]);
             gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_page_size").as_ref(), PAGE as f32);
             gl.uniform_1_i32(gl.get_uniform_location(self.program, "u_page").as_ref(), 0);
@@ -166,56 +203,16 @@ impl Terrain {
         }
     }
 
-    /// Frees the program, the pages and the lightmap.
-    pub fn free(self, gl: &glow::Context) {
+    /// Frees the program, the pages and the lightmap. The context must be current.
+    pub fn free(&self, gl: &glow::Context) {
         // SAFETY: every handle was made on this context by `new`.
         unsafe {
             gl.delete_program(self.program);
-            for page in self.pages {
+            for &page in &self.pages {
                 gl.delete_texture(page);
             }
             gl.delete_texture(self.lightmap);
         }
-    }
-}
-
-fn compile(gl: &glow::Context, kind: u32, source: &str) -> Result<glow::Shader, String> {
-    // SAFETY: the context is current on this thread, as `Terrain::new` requires.
-    unsafe {
-        let shader = gl.create_shader(kind)?;
-        gl.shader_source(shader, source);
-        gl.compile_shader(shader);
-        if !gl.get_shader_compile_status(shader) {
-            let log = gl.get_shader_info_log(shader);
-            gl.delete_shader(shader);
-            return Err(format!("a terrain shader does not compile: {log}"));
-        }
-        Ok(shader)
-    }
-}
-
-fn link(gl: &glow::Context) -> Result<glow::Program, String> {
-    let vertex = compile(gl, glow::VERTEX_SHADER, VERTEX_SHADER)?;
-    let fragment = compile(gl, glow::FRAGMENT_SHADER, FRAGMENT_SHADER)?;
-    // SAFETY: the context is current on this thread, as `Terrain::new` requires.
-    unsafe {
-        let program = gl.create_program()?;
-        gl.attach_shader(program, vertex);
-        gl.attach_shader(program, fragment);
-        for (index, name) in ATTRIBUTES.iter().enumerate() {
-            gl.bind_attrib_location(program, index as u32, name);
-        }
-        gl.link_program(program);
-        gl.detach_shader(program, vertex);
-        gl.detach_shader(program, fragment);
-        gl.delete_shader(vertex);
-        gl.delete_shader(fragment);
-        if !gl.get_program_link_status(program) {
-            let log = gl.get_program_info_log(program);
-            gl.delete_program(program);
-            return Err(format!("the terrain program does not link: {log}"));
-        }
-        Ok(program)
     }
 }
 

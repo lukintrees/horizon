@@ -153,7 +153,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return;
         };

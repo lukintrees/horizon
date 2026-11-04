@@ -105,6 +105,7 @@ pub mod split_map;
 pub mod split_profiles;
 pub mod split_ui;
 mod sprite_cache;
+pub mod renderer;
 pub mod sprites;
 pub mod streaming;
 pub mod structure_block;

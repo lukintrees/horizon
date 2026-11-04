@@ -348,6 +348,7 @@ impl Game<'_> {
         let present = self
             .renderer
             .as_ref()
+            .and_then(|r| r.wgpu())
             .map_or("", |r| match r.config.present_mode {
                 wgpu::PresentMode::Immediate => " (immediate)",
                 wgpu::PresentMode::Mailbox => " (mailbox)",
@@ -417,7 +418,7 @@ impl Game<'_> {
         d: &mut debug_overlay::Displayer,
         framebuffer: [i32; 2],
     ) {
-        if let Some(r) = self.renderer.as_ref() {
+        if let Some(r) = self.renderer.as_ref().and_then(|r| r.wgpu()) {
             static CPU: std::sync::OnceLock<String> = std::sync::OnceLock::new();
             d.group(
                 "system",

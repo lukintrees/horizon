@@ -370,7 +370,8 @@ use horizon_client::{
     environment::Environment,
     first_person::{Hand, SwingAnimation},
     furnace::FurnaceCooking,
-    gfx::{Frame, Renderer},
+    gfx::Frame,
+    renderer::Renderer,
     hud::{HudAtlas, HudBatch, rgba},
     hud_layout, hud_overlays,
     items::{ItemStack, Items},
@@ -8055,7 +8056,7 @@ impl Game<'_> {
         let Some(window) = &self.window else { return };
         let size = self.renderer.as_ref().map_or_else(
             || window.inner_size().into(),
-            |r| [r.config.width, r.config.height],
+            |r| r.surface_size(),
         );
         let [vx, vy] = self.view_at.map(f64::from);
         let centre = winit::dpi::PhysicalPosition::new(
@@ -10086,7 +10087,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return false;
         };
@@ -10113,7 +10114,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return false;
         };
@@ -10146,7 +10147,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return;
         };
@@ -10326,7 +10327,7 @@ impl Game<'_> {
         let Some(r) = self.renderer.as_ref() else {
             return;
         };
-        let batch = HudBatch::new([r.config.width, r.config.height]);
+        let batch = HudBatch::new(r.surface_size());
         if let Some(slot) = self.slot_at(&batch, self.cursor.0, self.cursor.1)
             && slot != 200
             && slot < Creative::DISPLAY
@@ -10342,7 +10343,7 @@ impl Game<'_> {
         let Some(r) = self.renderer.as_ref() else {
             return (None, false);
         };
-        let batch = HudBatch::new([r.config.width, r.config.height]);
+        let batch = HudBatch::new(r.surface_size());
         (
             self.slot_at(&batch, self.cursor.0, self.cursor.1),
             self.clicked_outside(&batch),
@@ -10590,7 +10591,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return;
         };
@@ -14149,8 +14150,8 @@ impl Game<'_> {
             .renderer
             .take()
             .ok_or("no renderer for graphics recovery")?;
-        let screenshot = old.screenshot.take();
-        let screenshot_result = old.screenshot_result.take();
+        let screenshot = old.take_screenshot();
+        let screenshot_result = old.take_screenshot_result();
         drop(old);
         let mut renderer = build_renderer(
             window,
@@ -14163,8 +14164,8 @@ impl Game<'_> {
             self.settings.horizon.translucent_batching,
             shader_packs::picked_pack_draws_flat(&self.settings),
         )?;
-        renderer.screenshot = screenshot;
-        renderer.screenshot_result = screenshot_result;
+        renderer.set_screenshot(screenshot);
+        renderer.set_screenshot_result(screenshot_result);
         self.renderer = Some(renderer);
         self.skin_slots.forget();
         self.maps.slots.forget();
@@ -15023,7 +15024,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return;
         };
@@ -15385,10 +15386,10 @@ impl Game<'_> {
         // countRenderedSections() > 10: a client that joined its server
         // thread has nothing pending before the first chunks arrive, and the
         // icon would be only sky.
-        if renderer.drawn_sections <= 10 {
+        if renderer.drawn_sections() <= 10 {
             return;
         }
-        if renderer.screenshot.is_some() {
+        if renderer.screenshot_pending() {
             // F2's or an agent's screenshot owns the frame this time; ours
             // comes around again with the next attempt.
             return;
@@ -15397,11 +15398,11 @@ impl Game<'_> {
         if let Some(icon) = self.world_icon.as_mut() {
             icon.last_attempt = Some(Instant::now());
         }
-        renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
+        renderer.set_screenshot(Some(horizon_client::gfx::ScreenshotRequest {
             path,
             size: Some([64, 64]),
             scaled: false,
-        });
+        }));
     }
     fn render(&mut self) -> Result<bool> {
         // The window's GPU holds the atlas: its copy in memory is kept
@@ -15430,7 +15431,7 @@ impl Game<'_> {
                     )
                 });
                 if let Some(renderer) = &mut self.renderer {
-                    let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                    let mut hud = HudBatch::new(renderer.surface_size());
                     horizon_client::level_loading::draw_file_fixer(
                         &mut hud,
                         &self.gui.atlas,
@@ -15449,7 +15450,7 @@ impl Game<'_> {
                 screen_info::level_loading(progress, &screen_info::tr)
             });
             if let Some(renderer) = &mut self.renderer {
-                let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                let mut hud = HudBatch::new(renderer.surface_size());
                 let (w, h) = (hud.width, hud.height);
                 horizon_client::ui::menu_background(
                     &mut hud,
@@ -15485,7 +15486,7 @@ impl Game<'_> {
                 horizon_client::widgets::begin_screen(|| {
                     screen_info::level_loading(Some(loader.progress.fraction()), &screen_info::tr)
                 });
-                let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                let mut hud = HudBatch::new(renderer.surface_size());
                 horizon_client::level_loading::draw_progress(
                     &mut hud,
                     &self.gui.atlas,
@@ -15500,7 +15501,7 @@ impl Game<'_> {
         // (`LoadingOverlay`) until `drive_pack_reload` applies it.
         if let Some(reload) = &self.pack_reload {
             if let Some(renderer) = &mut self.renderer {
-                let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                let mut hud = HudBatch::new(renderer.surface_size());
                 horizon_client::level_loading::draw_loading_overlay(
                     &mut hud,
                     &self.gui.atlas,
@@ -15515,7 +15516,7 @@ impl Game<'_> {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return Ok(false);
         };
@@ -16531,7 +16532,10 @@ impl Game<'_> {
         let (distance, _) = self.far_terrain_choice();
         match &self.renderer {
             Some(renderer) => {
-                horizon_client::graphics::lod_distance_capped(distance, &renderer.info)
+                match renderer.adapter_info() {
+                    Some(info) => horizon_client::graphics::lod_distance_capped(distance, info),
+                    None => distance.min(horizon_client::lod::MAX_CHUNKS),
+                }
             }
             None => distance.min(horizon_client::lod::MAX_CHUNKS),
         }
@@ -16871,8 +16875,10 @@ impl Game<'_> {
                 arriving || (meshing && self.view_arrival.recent(now)) || sampling,
             );
             if let (Some(lod), Some(player)) = (&mut self.lod, &self.player) {
-                let lod_distance =
-                    horizon_client::graphics::lod_distance_capped(far_distance, &renderer.info);
+                let lod_distance = match renderer.adapter_info() {
+                    Some(info) => horizon_client::graphics::lod_distance_capped(far_distance, info),
+                    None => far_distance.min(horizon_client::lod::MAX_CHUNKS),
+                };
                 lod.set_near_loading(self.streaming.terrain_loading());
                 lod.set_reduced_detail(far_reduced);
                 // The covered columns change only with the complete ones and
@@ -17224,7 +17230,7 @@ impl Game<'_> {
             match &event {
                 WindowEvent::CursorMoved { position, .. } => {
                     if let Some(r) = &self.renderer {
-                        let b = HudBatch::new([r.config.width, r.config.height]);
+                        let b = HudBatch::new(r.surface_size());
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                     }
                 }
@@ -17504,7 +17510,7 @@ impl Game<'_> {
                 }
                 WindowEvent::CursorMoved { position, .. } => {
                     if let Some(r) = &self.renderer {
-                        let b = HudBatch::new([r.config.width, r.config.height]);
+                        let b = HudBatch::new(r.surface_size());
                         let previous = self.cursor;
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                         if self.screen_mouse_dragged(previous) {
@@ -17758,7 +17764,7 @@ impl Game<'_> {
                     let size = self
                         .renderer
                         .as_ref()
-                        .map(|r| [r.config.width, r.config.height])
+                        .map(|r| r.surface_size())
                         .unwrap_or([1, 1]);
                     let b = HudBatch::new(size);
                     let atlas = &self.gui.atlas;
@@ -17788,7 +17794,7 @@ impl Game<'_> {
                     let size = self
                         .renderer
                         .as_ref()
-                        .map(|r| [r.config.width, r.config.height])
+                        .map(|r| r.surface_size())
                         .unwrap_or([1, 1]);
                     let b = HudBatch::new(size);
                     if let Some(title) = self.title.as_mut() {
@@ -17801,7 +17807,7 @@ impl Game<'_> {
                         let size = self
                             .renderer
                             .as_ref()
-                            .map(|r| [r.config.width, r.config.height])
+                            .map(|r| r.surface_size())
                             .unwrap_or([1, 1]);
                         self.book_click(size);
                     }
@@ -17811,7 +17817,7 @@ impl Game<'_> {
                         let size = self
                             .renderer
                             .as_ref()
-                            .map(|r| [r.config.width, r.config.height])
+                            .map(|r| r.surface_size())
                             .unwrap_or([1, 1]);
                         self.sign_edit_click(size);
                     }
@@ -17947,14 +17953,14 @@ impl Game<'_> {
                             let size = self
                                 .renderer
                                 .as_ref()
-                                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+                                .map_or([1, 1], |r| r.surface_size());
                             self.advancements_mouse(pressed, size);
                         }
                         Screen::Stats if pressed && button == MouseButton::Left => {
                             let size = self
                                 .renderer
                                 .as_ref()
-                                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+                                .map_or([1, 1], |r| r.surface_size());
                             self.stats_click(size);
                         }
                         Screen::Stats if button == MouseButton::Left => self.stats_release(),
@@ -18412,7 +18418,7 @@ impl Game<'_> {
                     let finished = self
                         .renderer
                         .as_mut()
-                        .and_then(|r| r.screenshot_result.take());
+                        .and_then(|r| r.take_screenshot_result());
                     if let Some(result) = &finished
                         && self.ui.screenshot_message.is_some()
                     {
@@ -20424,19 +20430,19 @@ fn build_renderer(
         translucent_batching,
         shader_pack,
     ))?;
-    renderer.hud.sprite_animations = atlas
-        .sprite_animations
-        .iter()
-        .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
-        .collect();
-    renderer
-        .hud
-        .set_text_shader(&renderer.device, atlas.text_shader.as_deref());
+    if let Some(wgpu) = renderer.wgpu_mut() {
+        wgpu.hud.sprite_animations = atlas
+            .sprite_animations
+            .iter()
+            .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
+            .collect();
+        wgpu.hud
+            .set_text_shader(&wgpu.device, atlas.text_shader.as_deref());
+        let cit_glints = pack.item_renderer.cit.as_ref().map(|c| &c.glint_textures);
+        wgpu.hud
+            .set_cit_glints(&wgpu.device, &wgpu.queue, cit_glints);
+    }
     renderer.set_lines_shader(atlas.lines_shader.as_deref());
-    let cit_glints = pack.item_renderer.cit.as_ref().map(|c| &c.glint_textures);
-    renderer
-        .hud
-        .set_cit_glints(&renderer.device, &renderer.queue, cit_glints);
     Ok(renderer)
 }
 
@@ -20491,8 +20497,8 @@ fn loading_renderer(
         false,
         false,
     ))?;
-    if let Some(atlas) = atlas {
-        renderer.hud.sprite_animations = atlas
+    if let (Some(atlas), Some(wgpu)) = (atlas, renderer.wgpu_mut()) {
+        wgpu.hud.sprite_animations = atlas
             .sprite_animations
             .iter()
             .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
@@ -21015,7 +21021,7 @@ impl Loading {
         let Some(size) = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.surface_size())
         else {
             return;
         };
