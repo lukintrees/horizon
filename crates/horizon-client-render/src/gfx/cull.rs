@@ -212,6 +212,10 @@ impl Cull {
     /// with the instance counts the GPU wrote, with fragment shaders that
     /// write storage.
     pub fn supported(adapter: &wgpu::Adapter, device: &wgpu::Device) -> Option<DepthTest> {
+        // The test is a compute pass writing storage (`HORIZON_GL_PROFILE=x1650`).
+        if crate::gl21::poorest_paths() {
+            return None;
+        }
         let depth_test = match adapter.get_info().backend {
             wgpu::Backend::Vulkan
                 if device

@@ -43,6 +43,8 @@ pub mod fog;
 pub mod font;
 pub mod fusion;
 pub mod gfx;
+// The oldest hardware Horizon is asked to run on (docs/opengl21-plan.md).
+pub mod gl21;
 pub mod graphics;
 pub mod graphics_style;
 pub mod graphics_ui;

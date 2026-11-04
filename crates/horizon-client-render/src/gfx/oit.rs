@@ -34,6 +34,11 @@ pub fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
 }
 
 pub fn supported(device: &wgpu::Device) -> bool {
+    // Improved transparency blends into 32-bit float targets drawn by storage-heavy passes: not in
+    // the poorest paths (`HORIZON_GL_PROFILE=x1650`).
+    if crate::gl21::poorest_paths() {
+        return false;
+    }
     device
         .features()
         .contains(wgpu::Features::FLOAT32_BLENDABLE)

@@ -29,7 +29,9 @@ const IDS: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 /// Whether the visibility buffer is asked for, and the device binds storage buffers enough.
 pub fn wanted(device: &wgpu::Device) -> bool {
-    std::env::var("HORIZON_VISBUFFER").as_deref() == Ok("1")
+    // A frame drawn flat, with storage buffers for the pages: not in the poorest paths.
+    !crate::gl21::poorest_paths()
+        && std::env::var("HORIZON_VISBUFFER").as_deref() == Ok("1")
         && device.limits().max_storage_buffers_per_shader_stage >= STORAGE_BUFFERS
 }
 

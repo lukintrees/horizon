@@ -276,6 +276,10 @@ impl SpriteAnimator {
     /// storage texture and reading two storage buffers (not OpenGL before
     /// 4.3).
     pub fn compute(adapter: &wgpu::Adapter, device: &wgpu::Device) -> bool {
+        // GL 2.1 has no compute shaders; the CPU path below is the same picture.
+        if crate::gl21::poorest_paths() {
+            return false;
+        }
         let limits = device.limits();
         adapter
             .get_downlevel_capabilities()

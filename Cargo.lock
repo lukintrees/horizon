@@ -1557,6 +1557,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-gl21"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glow",
+ "horizon-client-render",
+ "khronos-egl",
+ "log",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "horizon-hdr"
 version = "0.1.0"
 dependencies = [
