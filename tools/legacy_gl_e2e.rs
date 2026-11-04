@@ -1022,6 +1022,31 @@ fn main() {
         gui.draw_ordered(&gui_mesh.vertices, &gui_mesh.draws(), &identity)
             .unwrap();
         assert_eq!(rgb(sample(4)), [200, 0, 0], "scissor leaked");
+
+        // Screen overlays repeat or clamp within a sprite, not across the
+        // complete atlas page. Negative coordinates must repeat as fract().
+        let striped: Vec<u8> = (0..16).flat_map(|i| if i % 4 < 2 { [200,0,0,255] } else { [0,200,0,255] }).collect();
+        gui.upload_pages(&[horizon_legacy_gl::Page { side: 4, pixels: &striped }]).unwrap();
+        let v = |x, y, u| horizon_legacy_gl::Vertex { position: [x,y,0.], sprite_uv: [u,0.5], atlas_rect: [0.,0.,1.,1.], color: [1.;4] };
+        let overlay = [v(-1.,-1.,-1.), v(1.,-1.,3.), v(1.,1.,3.), v(-1.,-1.,-1.), v(1.,1.,3.), v(-1.,1.,-1.)];
+        let screen_draw = |clamp| horizon_legacy_gl::Draw { batch: horizon_legacy_gl::Batch { page: 0, first: 0, count: 6 }, pass: horizon_legacy_gl::Pass::Screen { blur: false, clamp, vignette: false } };
+        clear_color(0.,0.,0.,1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&overlay, &[screen_draw(false)], &identity).unwrap();
+        assert_eq!(rgb(sample(4)), [0,200,0], "negative screen repeat");
+        assert_eq!(rgb(sample(12)), [0,200,0], "positive screen repeat");
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&overlay, &[screen_draw(true)], &identity).unwrap();
+        assert_eq!(rgb(sample(4)), [200,0,0], "screen clamp left");
+        assert_eq!(rgb(sample(28)), [0,200,0], "screen clamp right");
+        let mut vignette = screen_draw(true);
+        vignette.pass = horizon_legacy_gl::Pass::Screen { blur: true, clamp: true, vignette: true };
+        clear_color(1., 1., 1., 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&overlay, &[vignette], &identity).unwrap();
+        get_tex_parameter(0x0de1, 0x2801, &mut filter);
+        assert_eq!(filter, 0x2601, "blurred screen filtering");
+        assert_eq!(rgb(sample(4)), [55,255,255], "screen vignette blend");
         gpu.select_atlas(terrain_set).unwrap();
 
         // Real tiled UV encoding on a merged face: a two-texel stripe must

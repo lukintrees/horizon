@@ -3,6 +3,7 @@
 use super::{
     entity,
     hud::{self, Atlas, PatchAtlas},
+    screen,
     world::{PlanError, SectionDraw, SectionKey, World},
 };
 use crate::gfx::{Frame, View};
@@ -178,6 +179,7 @@ pub fn plan<'a>(
 pub enum FrameError {
     World(PlanError),
     Entity(entity::Error),
+    Screen(screen::Error),
     Hud(hud::Error),
 }
 
@@ -202,6 +204,7 @@ pub struct FramePlan<'a> {
     pub hand: entity::Mesh,
     pub omitted_hand_overlays: Vec<(u32, usize)>,
     pub hand_view_projection: Option<[f32; 16]>,
+    pub screen: screen::Mesh,
     pub hud: hud::Mesh,
     /// Unsupported GUI blends and omitted triangle counts in partial mode.
     pub omitted_hud_blends: Vec<(crate::hud::Blend, usize)>,
@@ -357,6 +360,8 @@ fn prepare_frame_inner<'a>(
     } else {
         Some(hand_view_projection(frame, viewport).map_err(FrameError::World)?)
     };
+    let screen =
+        screen::build(gui.atlas(), frame.screen, skip_unsupported).map_err(FrameError::Screen)?;
     let hud = if skip_unsupported {
         hud::build_supported(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?
     } else {
@@ -393,6 +398,7 @@ fn prepare_frame_inner<'a>(
         hand: hand.mesh,
         omitted_hand_overlays: hand.omitted,
         hand_view_projection,
+        screen,
         hud: hud.mesh,
         omitted_hud_blends: hud.omitted,
         view_projection,

@@ -16,6 +16,7 @@ pub(super) struct Mirror {
     reported_omissions: bool,
     reported_hand_omissions: bool,
     reported_static_omissions: bool,
+    reported_screen_omissions: bool,
     reported_hud_omissions: bool,
 }
 impl Mirror {
@@ -41,6 +42,7 @@ impl Mirror {
             reported_omissions: false,
             reported_hand_omissions: false,
             reported_static_omissions: false,
+            reported_screen_omissions: false,
             reported_hud_omissions: false,
         })
     }
@@ -94,11 +96,21 @@ impl Mirror {
                 plan.omitted_entity_overlays,
                 plan.omitted_static_overlays,
                 plan.omitted_hand_overlays,
+                plan.screen.omitted,
                 plan.omitted_hud_blends,
             ))
         })();
         match result {
-            Ok((terrain, entities, hud, omitted, static_omitted, hand_omitted, hud_omitted)) => {
+            Ok((
+                terrain,
+                entities,
+                hud,
+                omitted,
+                static_omitted,
+                hand_omitted,
+                screen_omitted,
+                hud_omitted,
+            )) => {
                 if !omitted.is_empty() && !self.reported_omissions {
                     log::warn!(
                         "Legacy CPU mirror skipped unsupported entity overlay quads: {omitted:?}"
@@ -116,6 +128,12 @@ impl Mirror {
                         "Legacy CPU mirror skipped unsupported hand overlay quads: {hand_omitted:?}"
                     );
                     self.reported_hand_omissions = true;
+                }
+                if screen_omitted != 0 && !self.reported_screen_omissions {
+                    log::warn!(
+                        "Legacy CPU mirror skipped {screen_omitted} screen quads spanning atlas pages"
+                    );
+                    self.reported_screen_omissions = true;
                 }
                 if !hud_omitted.is_empty() && !self.reported_hud_omissions {
                     log::warn!(

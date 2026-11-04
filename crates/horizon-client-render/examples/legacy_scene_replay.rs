@@ -53,6 +53,8 @@ mod app {
         if report.entity_vertices != 0
             || report.hand_vertices != 0
             || report.static_entity_draws != 0
+            || report.screen_vertices != 0
+            || report.omitted_screen_quads != 0
             || report.hud_vertices != 0
             || !report.omitted_entity_overlays.is_empty()
             || !report.omitted_static_overlays.is_empty()

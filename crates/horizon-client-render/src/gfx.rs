@@ -6509,13 +6509,15 @@ impl Renderer {
                             && (!report.omitted_entity_overlays.is_empty()
                                 || !report.omitted_static_overlays.is_empty()
                                 || !report.omitted_hand_overlays.is_empty()
+                                || report.omitted_screen_quads != 0
                                 || !report.omitted_hud_blends.is_empty())
                         {
                             log::warn!(
-                                "Experimental GL preview omitted entity overlays {:?}, static overlays {:?}, hand overlays {:?}, and HUD blends {:?}",
+                                "Experimental GL preview omitted entity overlays {:?}, static overlays {:?}, hand overlays {:?}, {} screen quads, and HUD blends {:?}",
                                 report.omitted_entity_overlays,
                                 report.omitted_static_overlays,
                                 report.omitted_hand_overlays,
+                                report.omitted_screen_quads,
                                 report.omitted_hud_blends
                             );
                             self.legacy_live_omissions_reported = true;

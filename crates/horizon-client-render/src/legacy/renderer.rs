@@ -29,6 +29,8 @@ pub struct FrameReport {
     pub entity_vertices: usize,
     pub static_entity_draws: usize,
     pub hand_vertices: usize,
+    pub screen_vertices: usize,
+    pub omitted_screen_quads: usize,
     pub hud_vertices: usize,
     pub omitted_entity_overlays: Vec<(u32, usize)>,
     pub omitted_static_overlays: Vec<(u32, usize)>,
@@ -260,6 +262,14 @@ impl Renderer {
         }
         self.surface
             .draw_ordered(
+                &plan.screen.vertices,
+                &plan.screen.draws,
+                &glam::Mat4::IDENTITY.to_cols_array(),
+                None,
+            )
+            .map_err(|e| format!("screen effects: {e}"))?;
+        self.surface
+            .draw_ordered(
                 &plan.hud.vertices,
                 &plan.hud.draws(),
                 &glam::Mat4::IDENTITY.to_cols_array(),
@@ -275,6 +285,8 @@ impl Renderer {
             entity_vertices: plan.entities.vertices.len(),
             static_entity_draws: plan.static_entities.len(),
             hand_vertices: plan.hand.vertices.len(),
+            screen_vertices: plan.screen.vertices.len(),
+            omitted_screen_quads: plan.screen.omitted,
             hud_vertices: plan.hud.vertices.len(),
             omitted_entity_overlays: plan.omitted_entity_overlays,
             omitted_static_overlays: plan.omitted_static_overlays,
@@ -365,6 +377,20 @@ mod tests {
             let visible_static = [[0, 0, 0]];
             frame.static_block_entities = &snapshots;
             frame.visible_static_block_entity_sections = &visible_static;
+            let screen = [crate::screen_effects::ScreenQuad {
+                vertices: [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]].map(|pos| {
+                    crate::screen_effects::ScreenVertex {
+                        pos,
+                        uv: pos,
+                        rect: [0., 0., 1., 1.],
+                        color: [1.; 4],
+                    }
+                }),
+                blend: crate::screen_effects::Blend::Alpha,
+                sampling: 0,
+                world_tint: false,
+            }];
+            frame.screen = &screen;
             let report = renderer
                 .render(&frame, &[(0, 0, 0)], 0, 0.5, false, true)
                 .unwrap();
@@ -372,6 +398,8 @@ mod tests {
             assert_eq!(report.terrain_draws, 2);
             assert_ne!(report.hand_vertices, 0);
             assert_eq!(report.static_entity_draws, 1);
+            assert_eq!(report.screen_vertices, 6);
+            assert_eq!(report.omitted_screen_quads, 0);
             assert!(report.omitted_static_overlays.is_empty());
             assert!(report.omitted_hand_overlays.is_empty());
             assert_eq!(report.hud_vertices, 6);

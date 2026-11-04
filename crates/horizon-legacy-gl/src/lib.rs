@@ -103,6 +103,12 @@ pub enum Pass {
     HudAdditive,
     /// Multiply destination RGB by one minus source RGB, preserving alpha.
     HudVignette,
+    /// A camera overlay sampled as an independent atlas sprite.
+    Screen {
+        blur: bool,
+        clamp: bool,
+        vignette: bool,
+    },
     /// GUI preview using the current framebuffer's depth buffer. `scissor` is
     /// in OpenGL bottom-left pixel coordinates. `clear` starts a new preview and
     /// clears depth within that rectangle. This destroys scene depth there: use
@@ -290,6 +296,8 @@ pub struct Renderer {
     fog_ranges: i32,
     fog_enabled: i32,
     entity_mode: i32,
+    screen_uv_mode: i32,
+    half_texel: i32,
     entity_overlay: i32,
     section_offset: i32,
     atlas: i32,
@@ -373,6 +381,8 @@ impl Renderer {
             let fog_ranges = uniform(c"fog_ranges");
             let fog_enabled = uniform(c"fog_enabled");
             let entity_mode = uniform(c"entity_mode");
+            let screen_uv_mode = uniform(c"screen_uv_mode");
+            let half_texel = uniform(c"half_texel");
             let entity_overlay = uniform(c"entity_overlay");
             let section_offset = uniform(c"section_offset");
             for (name, value) in [
@@ -383,6 +393,8 @@ impl Renderer {
                 ("fog_ranges", fog_ranges),
                 ("fog_enabled", fog_enabled),
                 ("entity_mode", entity_mode),
+                ("screen_uv_mode", screen_uv_mode),
+                ("half_texel", half_texel),
                 ("entity_overlay", entity_overlay),
                 ("section_offset", section_offset),
             ] {
@@ -419,6 +431,8 @@ impl Renderer {
                 fog_ranges,
                 fog_enabled,
                 entity_mode,
+                screen_uv_mode,
+                half_texel,
                 entity_overlay,
                 section_offset,
                 atlas,
@@ -779,6 +793,14 @@ impl Renderer {
                             0.0
                         },
                     );
+                    (gl.uniform_1f)(
+                        self.screen_uv_mode,
+                        match draw.pass {
+                            Pass::Screen { clamp: true, .. } => 2.0,
+                            Pass::Screen { clamp: false, .. } => 1.0,
+                            _ => 0.0,
+                        },
+                    );
                     (gl.uniform_4f)(
                         self.entity_overlay,
                         overlay[0],
@@ -801,7 +823,14 @@ impl Renderer {
                 }
                 if current_page != Some(draw.batch.page) {
                     (gl.bind_texture)(GL_TEXTURE_2D, textures[draw.batch.page]);
-                    let filter = if matches!(draw.pass, Pass::HudVignette) {
+                    (gl.uniform_1f)(
+                        self.half_texel,
+                        0.5 / self.atlases[self.active_atlas.0].sides[draw.batch.page] as f32,
+                    );
+                    let filter = if matches!(
+                        draw.pass,
+                        Pass::HudVignette | Pass::Screen { blur: true, .. }
+                    ) {
                         0x2601
                     } else {
                         0x2600
@@ -852,8 +881,11 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
             Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
             Pass::HudInvert => 0.0001,
             Pass::Entity { .. } => 0.1,
-            Pass::HudVignette => 0.0,
+            Pass::HudVignette | Pass::Screen { vignette: true, .. } => 0.0,
             Pass::HudAlpha | Pass::HudAdditive | Pass::HudDepth { .. } => 0.004,
+            Pass::Screen {
+                vignette: false, ..
+            } => 0.000001,
         };
         (gl.uniform_1f)(uniform, cutoff);
         (gl.disable)(0x0b44); // culling is selected explicitly for entity draws
@@ -884,9 +916,13 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
                 (gl.disable)(0x0be2);
                 (gl.depth_mask)(1);
             }
-            Pass::Translucent { .. } | Pass::HudAlpha => {
+            Pass::Translucent { .. }
+            | Pass::HudAlpha
+            | Pass::Screen {
+                vignette: false, ..
+            } => {
                 (gl.depth_func)(0x0201);
-                if matches!(pass, Pass::HudAlpha) {
+                if matches!(pass, Pass::HudAlpha | Pass::Screen { .. }) {
                     (gl.disable)(0x0b71);
                 } else {
                     (gl.enable)(0x0b71);
@@ -896,7 +932,7 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
                 (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
                 (gl.depth_mask)(0);
             }
-            Pass::HudVignette => {
+            Pass::HudVignette | Pass::Screen { vignette: true, .. } => {
                 (gl.disable)(0x0b71);
                 (gl.enable)(0x0be2);
                 (gl.blend_equation)(0x8006);
