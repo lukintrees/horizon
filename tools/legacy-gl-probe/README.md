@@ -277,3 +277,36 @@ at `6c87c53` passed all three jobs: nine actual-game GPU fixtures, full-client
 check/game Clippy, GL2 runtime matrix and modern Windows x86 probe linking.
 This remains an opt-in coordinator; startup and Win7/X1650 runtime
 qualification are unfinished. CIT/portal are explicit errors, not plain quads.
+
+
+### Drawable resize and native window continuation
+
+The validator now requires **21 backend outcomes** in each mode.
+`backend_surface_lifecycle` retains mesh/texture IDs through 96x48, 31x79, 1x1,
+128x32 and back to 64x64. It checks redraws, texture updates, size/readback bounds,
+invalid/same-size framebuffer preservation, fixed payload counters and cleanup.
+OSMesa backing is replaced only after glFinish; this is not a context rebuild.
+EGL replacement/retirement is implemented and compile-checked, not runtime-verified
+in this sandbox. Native surface memory is outside tracked texture/mesh payloads.
+
+The WGL owner adds bounded event pumping, in-place client resize, Unicode title,
+resize/focus/close, physical keys/repeat counts, UTF-16 text, signed pointer/button
+and wheel events, and pointer capture/loss. Close does not destroy a drawable
+behind the renderer. Offscreen polling is empty; WGL minimization reports zero
+size, and render/present suspend until restored. A poll count bound is not a hard
+latency bound: Windows modal moving/sizing can block DispatchMessage.
+
+Local checks: **36 Rust tests**, host/i686 Clippy and **3x21 llvmpipe outcomes**.
+The game suite adds its tenth actual-type GPU fixture retaining terrain/pages/
+foil and rebuilding HudBatch after resize. Own Windows CI now executes x86 CPU
+and a hidden two-HWND message/resize/close test **without a GPU context**, in
+addition to linking the ordinary WGL probe. Own run
+[41795980600](https://github.com/lukintrees/horizon/actions/runs/41795980600)
+at `3339003` passed all three jobs: ten actual-game GPU fixtures, full-client
+check/game Clippy, runtime matrix, **35 executed x86 Windows workspace tests**
+and ordinary x86 probe linking. Full local Python suite: **642 tests, 1 skipped**.
+Native tests exposed/fixed SWP_NOSIZE and caption-size constraints; programmatic
+resize now scopes its WM_WINDOWPOSCHANGING bypass without weakening interactive
+tracking limits. The native test proves exact 1x1/96x48 and HWND teardown on Drop.
+None of this is Win7/X1650 runtime or complete gameplay qualification;
+relative/raw mouse, fullscreen/DPI policy and the normal game loop are still work.

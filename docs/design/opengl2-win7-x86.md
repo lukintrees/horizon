@@ -664,3 +664,57 @@ check/game Clippy, runtime matrix и modern Windows x86 probe linking.
 
 Это ещё не запуск полноценной игры: startup/frame adapter и scheduling/input/
 resize остаются незавершёнными, Win7/PE32/CRT/ISA/ICD и реальный X1650 не проверены.
+
+
+## 18. Жизненный цикл поверхности и native WGL input
+
+Добавлены `Context/TerrainHudRenderer::{resize,poll_events,set_title,present}`.
+Resize не пересоздаёт GL context: OSMesa заменяет owned backing после glFinish,
+EGL staging меняет pbuffer (retired surface ограничен одной неудачной очисткой),
+WGL меняет client rect существующего HWND/DC/context. Размер 1..4096 проверяется
+до native изменений; при minimization WGL публикует [0,0], render/present
+возвращают suspended error. После успешной смены размера содержимое framebuffer
+не обещается: caller перестраивает projection/HudBatch и перерисовывает весь кадр.
+Native framebuffer/pbuffer memory не входит в texture/mesh payload accounting;
+resize может временно удерживать старую и staged поверхность.
+
+WGL callback держит стабильный Box<State>, private pointer очищается до Drop
+окна. Class name уникален для нескольких окон одного процесса. WM_CLOSE/Alt+F4
+выдают persistent close request, не уничтожая drawable за спиной GL renderer.
+Очередь/один poll ограничены 256 events/messages; adjacent motion/resize
+coalescing не пересекает key/button boundaries. Overflow явно сообщается,
+caller обязан сбросить held input на loss/focus/capture loss. Есть VK/scan/
+extended/repeat-count, корректный UTF-16 Unicode (включая surrogate pair), signed
+pointer coords, пять кнопок, horizontal/vertical wheel и mouse capture/loss.
+HWND filtering сохраняет queued messages других окон, WM_QUIT возвращается outer
+loop. Native modal moving/sizing всё ещё может блокировать DispatchMessage;
+count bound не является hard latency bound. Raw/relative mouse и fullscreen/DPI
+policy пока не завершены.
+
+`backend_surface_lifecycle` проверяет повторные 96x48/31x79/1x1/128x32/64x64,
+неизменные ID/counters, update/sample сохранённой texture, новые readback bounds,
+сохранность кадра при invalid/same-size resize и cleanup. Десятый actual-game GPU
+fixture сохраняет resident terrain/pages/foil, перестраивает HudBatch и проверяет
+composite после пяти размеров при точном budget **1164 texture / 512 mesh bytes**.
+
+Локально: **36 standalone Rust tests**, host/i686 Clippy, **3×21 OSMesa checks**.
+Собственный Windows job теперь не только компилирует/линкует: он запускает CPU
+unit tests и настоящий hidden-window test с двумя HWND без GPU ICD — callback ABI,
+resize/title, posted keyboard/Unicode, queue isolation и close-before-Drop.
+Собственный [run 41795980600](https://github.com/lukintrees/horizon/actions/runs/41795980600)
+на `3339003` прошёл все три jobs: **десять actual-game GPU fixtures**, full-client
+check/game Clippy, independent runtime matrix, **35 реально выполненных x86
+Windows workspace tests** и probe linking. Полный Python: **642 tests, 1 skipped**.
+
+Native x86 execution обнаружил ошибочный SWP_NOSIZE и caption minimums, которые
+compile-only ABI check не видел. Исправлены flags; WM_WINDOWPOSCHANGING default
+constraint обходится только на время validated programmatic resize, включая
+initial sizing. Interactive tracking сохраняет системные пределы. Win32 test
+теперь доказывает точные 1x1/96x48, Unicode/queue isolation и HWND teardown после
+Drop. GPU unload assertion выполняется после documented scene garbage collection.
+Предшествующие failed runs не считаются подтверждением; финальный run включает
+все исправления. Диагностика CPU/GPU failures публикуется в own-branch check
+annotations: sandbox не может скачать redirected Actions log blobs.
+EGL resize только compile-qualified здесь; настоящий WGL GPU, Win7/X1650,
+PE/CRT/ISA, startup/frame/input wiring и оставшиеся sky/material passes ещё
+не квалифицированы как полная playable игра.

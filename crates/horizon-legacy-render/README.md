@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-20 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+21 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 20 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 21 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -60,9 +60,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 29 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 34 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 20 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 21 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -86,7 +86,7 @@ are not switched to `RenderBackend`. There is no legacy gameplay executable,
 playable title/world/inventory path, GUI portal/CIT shaders, all special
 entity materials, gameplay CPU-pose/frame wiring, resource animation/reload
 integration, streaming upload scheduler,
-resize/event-loop integration, mipmapped/repeating sprite UVs, or final culling.
+complete game event-loop wiring, mipmapped/repeating sprite UVs, or final culling.
 Repeating/tiled UVs are rejected explicitly. Fragment-sampled lightmaps and basic
 fog are not claimed to match every vanilla lighting/fog case. Packs/mods and
 world data are not silently stripped to make a demo appear playable.
@@ -158,7 +158,7 @@ atlas quads. Large HUD atlases now use bounded POT pages rather than a single
 oversized texture; the upstream full-image CPU atlas construction still needs
 Win7 address-space qualification.
 Ordinary entity/item/particle and hand paths are now integrated (below); sky,
-remaining special entity materials and input/resize integration remain work.
+remaining special entity materials and gameplay input/event-loop wiring remain work.
 
 Our own `.github/workflows/legacy-gl-branch.yml` triggers only on
 `arena/a7e96628-horizon`. The first two runs passed both independent GL2 readbacks
@@ -397,3 +397,72 @@ check/game Clippy, independent GL2 matrix and modern Windows x86 probe link.
 Vanilla GUI foil is implemented in the opt-in coordinator; CIT remains rejected.
 Normal Game startup/frame/asset scheduling is still wgpu. No playable Win7 build,
 X1650 hardware run, new FPS figure or full resource-pack shader support is claimed.
+
+
+## Resizable drawable and WGL window events
+
+`Context::resize` replaces drawable storage, **not** the GL context. OSMesa keeps
+its owned CPU backing in a thread-confined cell; GL work is finished before old
+storage can be freed. EGL stages a replacement pbuffer with the retained config;
+a failed surface retirement is retained and blocks another resize until cleanup,
+bounding deferred native surfaces. WGL resizes the existing client area, leaving
+its DC/pixel format/context alone. `size()` reports actual WGL client dimensions,
+including zero while minimized; render/present reject suspended or oversized
+surfaces. Requested dimensions outside 1..=4096 are rejected before native changes.
+Same-size resize is a no-op. Colour/depth are unspecified after a successful size
+change: the caller must redraw and rebuild projection/HUD for the new dimensions.
+Framebuffer/pbuffer storage is **not** included in texture/mesh payload counters;
+resize may temporarily retain old and staged surface storage.
+
+`TerrainHudRenderer` forwards resize, poll-events, localized title and present
+operations. Its resident section meshes, HUD cache, lightmap and foil IDs survive
+resize; no reupload/recreation is used to disguise broken resource ownership.
+`backend_surface_lifecycle` checks repeated non-square/odd/1x1 sizes, unchanged
+resource counters, live texture updates/draws, readback bounds, invalid/same-size
+preservation and final reclamation. The tenth actual-game GPU fixture redraws
+real terrain plus a rebuilt foil-aware HudBatch across five sizes with exact
+**1164 texture / 512 mesh bytes** (188 resident + 324 transient).
+
+WGL now owns a private callback with a stable `Box<State>` and a unique class per
+window. It buffers resize/focus, physical VK/scan/extended key data and repeat
+counts, decoded Unicode text (UTF-16 surrogate pairs/WM_UNICHAR), signed client
+pointer positions, five buttons, horizontal/vertical wheel and capture loss.
+Adjacent absolute motion/resize events coalesce; at most 256 events and 256 queued
+messages per poll are processed. Overflow is explicit (`lost_events`): the game
+must release held input on loss/focus/capture loss. Close remains persistent even
+on overflow. WM_CLOSE/Alt+F4 request closure **without destroying a renderer's
+live drawable**; the owner tears down GL resources/context before its window.
+Callback userdata is detached before destruction even on native error paths.
+Queued messages are filtered by HWND; WM_QUIT is preserved for the outer loop.
+Native modal moving/sizing can still block inside DispatchMessage; the count bound
+is not a hard latency guarantee. Default shared arrow cursor and caller-supplied
+Unicode title need no new windowing dependencies.
+
+New CPU tests cover event overflow/coalescing, signed values, physical keys,
+Unicode, focus, button/capture state and repeat counts. The Windows x86 workflow
+also executes a real **hidden-window/no-GPU-ICD** test: two HWNDs, callback userdata,
+resize, title, posted keyboard/Unicode messages, queue isolation and a close that
+leaves the HWND alive until Drop. This is distinct from executing the WGL GPU
+renderer and does not qualify Win7 or the X1650 ICD.
+
+Local Rust 1.88: **36 standalone tests**, host/i686 Clippy, **3x21 OSMesa readback
+outcomes**, **642 Python tests (1 skipped)**. Own run
+[41795980600](https://github.com/lukintrees/horizon/actions/runs/41795980600)
+at `3339003` passed all three jobs: ten actual-game GPU fixtures, full-client
+check/game Clippy, runtime matrix, **35 executed x86 Windows workspace tests**
+(including the real HWND test) and ordinary x86 probe linking.
+
+Actual x86 execution exposed two issues not caught by ABI compilation: a mistaken
+SWP_NOSIZE flag and caption minimums imposed by DefWindowProc. The final code uses
+NOMOVE/NOZORDER/NOACTIVATE and bypasses WM_WINDOWPOSCHANGING's caption constraint
+**only inside a validated programmatic resize**, including initial client sizing.
+Normal interactive tracking retains system limits. The native test proves exact
+1x1 and 96x48 sizes, plus actual HWND destruction after owner Drop. The game
+fixture collects unloaded section resources at the documented retirement boundary.
+Own failed runs 41793934111/41794523640/41794968040/41795204955 are not qualification
+results; the final run above includes the fixes. Failure output is now captured
+in own-branch check annotations as well as logs, since sandbox egress cannot fetch
+the redirected Actions log blobs.
+EGL resize compiles but has not been runtime-qualified here. Relative/raw mouse,
+fullscreen/DPI policy, gameplay bindings/timing, normal Game backend selection,
+remaining sky/material passes and Win7 toolchain/PE/CRT/ISA/ICD remain incomplete.
