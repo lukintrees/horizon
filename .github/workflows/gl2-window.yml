@@ -41,7 +41,7 @@ jobs:
           New-Item -ItemType Directory -Force out | Out-Null
           cargo test --release 2>&1 | Out-File -FilePath out\test.log -Encoding utf8
           $status = $LASTEXITCODE
-          Get-Content out\test.log | Select-String -Pattern '^error|panicked|FAILED|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=unit tests::$($_.Line)" }
+          Get-Content out\test.log | Select-String -CaseSensitive -Pattern '^error|panicked|FAILED|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=unit tests::$($_.Line)" }
           exit $status
 
       - name: Build the window (x64)
@@ -49,7 +49,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           cargo build --release --bin horizon-client-gl2 2>&1 | Out-File -FilePath out\build.log -Encoding utf8
           $status = $LASTEXITCODE
-          Get-Content out\build.log | Select-String -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=build::$($_.Line)" }
+          Get-Content out\build.log | Select-String -CaseSensitive -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=build::$($_.Line)" }
           exit $status
 
       - name: Mesa llvmpipe for Windows (x64 opengl32.dll)
