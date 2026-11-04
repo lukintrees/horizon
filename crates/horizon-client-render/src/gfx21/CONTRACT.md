@@ -207,8 +207,8 @@ The user requested «Теперь интегрируй все в игру» and 
   `graphics.rs`/`lod.rs`/`bluemap.rs`/`gfx.rs` do not compile. `Frame` and
   `Renderer` resolve to `gfx21` under `legacy-gl`.
 * `crates/horizon-client/src/client_lib.rs` cfg-gates its modern modules and
-  reexports only `Result`, `gfx21`, `graphics`, `lang`, `text` in the legacy
-  build. `crates/horizon-client/src/lib.rs` chooses `game.rs` + `entry.rs` for
+  reexports only `gfx21` and `graphics` from the render crate in the legacy
+  build; `Result`, `lang` and `text` keep their existing core reexports. `crates/horizon-client/src/lib.rs` chooses `game.rs` + `entry.rs` for
   `modern-gl` and `game_legacy.rs` + `entry_legacy.rs` + `legacy_gl.rs` for
   `legacy-gl`; `#![forbid(unsafe_code)]` is relaxed only for the FFI backend.
 * `game_legacy.rs` is the full `#[cfg]` split of `game.rs`, `build_renderer`,

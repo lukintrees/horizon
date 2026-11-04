@@ -12,8 +12,6 @@ pub mod animate_tick;
 pub mod arrows;
 #[cfg(feature = "modern-gl")]
 pub mod block_contact;
-#[cfg(all(feature = "legacy-gl", not(feature = "modern-gl")))]
-pub use horizon_client_render::{Result, gfx21, graphics, lang, text};
 #[cfg(feature = "modern-gl")]
 pub use horizon_client_render::{
     assets, atlas_sources, audio, auth, ban_notice, bidi, biome, block_edit, block_entities,
@@ -31,6 +29,8 @@ pub use horizon_client_render::{
     sprites, streaming, structure_block, tab_list, telemetry, test_block, test_instance_block,
     testgen, title_edition, trims, ui, vault, weather, widgets, world, worldborder, zip,
 };
+#[cfg(all(feature = "legacy-gl", not(feature = "modern-gl")))]
+pub use horizon_client_render::{gfx21, graphics};
 #[cfg(feature = "modern-gl")]
 pub mod attack_strength;
 #[cfg(feature = "modern-gl")]

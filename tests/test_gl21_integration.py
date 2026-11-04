@@ -103,7 +103,7 @@ class FeatureSplitTests(unittest.TestCase):
         client_lib = CLIENT_LIB.read_text(encoding="utf-8")
         self.assertIn('#[cfg(feature = "modern-gl")]\npub use horizon_client_render::{', client_lib)
         self.assertIn('#[cfg(all(feature = "legacy-gl", not(feature = "modern-gl")))]', client_lib)
-        self.assertIn("pub use horizon_client_render::{Result, gfx21, graphics, lang, text};", client_lib)
+        self.assertIn("pub use horizon_client_render::{gfx21, graphics};", client_lib)
         self.assertIn('#[cfg(feature = "modern-gl")]\npub mod attack_strength;', client_lib)
 
         root = CLIENT_ROOT.read_text(encoding="utf-8")
