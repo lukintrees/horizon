@@ -2,9 +2,24 @@
 //! This does not upload or draw them. Batches are consecutive rather than
 //! sorted by page so the caller can preserve translucent draw order.
 use super::atlas::{Atlas, AtlasError};
-use crate::mesher::{OPAQUE_LAYER, SectionMesh, TerrainVertex};
+use crate::mesher::{OPAQUE_LAYER, SectionMesh, TILED_UV_STEPS, TerrainVertex, UV_STEPS};
 
 pub use horizon_legacy_gl::{Batch, Vertex};
+
+/// Convert the game's fog data for a section whose origin is relative to the
+/// camera. Sky and cloud fog ends are for other pipelines and are not used.
+pub fn fog(data: &crate::fog::FogData, section_offset: [f32; 3]) -> horizon_legacy_gl::Fog {
+    horizon_legacy_gl::Fog {
+        color: data.color,
+        ranges: [
+            data.environmental_start,
+            data.environmental_end,
+            data.render_distance_start,
+            data.render_distance_end,
+        ],
+        section_offset,
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MeshError {
@@ -35,7 +50,7 @@ pub fn build_section(atlas: &Atlas, section: &SectionMesh) -> Result<(Mesh, Mesh
 /// vertices, not `TerrainVertex::tiled` (its UV has a different fixed-point
 /// scale). For world lighting use `build_with_lightmap` instead.
 pub fn build(atlas: &Atlas, quads: &[TerrainVertex]) -> Result<Mesh, MeshError> {
-    build_inner(atlas, quads, None)
+    build_inner(atlas, quads, None, 1.0)
 }
 
 /// Bake the game's 16x16 RGBA lightmap into the vertex colors. This avoids
@@ -46,7 +61,23 @@ pub fn build_with_lightmap(
     quads: &[TerrainVertex],
     lightmap: &[u8; 16 * 16 * 4],
 ) -> Result<Mesh, MeshError> {
-    build_inner(atlas, quads, Some(lightmap))
+    build_inner(atlas, quads, Some(lightmap), 1.0)
+}
+
+/// Convert merged distant-terrain quads created with `TerrainVertex::tiled`.
+/// Their fixed-point UV encoding differs from near terrain; the shader repeats
+/// the sprite across each block of the merged face.
+pub fn build_tiled(atlas: &Atlas, quads: &[TerrainVertex]) -> Result<Mesh, MeshError> {
+    build_inner(atlas, quads, None, UV_STEPS / TILED_UV_STEPS)
+}
+
+/// Convert distant terrain and bake the current lightmap into its vertices.
+pub fn build_tiled_with_lightmap(
+    atlas: &Atlas,
+    quads: &[TerrainVertex],
+    lightmap: &[u8; 16 * 16 * 4],
+) -> Result<Mesh, MeshError> {
+    build_inner(atlas, quads, Some(lightmap), UV_STEPS / TILED_UV_STEPS)
 }
 
 /// Sample linearly like the existing terrain shader's lightmap sampler.
@@ -70,6 +101,7 @@ fn build_inner(
     atlas: &Atlas,
     quads: &[TerrainVertex],
     lightmap: Option<&[u8; 16 * 16 * 4]>,
+    uv_scale: f32,
 ) -> Result<Mesh, MeshError> {
     if !quads.len().is_multiple_of(4) {
         return Err(MeshError::IncompleteQuad);
@@ -113,7 +145,7 @@ fn build_inner(
             let light = lightmap.map_or([1.0; 3], |pixels| lightmap_rgb(vertex.light, pixels));
             mesh.vertices.push(Vertex {
                 position: vertex.pos,
-                sprite_uv: vertex.uv(),
+                sprite_uv: vertex.uv().map(|uv| uv * uv_scale),
                 atlas_rect: location.rect,
                 color: [
                     f32::from(r) / 255.0 * light[0],
@@ -222,6 +254,39 @@ mod tests {
         let (solid, translucent) = build_section(&atlas, &section).unwrap();
         assert_eq!(solid.vertices.len(), 6);
         assert_eq!(translucent.vertices.len(), 12);
+    }
+
+    #[test]
+    fn distant_uv_uses_tiled_encoding_and_can_bake_light() {
+        let atlas = Atlas::new(1, 1, 4, &[255, 255, 255, 255]).unwrap();
+        let quad: Vec<_> = [[0., 0.], [3.5, 0.], [3.5, 2.], [0., 2.]]
+            .into_iter()
+            .map(|uv| TerrainVertex::tiled([uv[0], uv[1], 0.], uv, 0, 0xffff_ffff, 0))
+            .collect();
+        let mesh = build_tiled(&atlas, &quad).unwrap();
+        assert_eq!(mesh.vertices[1].sprite_uv, [3.5, 0.]);
+        assert_eq!(mesh.vertices[2].sprite_uv, [3.5, 2.]);
+        let light = [128; 16 * 16 * 4];
+        let lit = build_tiled_with_lightmap(&atlas, &quad, &light).unwrap();
+        assert_eq!(lit.vertices[1].sprite_uv, [3.5, 0.]);
+        assert!((lit.vertices[1].color[0] - 128. / 255.).abs() < 1e-6);
+    }
+
+    #[test]
+    fn converts_world_fog_ranges_and_camera_relative_offset() {
+        let data = crate::fog::FogData {
+            color: [0.1, 0.2, 0.3, 0.4],
+            environmental_start: 1.0,
+            environmental_end: 2.0,
+            render_distance_start: 3.0,
+            render_distance_end: 4.0,
+            sky_end: 5.0,
+            cloud_end: 6.0,
+        };
+        let actual = fog(&data, [7., 8., 9.]);
+        assert_eq!(actual.color, [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(actual.ranges, [1., 2., 3., 4.]);
+        assert_eq!(actual.section_offset, [7., 8., 9.]);
     }
 
     #[test]

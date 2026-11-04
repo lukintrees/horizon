@@ -1,4 +1,4 @@
-//! Experimental OpenGL 2.1 terrain renderer. This crate does not create a
+//! Experimental OpenGL 2.0 terrain renderer. This crate does not create a
 //! window or a context and is not yet wired into the Horizon game loop.
 //!
 //! All GL operations are unsafe: the caller must keep the same compatible
@@ -72,6 +72,16 @@ pub enum Pass {
     HudAdditive,
 }
 
+/// Terrain fog parameters, matching the existing renderer's spherical and
+/// cylindrical ranges. `section_offset` is section origin minus camera position,
+/// in the same world units as `Vertex::position`. Fog does not affect HUD passes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    pub color: [f32; 4],
+    pub ranges: [f32; 4],
+    pub section_offset: [f32; 3],
+}
+
 /// One draw in an ordered, mixed-pass vertex buffer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Draw {
@@ -121,6 +131,8 @@ gl_functions! {
     uniform_location: "glGetUniformLocation" => (u32, *const c_char) -> i32,
     uniform_1i: "glUniform1i" => (i32, i32) -> (),
     uniform_1f: "glUniform1f" => (i32, f32) -> (),
+    uniform_3f: "glUniform3f" => (i32, f32, f32, f32) -> (),
+    uniform_4f: "glUniform4f" => (i32, f32, f32, f32, f32) -> (),
     uniform_matrix: "glUniformMatrix4fv" => (i32, i32, u8, *const f32) -> (),
     gen_buffers: "glGenBuffers" => (i32, *mut u32) -> (),
     delete_buffers: "glDeleteBuffers" => (i32, *const u32) -> (),
@@ -197,15 +209,20 @@ pub struct Renderer {
     buffer: u32,
     textures: Vec<u32>,
     texture_sides: Vec<u32>,
+    unpack_buffer: bool,
     max_texture_size: u32,
     view_projection: i32,
     alpha_cutoff: i32,
+    fog_color: i32,
+    fog_ranges: i32,
+    fog_enabled: i32,
+    section_offset: i32,
     atlas: i32,
     _thread: PhantomData<Rc<()>>,
 }
 
 impl Renderer {
-    /// Load entry points and compile the prototype GLSL 1.20 terrain program.
+    /// Load entry points and compile the prototype GLSL 1.10 terrain program.
     ///
     /// # Safety
     /// A desktop OpenGL context must be current on this thread. `resolve` must
@@ -229,9 +246,11 @@ impl Renderer {
             };
             let version = get_text(0x1f02);
             let glsl = get_text(0x8b8c);
-            if !version_at_least(&version, (2, 1)) || !version_at_least(&glsl, (1, 20)) {
+            if !version_at_least(&version, (2, 0)) || !version_at_least(&glsl, (1, 10)) {
                 return Err(Error::InvalidVersion(format!("GL {version}, GLSL {glsl}")));
             }
+            let unpack_buffer = version_at_least(&version, (2, 1))
+                || supports_unpack_buffer(&version, &get_text(0x1f03));
             let mut max_texture = 0;
             let mut attributes = 0;
             (gl.get_integer)(0x0d33, &mut max_texture);
@@ -275,10 +294,18 @@ impl Renderer {
             let view_projection = uniform(c"view_projection");
             let alpha_cutoff = uniform(c"alpha_cutoff");
             let atlas = uniform(c"atlas");
+            let fog_color = uniform(c"fog_color");
+            let fog_ranges = uniform(c"fog_ranges");
+            let fog_enabled = uniform(c"fog_enabled");
+            let section_offset = uniform(c"section_offset");
             for (name, value) in [
                 ("view_projection", view_projection),
                 ("alpha_cutoff", alpha_cutoff),
                 ("atlas", atlas),
+                ("fog_color", fog_color),
+                ("fog_ranges", fog_ranges),
+                ("fog_enabled", fog_enabled),
+                ("section_offset", section_offset),
             ] {
                 if value < 0 {
                     (gl.delete_program)(program);
@@ -305,9 +332,14 @@ impl Renderer {
                 buffer,
                 textures: Vec::new(),
                 texture_sides: Vec::new(),
+                unpack_buffer,
                 max_texture_size: max_texture as u32,
                 view_projection,
                 alpha_cutoff,
+                fog_color,
+                fog_ranges,
+                fog_enabled,
+                section_offset,
                 atlas,
                 _thread: PhantomData,
             })
@@ -347,7 +379,7 @@ impl Renderer {
             if !textures.is_empty() {
                 (self.gl.gen_textures)(textures.len() as i32, textures.as_mut_ptr());
             }
-            prepare_unpack(&self.gl);
+            prepare_unpack(&self.gl, self.unpack_buffer);
             for (page, &texture) in pages.iter().zip(&textures) {
                 (self.gl.bind_texture)(GL_TEXTURE_2D, texture);
                 (self.gl.tex_parameter)(GL_TEXTURE_2D, 0x2801, 0x2600); // GL_NEAREST
@@ -409,7 +441,7 @@ impl Renderer {
             if preexisting != 0 {
                 return Err(Error::Gl(preexisting));
             }
-            prepare_unpack(gl);
+            prepare_unpack(gl, self.unpack_buffer);
             (gl.bind_texture)(GL_TEXTURE_2D, self.textures[index]);
             (gl.tex_sub_image)(
                 GL_TEXTURE_2D,
@@ -452,6 +484,7 @@ impl Renderer {
                 vertices,
                 batches.iter().copied().map(|batch| Draw { batch, pass }),
                 transform,
+                None,
             )
         }
     }
@@ -468,7 +501,31 @@ impl Renderer {
         transform: &[f32; 16],
     ) -> Result<(), Error> {
         // SAFETY: caller guarantees the owning context is current.
-        unsafe { self.draw_sequence(vertices, draws.iter().copied(), transform) }
+        unsafe { self.draw_sequence(vertices, draws.iter().copied(), transform, None) }
+    }
+
+    /// Draw terrain with environmental and render-distance fog. The origin is
+    /// camera-relative independently of the projection transform.
+    ///
+    /// # Safety
+    /// The same context used for `new` must be current on this thread.
+    pub unsafe fn draw_with_fog(
+        &mut self,
+        vertices: &[Vertex],
+        batches: &[Batch],
+        transform: &[f32; 16],
+        pass: Pass,
+        fog: Fog,
+    ) -> Result<(), Error> {
+        // SAFETY: caller guarantees the owning context is current.
+        unsafe {
+            self.draw_sequence(
+                vertices,
+                batches.iter().copied().map(|batch| Draw { batch, pass }),
+                transform,
+                Some(fog),
+            )
+        }
     }
 
     unsafe fn draw_sequence(
@@ -476,6 +533,7 @@ impl Renderer {
         vertices: &[Vertex],
         draws: impl Iterator<Item = Draw> + Clone,
         transform: &[f32; 16],
+        fog: Option<Fog>,
     ) -> Result<(), Error> {
         validate_batches(vertices, &[], self.textures.len())?;
         for draw in draws.clone() {
@@ -496,6 +554,17 @@ impl Renderer {
             (gl.use_program)(self.program);
             (gl.uniform_matrix)(self.view_projection, 1, 0, transform.as_ptr());
             (gl.uniform_1i)(self.atlas, 0);
+            let fog_data = fog.unwrap_or(Fog {
+                color: [0.0; 4],
+                ranges: [0.0; 4],
+                section_offset: [0.0; 3],
+            });
+            let [r, g, b, a] = fog_data.color;
+            (gl.uniform_4f)(self.fog_color, r, g, b, a);
+            let [a, b, c, d] = fog_data.ranges;
+            (gl.uniform_4f)(self.fog_ranges, a, b, c, d);
+            let [x, y, z] = fog_data.section_offset;
+            (gl.uniform_3f)(self.section_offset, x, y, z);
             (gl.depth_func)(0x0201); // less
             (gl.depth_range)(0.0, 1.0);
             (gl.color_mask)(1, 1, 1, 1);
@@ -523,6 +592,12 @@ impl Renderer {
             for draw in draws {
                 if current_pass != Some(draw.pass) {
                     set_pass(gl, self.alpha_cutoff, draw.pass);
+                    let terrain =
+                        matches!(draw.pass, Pass::Solid { .. } | Pass::Translucent { .. });
+                    (gl.uniform_1f)(
+                        self.fog_enabled,
+                        if fog.is_some() && terrain { 1.0 } else { 0.0 },
+                    );
                     current_pass = Some(draw.pass);
                 }
                 if current_page != Some(draw.batch.page) {
@@ -604,11 +679,23 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
     }
 }
 
-unsafe fn prepare_unpack(gl: &Gl) {
+fn supports_unpack_buffer(version: &str, extensions: &str) -> bool {
+    version_at_least(version, (2, 1))
+        || extensions.split_ascii_whitespace().any(|extension| {
+            matches!(
+                extension,
+                "GL_ARB_pixel_buffer_object" | "GL_EXT_pixel_buffer_object"
+            )
+        })
+}
+
+unsafe fn prepare_unpack(gl: &Gl, unpack_buffer: bool) {
     // SAFETY: called only with a current context and loaded entry points.
     unsafe {
         (gl.active_texture)(0x84c0);
-        (gl.bind_buffer)(0x88ec, 0); // GL_PIXEL_UNPACK_BUFFER
+        if unpack_buffer {
+            (gl.bind_buffer)(0x88ec, 0); // GL_PIXEL_UNPACK_BUFFER
+        }
         (gl.pixel_store)(0x0cf5, 4); // GL_UNPACK_ALIGNMENT
         (gl.pixel_store)(0x0cf2, 0); // GL_UNPACK_ROW_LENGTH
         (gl.pixel_store)(0x0cf3, 0); // GL_UNPACK_SKIP_ROWS
@@ -670,7 +757,15 @@ mod tests {
         assert!(version_at_least("2.1 Mesa 21.1.4", (2, 1)));
         assert!(version_at_least("1.20", (1, 20)));
         assert!(!version_at_least("OpenGL ES 3.0", (2, 1)));
-        assert!(!version_at_least("2.0", (2, 1)));
+        assert!(version_at_least("2.0", (2, 0)));
+        assert!(version_at_least("1.10", (1, 10)));
+        assert!(!version_at_least("1.5", (2, 0)));
+        assert!(!supports_unpack_buffer(
+            "2.0",
+            "GL_ARB_pixel_buffer_object_extra"
+        ));
+        assert!(supports_unpack_buffer("2.0", "GL_EXT_pixel_buffer_object"));
+        assert!(supports_unpack_buffer("2.1", ""));
     }
     #[test]
     fn rejects_invalid_batches_before_gl() {

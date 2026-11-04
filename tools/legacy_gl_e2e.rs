@@ -1,4 +1,4 @@
-//! Standalone developer integration test for the experimental GL 2.1 backend.
+//! Standalone developer integration test for the experimental GL 2.0/2.1 backend.
 //! Uses Mesa OSMesa and minimal stand-ins for the game's mesher types so it can
 //! run without downloading the full workspace's Cargo dependencies. The real
 //! atlas/mesh conversion and GL renderer source files are used unchanged.
@@ -8,8 +8,21 @@ use std::{
     mem, ptr,
 };
 
+mod fog {
+    pub struct FogData {
+        pub color: [f32; 4],
+        pub environmental_start: f32,
+        pub environmental_end: f32,
+        pub render_distance_start: f32,
+        pub render_distance_end: f32,
+        pub sky_end: f32,
+        pub cloud_end: f32,
+    }
+}
 mod mesher {
     pub const OPAQUE_LAYER: u16 = 1 << 15;
+    pub const UV_STEPS: f32 = 32768.0;
+    pub const TILED_UV_STEPS: f32 = 32.0;
     #[derive(Clone, Copy)]
     pub struct TerrainVertex {
         pub pos: [f32; 3],
@@ -27,6 +40,15 @@ mod mesher {
                 color,
                 light,
             }
+        }
+        pub fn tiled(pos: [f32; 3], uv: [f32; 2], layer: u16, color: u32, light: u16) -> Self {
+            Self::new(
+                pos,
+                uv.map(|v| (v * TILED_UV_STEPS).round().clamp(0.0, 65535.0) / UV_STEPS),
+                layer,
+                color,
+                light,
+            )
         }
         pub fn uv(&self) -> [f32; 2] {
             self.uv
@@ -169,14 +191,12 @@ fn quad(x1: f32, x2: f32, z: f32, layer: u16) -> Vec<mesher::TerrainVertex> {
 
 fn main() {
     assert_eq!(std::env::var("LIBGL_ALWAYS_SOFTWARE").as_deref(), Ok("1"));
-    assert_eq!(
-        std::env::var("MESA_GL_VERSION_OVERRIDE").as_deref(),
-        Ok("2.1")
-    );
-    assert_eq!(
-        std::env::var("MESA_GLSL_VERSION_OVERRIDE").as_deref(),
-        Ok("120")
-    );
+    let gl_version = std::env::var("MESA_GL_VERSION_OVERRIDE").unwrap();
+    let glsl_version = std::env::var("MESA_GLSL_VERSION_OVERRIDE").unwrap_or_default();
+    assert!(matches!(
+        (gl_version.as_str(), glsl_version.as_str()),
+        ("2.0", "") | ("2.0", "110") | ("2.1", "120")
+    ));
     // SAFETY: the OSMesa library and all resources stay live until teardown.
     unsafe {
         let handle = dlopen(c"libOSMesa.so.8".as_ptr(), 2);
@@ -222,6 +242,22 @@ fn main() {
             c"glPixelStorei",
             unsafe extern "system" fn(u32, i32)
         );
+        let gen_buffers = function!(
+            handle,
+            c"glGenBuffers",
+            unsafe extern "system" fn(i32, *mut u32)
+        );
+        let delete_buffers = function!(
+            handle,
+            c"glDeleteBuffers",
+            unsafe extern "system" fn(i32, *const u32)
+        );
+        let bind_buffer = function!(handle, c"glBindBuffer", unsafe extern "system" fn(u32, u32));
+        let buffer_data = function!(
+            handle,
+            c"glBufferData",
+            unsafe extern "system" fn(u32, isize, *const c_void, u32)
+        );
         let depth_range = function!(handle, c"glDepthRange", unsafe extern "system" fn(f64, f64));
         let color_mask = function!(
             handle,
@@ -243,7 +279,18 @@ fn main() {
         let glsl = CStr::from_ptr(get_string(0x8b8c)).to_string_lossy();
         println!("renderer={renderer}, GL={version}, GLSL={glsl}");
         assert!(renderer.to_lowercase().contains("llvmpipe"));
-        assert!(version.starts_with("2.1 ") && glsl.starts_with("1.20"));
+        assert!(version.starts_with(&format!("{gl_version} ")));
+        if !glsl_version.is_empty() {
+            assert!(glsl.starts_with(if glsl_version == "110" {
+                "1.10"
+            } else {
+                "1.20"
+            }));
+        }
+        if gl_version == "2.0" {
+            let extensions = CStr::from_ptr(get_string(0x1f03)).to_string_lossy();
+            assert!(!extensions.split_ascii_whitespace().any(|e| e == "GL_ARB_pixel_buffer_object" || e == "GL_EXT_pixel_buffer_object"), "2.0 test requires PBO extensions disabled");
+        }
         let mut gpu = horizon_legacy_gl::Renderer::new(|name| {
             let p = getproc(name.as_ptr());
             if p.is_null() {
@@ -271,7 +318,18 @@ fn main() {
         pixel_store(0x0cf2, 8); // GL_UNPACK_ROW_LENGTH
         pixel_store(0x0cf3, 1); // GL_UNPACK_SKIP_ROWS
         pixel_store(0x0cf4, 1); // GL_UNPACK_SKIP_PIXELS
+        // GL 2.1 has core pixel unpack buffers. Ensure a buffer left bound by
+        // another pass is unbound before passing a CPU pointer to TexImage.
+        let mut unpack = 0;
+        if gl_version == "2.1" {
+            gen_buffers(1, &mut unpack);
+            bind_buffer(0x88ec, unpack);
+            buffer_data(0x88ec, 4096, ptr::null(), 0x88e0);
+        }
         upload(&mut gpu, &atlas);
+        if unpack != 0 {
+            delete_buffers(1, &unpack);
+        }
         assert_eq!(
             gpu.upload_pages(&[horizon_legacy_gl::Page {
                 side: 3,
@@ -361,7 +419,87 @@ fn main() {
 
         // Near translucent blue blends over red; a later far solid stays hidden.
         let red = legacy::terrain::build(&atlas, &quad(-0.9, 0.9, 0., 0)).unwrap();
+        // WGSL computes distances at vertices, then interpolates them. All four
+        // corners are equidistant here, so expected values are independent of
+        // the sample location and triangle diagonal.
+        let mut fog = horizon_legacy_gl::Fog {
+            color: [0., 0., 1., 1.],
+            ranges: [2., 4., 100., 101.],
+            section_offset: [0., 0., 2.],
+        };
+        let fogged = |gpu: &mut horizon_legacy_gl::Renderer, fog| {
+            clear(0x4000 | 0x0100);
+            gpu.draw_with_fog(
+                &red.vertices,
+                &red.batches,
+                &identity,
+                horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+                fog,
+            )
+            .unwrap();
+            rgb(sample(16))
+        };
+        let spherical = fogged(&mut gpu, fog);
+        let factor = ((5.62f32).sqrt() - 2.) / 2.;
+        assert!(
+            spherical[0].abs_diff((200. * (1. - factor)).round() as u8) <= 2
+                && spherical[2].abs_diff((255. * factor).round() as u8) <= 2,
+            "spherical fog {spherical:?}"
+        );
+        fog.ranges = [100., 101., 2., 3.];
+        let cylindrical = fogged(&mut gpu, fog);
+        let factor = (4.81f32).sqrt() - 2.;
+        assert!(
+            cylindrical[0].abs_diff((200. * (1. - factor)).round() as u8) <= 2
+                && cylindrical[2].abs_diff((255. * factor).round() as u8) <= 2,
+            "cylindrical fog {cylindrical:?}"
+        );
+        fog.ranges = [2., 2., 100., 101.]; // zero-width fog is a step, not a division by zero
+        fog.color[3] = 0.5;
+        let stepped = fogged(&mut gpu, fog);
+        assert!(
+            stepped[0].abs_diff(100) <= 1 && stepped[2].abs_diff(128) <= 1,
+            "step fog {stepped:?}"
+        );
+        clear(0x4000 | 0x0100);
+        draw(
+            &mut gpu,
+            &red,
+            horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+        );
+        assert_eq!(
+            rgb(sample(16)),
+            [200, 0, 0],
+            "ordinary draws must reset fog"
+        );
+
         let blue = legacy::terrain::build(&atlas, &quad(-0.9, 0.9, -0.5, 2)).unwrap();
+        fog.ranges = [0., 0., 0., 0.];
+        fog.color = [1., 1., 1., 1.];
+        clear(0x4000 | 0x0100);
+        gpu.draw_with_fog(
+            &blue.vertices,
+            &blue.batches,
+            &identity,
+            horizon_legacy_gl::Pass::Translucent { alpha_cutoff: 0.1 },
+            fog,
+        )
+        .unwrap();
+        let translucent_fog = rgb(sample(16));
+        assert!(
+            translucent_fog.iter().all(|c| c.abs_diff(128) <= 1),
+            "fog must preserve texture alpha: {translucent_fog:?}"
+        );
+        clear(0x4000 | 0x0100);
+        gpu.draw_with_fog(
+            &red.vertices,
+            &red.batches,
+            &identity,
+            horizon_legacy_gl::Pass::HudAlpha,
+            fog,
+        )
+        .unwrap();
+        assert_eq!(rgb(sample(16)), [200, 0, 0], "fog must not affect HUD");
         let behind = legacy::terrain::build(&atlas, &quad(-0.9, 0.9, 0.5, 1)).unwrap();
         clear(0x4000 | 0x0100);
         draw(
@@ -517,11 +655,49 @@ fn main() {
             .unwrap();
         assert_eq!(rgb(sample(16)), [40, 255, 255], "HUD mixed blend order");
         gui.destroy();
+
+        // Real tiled UV encoding on a merged face: a two-texel stripe must
+        // repeat twice rather than stretching over the whole quad.
+        let tiled_atlas = legacy::atlas::Atlas::new(
+            2,
+            1,
+            8,
+            &[
+                200, 0, 0, 255, 0, 200, 0, 255, 200, 0, 0, 255, 0, 200, 0, 255,
+            ],
+        )
+        .unwrap();
+        let page = &tiled_atlas.pages()[0];
+        gpu.upload_pages(&[horizon_legacy_gl::Page {
+            side: page.side,
+            pixels: &page.pixels,
+        }])
+        .unwrap();
+        let tiled: Vec<_> = [
+            ([-0.9, -0.9, 0.], [0., 0.25]),
+            ([0.9, -0.9, 0.], [2., 0.25]),
+            ([0.9, 0.9, 0.], [2., 0.25]),
+            ([-0.9, 0.9, 0.], [0., 0.25]),
+        ]
+        .into_iter()
+        .map(|(p, uv)| mesher::TerrainVertex::tiled(p, uv, 0, u32::MAX, 0))
+        .collect();
+        let tiled = legacy::terrain::build_tiled(&tiled_atlas, &tiled).unwrap();
+        clear(0x4000 | 0x0100);
+        draw(
+            &mut gpu,
+            &tiled,
+            horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+        );
+        assert_eq!(rgb(sample(4)), [200, 0, 0]);
+        assert_eq!(rgb(sample(10)), [0, 200, 0]);
+        assert_eq!(rgb(sample(20)), [200, 0, 0]);
+        assert_eq!(rgb(sample(26)), [0, 200, 0]);
         gpu.destroy();
         destroy(context);
         dlclose(handle);
         println!(
-            "PASS: Rust GL renderer + CPU atlas/mesh, pages, update, depth, blending and cutout"
+            "PASS: Rust GL renderer + CPU atlas/mesh, pages, update, depth, blending, cutout and fog"
         );
     }
 }

@@ -16,3 +16,8 @@ rustc --edition 2024 tools/legacy_gl_e2e.rs \
     --extern "horizon_legacy_gl=$tmp/libhorizon_legacy_gl.rlib" -o "$tmp/gl_e2e"
 LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=2.1 MESA_GLSL_VERSION_OVERRIDE=120 \
     "$tmp/gl_e2e"
+
+# Exercise the no-PBO path as well as the 2.1 core PBO path.
+env -u MESA_GLSL_VERSION_OVERRIDE LIBGL_ALWAYS_SOFTWARE=1 MESA_GL_VERSION_OVERRIDE=2.0 \
+    MESA_EXTENSION_OVERRIDE="-GL_ARB_pixel_buffer_object -GL_EXT_pixel_buffer_object" \
+    "$tmp/gl_e2e"
