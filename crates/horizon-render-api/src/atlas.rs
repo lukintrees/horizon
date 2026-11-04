@@ -17,7 +17,7 @@ pub struct Placement {
 }
 
 /// A deterministic layout. Placements are in the same order as the input sprites.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AtlasLayout {
     page_size: u32,
     padding: u32,

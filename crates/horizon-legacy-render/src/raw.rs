@@ -1,21 +1,37 @@
 //! Private desktop GL2 ABI. No entry points newer than OpenGL 2.0.
 use crate::Context;
 use std::ffi::{c_char, c_void};
+use std::ops::Deref;
+use std::rc::Rc;
+
+pub(crate) enum ContextHandle<'a> {
+    Borrowed(&'a Context),
+    Owned(Rc<Context>),
+}
+impl Deref for ContextHandle<'_> {
+    type Target = Context;
+    fn deref(&self) -> &Context {
+        match self {
+            Self::Borrowed(context) => context,
+            Self::Owned(context) => context,
+        }
+    }
+}
 macro_rules! entry_points {
     ($($field:ident: $name:literal ($($arg:ty),*) -> $ret:ty;)*) => {
         pub(crate) struct Gl<'a> {
-            pub context: &'a Context,
+            pub context: ContextHandle<'a>,
             $ (pub $field: unsafe extern "system" fn($($arg),*) -> $ret,)*
         }
         impl<'a> Gl<'a> {
-            pub fn load(context: &'a Context) -> Result<Self, String> {
+            pub fn load(context: ContextHandle<'a>) -> Result<Self, String> {
                 Ok(Self {
-                    context,
                     $($field: {
                         let address = context.address($name)?;
                         // SAFETY: each fixed symbol has the declared desktop GL ABI.
                         unsafe { std::mem::transmute::<*const c_void, unsafe extern "system" fn($($arg),*) -> $ret>(address) }
                     },)*
+                    context,
                 })
             }
         }

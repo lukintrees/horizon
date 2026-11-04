@@ -40,23 +40,23 @@ struct Section {
     translucent: Vec<ResidentRun>,
 }
 
-/// Owns only resources it creates; borrowing the backend prevents it being
-/// dropped first. Failed replacements leave the previous section usable.
+/// Owns its backend (or an exclusive backend reference) and atlas layout.
+/// It can be stored in a game without self-referential lifetime tricks. Failed replacements leave the previous section usable.
 /// Old resources are reclaimed before the next upload/render, with failures
 /// retained for retry rather than silently forgetting their IDs.
-pub struct WorldScene<'a, B: RenderBackend> {
-    backend: &'a mut B,
-    atlas: &'a AtlasLayout,
+pub struct WorldScene<B: RenderBackend> {
+    backend: B,
+    atlas: AtlasLayout,
     pages: Vec<TextureId>,
     lightmap: Option<TextureId>,
     sections: HashMap<SectionKey, Section>,
     retired: Vec<MeshId>,
     max_sections: usize,
 }
-impl<'a, B: RenderBackend> WorldScene<'a, B> {
+impl<B: RenderBackend> WorldScene<B> {
     pub fn new(
-        backend: &'a mut B,
-        atlas: &'a AtlasLayout,
+        backend: B,
+        atlas: AtlasLayout,
         pages: &[&[u8]],
         lightmap: &[u8],
         max_sections: usize,
@@ -107,8 +107,14 @@ impl<'a, B: RenderBackend> WorldScene<'a, B> {
     }
 
     pub fn atlas(&self) -> &AtlasLayout {
-        self.atlas
+        &self.atlas
     }
+    /// Compose GUI/hand views on the same backend after the world view. Resource
+    /// IDs remain backend-validated, including those not owned by this scene.
+    pub fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+
     pub fn section_count(&self) -> usize {
         self.sections.len()
     }
@@ -246,7 +252,7 @@ impl<'a, B: RenderBackend> WorldScene<'a, B> {
         self.backend.read_rgba(rect).map_err(SceneError::Backend)
     }
 }
-impl<B: RenderBackend> Drop for WorldScene<'_, B> {
+impl<B: RenderBackend> Drop for WorldScene<B> {
     fn drop(&mut self) {
         for (_, section) in self.sections.drain() {
             for run in section.solid.into_iter().chain(section.translucent) {

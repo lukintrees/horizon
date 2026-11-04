@@ -266,6 +266,62 @@ pub enum UploadError<E> {
     Backend(E),
 }
 
+/// A checked dynamic glyph/sprite update, including POT edge replication.
+pub struct Patch {
+    pub at: [u32; 2],
+    pub size: [u32; 2],
+    pub rgba: Vec<u8>,
+}
+pub fn prepare_patch(
+    atlas: [u32; 2],
+    at: [u32; 2],
+    image: Image<'_>,
+    max_bytes: usize,
+) -> Result<Patch, GuiError> {
+    let size = [image.width, image.height];
+    let length = (size[0] as usize)
+        .checked_mul(size[1] as usize)
+        .and_then(|n| n.checked_mul(4));
+    if atlas.contains(&0) || size.contains(&0) || length != Some(image.rgba.len()) {
+        return Err(GuiError::InvalidAtlas);
+    }
+    let mut extended = size;
+    for i in 0..2 {
+        let end = at[i]
+            .checked_add(size[i])
+            .filter(|&v| v <= atlas[i])
+            .ok_or(GuiError::InvalidAtlas)?;
+        let pot = atlas[i]
+            .checked_next_power_of_two()
+            .ok_or(GuiError::InvalidAtlas)?;
+        if end == atlas[i] {
+            extended[i] = pot - at[i];
+        }
+    }
+    let bytes = (extended[0] as usize)
+        .checked_mul(extended[1] as usize)
+        .and_then(|n| n.checked_mul(4))
+        .filter(|&n| n <= max_bytes)
+        .ok_or(GuiError::InvalidAtlas)?;
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(bytes)
+        .map_err(|_| GuiError::InvalidAtlas)?;
+    rgba.resize(bytes, 0);
+    for y in 0..extended[1] {
+        for x in 0..extended[0] {
+            let src =
+                (y.min(size[1] - 1) as usize * size[0] as usize + x.min(size[0] - 1) as usize) * 4;
+            let dst = (y as usize * extended[0] as usize + x as usize) * 4;
+            rgba[dst..dst + 4].copy_from_slice(&image.rgba[src..src + 4]);
+        }
+    }
+    Ok(Patch {
+        at,
+        size: extended,
+        rgba,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,5 +411,48 @@ mod tests {
         assert_eq!(size, [4, 1]);
         assert_eq!(result, [1, 2, 3, 4].repeat(4));
         assert_eq!(pad_atlas([3, 1], &pixels, 15), Err(GuiError::InvalidAtlas));
+    }
+    #[test]
+    fn dynamic_patch_updates_pot_padding_and_bounds_its_temporary_storage() {
+        let patch = prepare_patch(
+            [3, 3],
+            [2, 2],
+            Image {
+                width: 1,
+                height: 1,
+                rgba: &[1, 2, 3, 4],
+            },
+            16,
+        )
+        .unwrap();
+        assert_eq!(patch.at, [2, 2]);
+        assert_eq!(patch.size, [2, 2]);
+        assert_eq!(patch.rgba, [1, 2, 3, 4].repeat(4));
+        assert!(matches!(
+            prepare_patch(
+                [3, 3],
+                [2, 2],
+                Image {
+                    width: 1,
+                    height: 1,
+                    rgba: &[1, 2, 3, 4]
+                },
+                15
+            ),
+            Err(GuiError::InvalidAtlas)
+        ));
+        assert!(matches!(
+            prepare_patch(
+                [3, 3],
+                [3, 0],
+                Image {
+                    width: 1,
+                    height: 1,
+                    rgba: &[1, 2, 3, 4]
+                },
+                16
+            ),
+            Err(GuiError::InvalidAtlas)
+        ));
     }
 }

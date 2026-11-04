@@ -108,6 +108,38 @@ pub trait RenderBackend {
     fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, Self::Error>;
 }
 
+// Owning wrappers may also hold an exclusive reference during a bounded test or
+// render pass. This keeps one lifecycle implementation for both ownership modes.
+impl<B: RenderBackend + ?Sized> RenderBackend for &mut B {
+    type Error = B::Error;
+    fn create_texture(&mut self, image: Image<'_>) -> Result<TextureId, Self::Error> {
+        (**self).create_texture(image)
+    }
+    fn update_texture(
+        &mut self,
+        id: TextureId,
+        at: [u32; 2],
+        image: Image<'_>,
+    ) -> Result<(), Self::Error> {
+        (**self).update_texture(id, at, image)
+    }
+    fn remove_texture(&mut self, id: TextureId) -> Result<(), Self::Error> {
+        (**self).remove_texture(id)
+    }
+    fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, Self::Error> {
+        (**self).create_mesh(vertices, indices)
+    }
+    fn remove_mesh(&mut self, id: MeshId) -> Result<(), Self::Error> {
+        (**self).remove_mesh(id)
+    }
+    fn render(&mut self, frame: &Frame<'_>) -> Result<(), Self::Error> {
+        (**self).render(frame)
+    }
+    fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, Self::Error> {
+        (**self).read_rgba(rect)
+    }
+}
+
 pub fn relative_origin(origin: [f64; 3], camera: [f64; 3]) -> Option<[f32; 3]> {
     let relative = std::array::from_fn(|i| (origin[i] - camera[i]) as f32);
     relative.iter().all(|v| v.is_finite()).then_some(relative)

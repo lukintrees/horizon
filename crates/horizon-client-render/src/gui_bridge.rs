@@ -54,6 +54,55 @@ pub fn runs(
     .map_err(Error::Gui)
 }
 
+#[derive(Debug)]
+pub enum PatchError<E> {
+    Gui(GuiError),
+    Backend(E),
+}
+
+/// Stage and validate all glyph patches before modifying the atlas. Padding at
+/// a non-POT atlas edge must change with the source edge, otherwise clamped glyphs
+/// would sample stale colours. The temporary CPU allocation is batch-bounded.
+pub fn upload_patches<B: horizon_render_api::RenderBackend>(
+    backend: &mut B,
+    texture: horizon_render_api::TextureId,
+    atlas_size: [u32; 2],
+    batch: &HudBatch,
+    max_bytes: usize,
+) -> Result<(), PatchError<B::Error>> {
+    let mut prepared = Vec::new();
+    let mut remaining = max_bytes;
+    for p in &batch.patches {
+        let patch = gui::prepare_patch(
+            atlas_size,
+            [p.x, p.y],
+            horizon_render_api::Image {
+                width: p.width,
+                height: p.height,
+                rgba: &p.rgba,
+            },
+            remaining,
+        )
+        .map_err(PatchError::Gui)?;
+        remaining -= patch.rgba.len();
+        prepared.push(patch);
+    }
+    for p in prepared {
+        backend
+            .update_texture(
+                texture,
+                p.at,
+                horizon_render_api::Image {
+                    width: p.size[0],
+                    height: p.size[1],
+                    rgba: &p.rgba,
+                },
+            )
+            .map_err(PatchError::Backend)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,9 +197,122 @@ mod gpu_tests {
                 "pixel {at:?}: {pixel:?}"
             );
         }
+        // A run-time glyph uses the real font::Patch path, not direct GL calls.
+        let mut glyph = HudBatch::new([64; 2]);
+        glyph.patches.push(crate::font::Patch {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![255, 0, 0, 255],
+        });
+        let uv = [0.5 / atlas.width as f32, 0.5 / atlas.height as f32];
+        glyph.quad([[0., 0.], [8., 0.], [8., 8.], [0., 8.]], [uv; 4], u32::MAX);
+        upload_patches(
+            &mut renderer,
+            texture,
+            [atlas.width, atlas.height],
+            &glyph,
+            1024,
+        )
+        .unwrap();
+        let runs = super::runs(&glyph, [64; 2], uv_scale, 1000).unwrap();
+        gui::render(&mut renderer, &runs, texture, white).unwrap();
+        assert_eq!(renderer.read_rgba([4, 60, 1, 1]).unwrap(), [255, 0, 0, 255]);
         assert_eq!(renderer.stats().meshes, 0);
         renderer.remove_texture(texture).unwrap();
         renderer.remove_texture(white).unwrap();
         assert_eq!(renderer.stats(), Stats::default());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod owning_gpu_tests {
+    use super::*;
+    use crate::{
+        hud::HudAtlas,
+        mesher::{SectionMesh, TerrainVertex},
+        render_bridge,
+    };
+    use horizon_legacy_render::{Budget, Context, Renderer};
+    use horizon_render_api::{
+        IDENTITY, Image, RenderBackend,
+        atlas::{SpriteSize, build_page, pack_atlas},
+        gui,
+        scene::{SceneFrame, WorldScene},
+    };
+
+    fn game_renderer() -> WorldScene<Renderer<'static>> {
+        let renderer =
+            Renderer::owned(Context::new("osmesa", [64; 2]).unwrap(), Budget::default()).unwrap();
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[64, 128, 192, 255]]).unwrap();
+        WorldScene::new(renderer, layout, &[&page], &[255; 16 * 16 * 4], 4).unwrap()
+    }
+
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn owned_game_mesh_and_hud_share_the_same_context() {
+        // Context/layout were local variables in the factory, not leaked or
+        // borrowed by a self-referential Game. Move the whole renderer again.
+        let mut scene = Box::new(game_renderer());
+        let mut mesh = SectionMesh::default();
+        mesh.solid.extend(
+            [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]]
+                .map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, u32::MAX, 0xf0f0)),
+        );
+        render_bridge::upload_section(&mut scene, [0; 3], &mesh, 4).unwrap();
+        scene
+            .render(&SceneFrame {
+                view_projection: IDENTITY,
+                camera: [0.; 3],
+                clear: [0., 0., 0., 1.],
+                fog: None,
+                solid: &[[0; 3]],
+                translucent: &[],
+            })
+            .unwrap();
+        let atlas = HudAtlas::boot();
+        let (texture, uv_scale) = gui::upload_atlas(
+            scene.backend_mut(),
+            [atlas.width, atlas.height],
+            &atlas.pixels(),
+            8 << 20,
+        )
+        .unwrap();
+        let white = scene
+            .backend_mut()
+            .create_texture(Image {
+                width: 1,
+                height: 1,
+                rgba: &[255; 4],
+            })
+            .unwrap();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.fill(&atlas, 16., 16., 32., 32., u32::MAX);
+        hud.invert_since(0);
+        let runs = runs(&hud, [64; 2], uv_scale, 100).unwrap();
+        gui::render(scene.backend_mut(), &runs, texture, white).unwrap();
+        for (at, expected) in [([4, 4], [64, 128, 192]), ([32, 32], [191, 127, 63])] {
+            let pixel = scene.read_rgba([at[0], at[1], 1, 1]).unwrap();
+            assert!(
+                pixel[..3]
+                    .iter()
+                    .zip(expected)
+                    .all(|(&a, b)| a.abs_diff(b) <= 2),
+                "pixel {at:?}: {pixel:?}"
+            );
+        }
+        scene.backend_mut().remove_texture(texture).unwrap();
+        scene.backend_mut().remove_texture(white).unwrap();
     }
 }

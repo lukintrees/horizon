@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p target/legacy-branch
           set +e
-          cargo test --locked -p horizon-client-render --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
+          cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
           cat target/legacy-branch/cargo.stderr
           # Standard check annotations make compiler failures readable through the
@@ -71,7 +71,11 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           MESA_GL_VERSION_OVERRIDE: '2.0'
           MESA_GLSL_VERSION_OVERRIDE: '120'
-        run: cargo test --locked -p horizon-client-render --lib gui_bridge::gpu_tests::boot_atlas_and_real_hud_batch_reach_gl2_pixels -- --ignored
+        run: |
+          cargo test --locked -p horizon-client-render --features legacy-gl --lib gui_bridge:: -- --ignored
+          cargo test --locked -p horizon-client-render --features legacy-gl --lib legacy_gfx::tests:: -- --ignored
+      - name: Lint the game bridges and GL2 coordinator
+        run: cargo clippy --locked -p horizon-client-render --features legacy-gl --lib --tests -- -D warnings
       - uses: actions/upload-artifact@v4
         if: always()
         with:

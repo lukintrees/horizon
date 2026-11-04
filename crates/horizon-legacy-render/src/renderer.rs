@@ -1,11 +1,15 @@
 //! Resource-owning safe renderer; GL names never cross the API boundary.
-use crate::{Context, raw::Gl};
+use crate::{
+    Context,
+    raw::{ContextHandle, Gl},
+};
 use horizon_render_api::{
     Clear, Draw, Frame, Image, MeshId, Pass, RenderBackend, TextureId, Vertex, relative_origin,
 };
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_void};
 use std::ptr;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Copy, Debug)]
@@ -85,8 +89,21 @@ fn rect_valid(rect: [u32; 4], size: [u32; 2]) -> bool {
         && rect[0].checked_add(rect[2]).is_some_and(|v| v <= size[0])
         && rect[1].checked_add(rect[3]).is_some_and(|v| v <= size[1])
 }
+impl Renderer<'static> {
+    /// Own the native context rather than borrow it. This renderer can be moved
+    /// into the game/scene without a self-reference. Rc keeps it thread-confined.
+    pub fn owned(context: Context, budget: Budget) -> Result<Self, String> {
+        Self::from_context(ContextHandle::Owned(Rc::new(context)), budget)
+    }
+}
 impl<'a> Renderer<'a> {
     pub fn new(context: &'a Context, budget: Budget) -> Result<Self, String> {
+        Self::from_context(ContextHandle::Borrowed(context), budget)
+    }
+    pub fn context(&self) -> &Context {
+        &self.gl.context
+    }
+    fn from_context(context: ContextHandle<'a>, budget: Budget) -> Result<Self, String> {
         context.make_current()?;
         // Qualify GL1 identity before requesting GL2 function pointers.
         // SAFETY: fixed GL1 ABI and live current context; strings are borrowed until copied.
@@ -177,6 +194,15 @@ impl<'a> Renderer<'a> {
             || !self.textures.contains_key(&draw.lightmap)
         {
             return Err("unknown, foreign or released mesh/texture ID".into());
+        }
+        // GL2 texture sampling state belongs to the texture, not to a sampler
+        // object. One nonconstant texture cannot be both linear atlas and nearest
+        // lightmap in the same draw. A 1x1 white texture is equivalent either way.
+        if draw.pass == Pass::OverlayVignette
+            && draw.texture == draw.lightmap
+            && self.textures[&draw.texture].size != [1, 1]
+        {
+            return Err("vignette atlas and lightmap need separate textures".into());
         }
         if draw
             .scissor

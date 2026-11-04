@@ -56,6 +56,8 @@ pub mod java_text;
 pub mod jigsaw_block;
 pub use horizon_world::json_folder;
 pub mod level_loading;
+#[cfg(feature = "legacy-gl")]
+pub mod legacy_gfx;
 pub mod light;
 pub mod lod;
 pub mod logging;

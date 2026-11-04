@@ -52,7 +52,7 @@ pub enum UploadError<E> {
 /// solid and translucent geometry together, not a separate allowance per pass.
 /// The caller still owns visibility, job scheduling and translucent quad sorting.
 pub fn upload_section<B: horizon_render_api::RenderBackend>(
-    scene: &mut horizon_render_api::scene::WorldScene<'_, B>,
+    scene: &mut horizon_render_api::scene::WorldScene<B>,
     key: horizon_render_api::scene::SectionKey,
     mesh: &SectionMesh,
     max_vertices: usize,

@@ -467,7 +467,8 @@ fn scene_lifecycle(context: &Context) -> Result<(), String> {
         },
     )?;
     let key = [1_875_000, 0, 0];
-    let mut scene = WorldScene::new(&mut renderer, &layout, &pages, &white, 1).map_err(error)?;
+    let mut scene =
+        WorldScene::new(&mut renderer, layout.clone(), &pages, &white, 1).map_err(error)?;
     let mut frame = SceneFrame {
         view_projection: IDENTITY,
         camera: [30_000_000.25, 0., 0.],
@@ -477,7 +478,7 @@ fn scene_lifecycle(context: &Context) -> Result<(), String> {
         translucent: &[],
     };
     let check =
-        |scene: &mut WorldScene<'_, Renderer<'_>>, at, expected: [u8; 3]| -> Result<(), String> {
+        |scene: &mut WorldScene<&mut Renderer<'_>>, at, expected: [u8; 3]| -> Result<(), String> {
             let actual = scene.read_rgba([at, 32, 1, 1]).map_err(error)?;
             require(
                 actual[..3]
@@ -548,7 +549,7 @@ fn scene_lifecycle(context: &Context) -> Result<(), String> {
         },
     )?;
     require(
-        WorldScene::new(&mut small, &layout, &pages, &white, 1).is_err(),
+        WorldScene::new(&mut small, layout.clone(), &pages, &white, 1).is_err(),
         "constructor texture budget was not enforced",
     )?;
     require(
@@ -664,6 +665,37 @@ fn gui_compositor(context: &Context) -> Result<(), String> {
     .map_err(error)?;
     pixel(&mut renderer, [32, 32], [124; 3])?;
     renderer.remove_texture(gradient)?;
+    let (padded, uv_scale) =
+        gui::upload_atlas(&mut renderer, [3, 3], &[255, 0, 0, 255].repeat(9), 64).map_err(error)?;
+    let patch = gui::prepare_patch(
+        [3, 3],
+        [2, 2],
+        Image {
+            width: 1,
+            height: 1,
+            rgba: &[0, 0, 255, 255],
+        },
+        16,
+    )
+    .map_err(error)?;
+    renderer.update_texture(
+        padded,
+        patch.at,
+        Image {
+            width: patch.size[0],
+            height: patch.size[1],
+            rgba: &patch.rgba,
+        },
+    )?;
+    let edge = make(u32::MAX, 0.).map(|mut v| {
+        v.uv = [1.; 2];
+        v
+    });
+    let edge =
+        gui::runs(&edge, &[(0..6, Blend::Alpha)], [64; 2], 1., uv_scale, 6).map_err(error)?;
+    gui::render(&mut renderer, &edge, padded, white).map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 0, 255])?;
+    renderer.remove_texture(padded)?;
     renderer.remove_texture(white)?;
     require(
         renderer.stats() == Stats::default(),
