@@ -64,6 +64,15 @@ pub struct Page<'a> {
     pub pixels: &'a [u8],
 }
 
+/// Pixel-space rectangle within one atlas page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pass {
     /// Depth writes on, blending off; cutout pixels can be discarded.
@@ -478,14 +487,49 @@ impl Renderer {
     /// # Safety
     /// The same context used for `new` must be current on this thread.
     pub unsafe fn update_page(&mut self, index: usize, page: Page<'_>) -> Result<(), Error> {
+        let region = Region {
+            x: 0,
+            y: 0,
+            width: page.side,
+            height: page.side,
+        };
+        // SAFETY: forwarded from the caller.
+        unsafe { self.update_page_region(index, page, region) }
+    }
+
+    /// Update a rectangle from a complete, tightly packed CPU page. No copying
+    /// of the unchanged pixels is needed; the page stride is passed to GL.
+    /// Invalid rectangles leave the GPU texture untouched. After a driver error
+    /// the affected texture contents are unspecified and need reuploading.
+    ///
+    /// # Safety
+    /// The same context used for `new` must be current on this thread.
+    pub unsafe fn update_page_region(
+        &mut self,
+        index: usize,
+        page: Page<'_>,
+        region: Region,
+    ) -> Result<(), Error> {
         let expected = (page.side as usize)
             .checked_mul(page.side as usize)
             .and_then(|n| n.checked_mul(4));
         if self.texture_sides.get(index).copied() != Some(page.side)
             || expected != Some(page.pixels.len())
+            || region
+                .x
+                .checked_add(region.width)
+                .is_none_or(|x| x > page.side)
+            || region
+                .y
+                .checked_add(region.height)
+                .is_none_or(|y| y > page.side)
         {
             return Err(Error::InvalidPage);
         }
+        if region.width == 0 || region.height == 0 {
+            return Ok(());
+        }
+        let offset = ((region.y as usize * page.side as usize) + region.x as usize) * 4;
         // SAFETY: the caller guarantees the owning context and the pixels
         // remain live throughout the call.
         unsafe {
@@ -496,17 +540,19 @@ impl Renderer {
             }
             prepare_unpack(gl, self.unpack_buffer);
             (gl.bind_texture)(GL_TEXTURE_2D, self.textures[index]);
+            (gl.pixel_store)(0x0cf2, page.side as i32); // GL_UNPACK_ROW_LENGTH
             (gl.tex_sub_image)(
                 GL_TEXTURE_2D,
                 0,
-                0,
-                0,
-                page.side as i32,
-                page.side as i32,
+                region.x as i32,
+                region.y as i32,
+                region.width as i32,
+                region.height as i32,
                 GL_RGBA,
                 GL_UNSIGNED_BYTE,
-                page.pixels.as_ptr().cast(),
+                page.pixels.as_ptr().add(offset).cast(),
             );
+            (gl.pixel_store)(0x0cf2, 0);
             let error = (gl.get_error)();
             if error != 0 {
                 Err(Error::Gl(error))

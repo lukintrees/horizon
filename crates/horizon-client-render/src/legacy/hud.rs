@@ -5,7 +5,14 @@
 //! error rather than silently drawing incorrectly. Depth previews need the
 //! caller to give up the framebuffer depth in their scissor rectangles.
 use crate::hud::{Blend, HudAtlas as SourceAtlas, HudBatch};
-use horizon_legacy_gl::{Batch, Pass, Vertex};
+use horizon_legacy_gl::{Batch, Pass, Region, Vertex};
+
+/// Portion of a page changed by a glyph or animated HUD sprite patch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageRegion {
+    pub page: usize,
+    pub rect: Region,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -115,6 +122,23 @@ impl Atlas {
         height: u32,
         pixels: &[u8],
     ) -> Result<Vec<usize>, Error> {
+        Ok(self
+            .update_rect_regions(x, y, width, height, pixels)?
+            .into_iter()
+            .map(|region| region.page)
+            .collect())
+    }
+
+    /// Apply a patch and return its exact per-page rectangles for partial GPU
+    /// uploads. On invalid input no CPU page is modified.
+    pub fn update_rect_regions(
+        &mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> Result<Vec<PageRegion>, Error> {
         let right = x.checked_add(width).ok_or(Error::InvalidPatch)?;
         let bottom = y.checked_add(height).ok_or(Error::InvalidPatch)?;
         let bytes = (width as usize)
@@ -154,7 +178,15 @@ impl Atlas {
                     self.pages[index].pixels[dest..dest + len]
                         .copy_from_slice(&pixels[source..source + len]);
                 }
-                changed.push(index);
+                changed.push(PageRegion {
+                    page: index,
+                    rect: Region {
+                        x: left - px * self.side,
+                        y: top - py * self.side,
+                        width: end_x - left,
+                        height: end_y - top,
+                    },
+                });
             }
         }
         Ok(changed)
@@ -427,6 +459,14 @@ pub fn apply_patch(atlas: &mut Atlas, patch: &crate::font::Patch) -> Result<Vec<
     atlas.update_rect(patch.x, patch.y, patch.width, patch.height, &patch.rgba)
 }
 
+/// Apply a game font patch and return the minimal upload region on every page.
+pub fn apply_patch_regions(
+    atlas: &mut Atlas,
+    patch: &crate::font::Patch,
+) -> Result<Vec<PageRegion>, Error> {
+    atlas.update_rect_regions(patch.x, patch.y, patch.width, patch.height, &patch.rgba)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,6 +500,74 @@ mod tests {
         assert_eq!(atlas.pages()[0].pixels[(4 + 3) * 4], 9);
         assert_eq!(atlas.pages()[1].pixels[4 * 4], 9);
         assert_eq!(atlas.pages()[1].pixels[(4 + 1) * 4], 13);
+    }
+
+    #[test]
+    fn patch_regions_cover_four_pages_and_invalid_updates_are_transactional() {
+        let mut atlas = Atlas::new(8, 8, &[0; 8 * 8 * 4], 4).unwrap();
+        let regions = atlas
+            .update_rect_regions(3, 2, 3, 4, &[7; 3 * 4 * 4])
+            .unwrap();
+        assert_eq!(
+            regions,
+            vec![
+                PageRegion {
+                    page: 0,
+                    rect: Region {
+                        x: 3,
+                        y: 2,
+                        width: 1,
+                        height: 2
+                    }
+                },
+                PageRegion {
+                    page: 1,
+                    rect: Region {
+                        x: 0,
+                        y: 2,
+                        width: 2,
+                        height: 2
+                    }
+                },
+                PageRegion {
+                    page: 2,
+                    rect: Region {
+                        x: 3,
+                        y: 0,
+                        width: 1,
+                        height: 2
+                    }
+                },
+                PageRegion {
+                    page: 3,
+                    rect: Region {
+                        x: 0,
+                        y: 0,
+                        width: 2,
+                        height: 2
+                    }
+                },
+            ]
+        );
+        let before: Vec<_> = atlas.pages().iter().map(|p| p.pixels.clone()).collect();
+        assert_eq!(
+            atlas.update_rect_regions(u32::MAX, 0, 2, 1, &[0; 8]),
+            Err(Error::InvalidPatch)
+        );
+        assert!(
+            atlas
+                .update_rect_regions(8, 8, 0, 0, &[])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            before,
+            atlas
+                .pages()
+                .iter()
+                .map(|p| p.pixels.clone())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

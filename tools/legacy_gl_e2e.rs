@@ -396,8 +396,9 @@ fn main() {
         assert_eq!(rgb(sample(26)), [200, 0, 0]);
 
         // Re-upload an animated frame and observe it in the same mesh.
-        atlas.update(1, &[220, 220, 0, 255]).unwrap();
-        let page = &atlas.pages()[1];
+        let (page_index, dirty) = atlas.update_region(1, &[220, 220, 0, 255]).unwrap();
+        assert_eq!(page_index, 1);
+        let page = &atlas.pages()[page_index];
         assert_eq!(
             gpu.update_page(
                 3,
@@ -418,12 +419,13 @@ fn main() {
             ),
             Err(horizon_legacy_gl::Error::InvalidPage)
         );
-        gpu.update_page(
-            1,
+        gpu.update_page_region(
+            page_index,
             horizon_legacy_gl::Page {
                 side: page.side,
                 pixels: &page.pixels,
             },
+            dirty,
         )
         .unwrap();
         clear(0x4000 | 0x0100);
@@ -726,23 +728,64 @@ fn main() {
         assert_eq!(rgb(sample(5)), [200, 0, 0]);
         assert_eq!(rgb(sample(26)), [0, 200, 0]);
         let dirty = gui_atlas
-            .update_rect(3, 0, 2, 4, &[0, 0, 200, 255].repeat(8))
+            .update_rect_regions(3, 1, 2, 2, &[0, 0, 200, 255].repeat(4))
             .unwrap();
-        assert_eq!(dirty, [0, 1]);
-        for i in dirty {
-            let p = &gui_atlas.pages()[i];
-            gui.update_page(
-                i,
+        assert_eq!(dirty.len(), 2);
+        assert_eq!(
+            dirty[0].rect,
+            horizon_legacy_gl::Region {
+                x: 3,
+                y: 1,
+                width: 1,
+                height: 2
+            }
+        );
+        assert_eq!(
+            dirty[1].rect,
+            horizon_legacy_gl::Region {
+                x: 0,
+                y: 1,
+                width: 1,
+                height: 2
+            }
+        );
+        // Change a CPU pixel outside the requested rectangles: it must remain
+        // unchanged on the GPU, demonstrating a real partial upload.
+        gui_atlas.update_rect(1, 2, 1, 1, &[255; 4]).unwrap();
+        for region in dirty {
+            let p = &gui_atlas.pages()[region.page];
+            gui.update_page_region(
+                region.page,
                 horizon_legacy_gl::Page {
                     side: p.side,
                     pixels: &p.pixels,
                 },
+                region.rect,
             )
             .unwrap();
         }
+        let p = &gui_atlas.pages()[0];
+        assert!(
+            gui.update_page_region(
+                0,
+                horizon_legacy_gl::Page {
+                    side: p.side,
+                    pixels: &p.pixels
+                },
+                horizon_legacy_gl::Region {
+                    x: u32::MAX,
+                    y: 0,
+                    width: 2,
+                    height: 1
+                }
+            )
+            .is_err()
+        );
         gui_draw(&mut gui);
         assert_eq!(rgb(sample(14)), [0, 0, 200]);
         assert_eq!(rgb(sample(18)), [0, 0, 200]);
+        assert_eq!(rgb(sample(5)), [200, 0, 0]);
+        assert_eq!(rgb(sample(26)), [0, 200, 0]);
 
         // Exercise the GUI invert and additive blend functions against a
         // known background using one white atlas texel.

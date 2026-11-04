@@ -167,6 +167,16 @@ impl Atlas {
 
     /// Replace an animated frame and all of its one-pixel gutters.
     pub fn update(&mut self, layer: u32, pixels: &[u8]) -> Result<(), AtlasError> {
+        self.update_region(layer, pixels).map(|_| ())
+    }
+
+    /// Replace a sprite and return the page and full cell rectangle, including
+    /// gutters, for a partial GPU upload. Invalid input changes no pixels.
+    pub fn update_region(
+        &mut self,
+        layer: u32,
+        pixels: &[u8],
+    ) -> Result<(usize, horizon_legacy_gl::Region), AtlasError> {
         if layer >= self.layer_count {
             return Err(AtlasError::LayerOutOfRange);
         }
@@ -196,7 +206,15 @@ impl Atlas {
                 page[dst..dst + 4].copy_from_slice(&pixels[src..src + 4]);
             }
         }
-        Ok(())
+        Ok((
+            (layer / self.per_page) as usize,
+            horizon_legacy_gl::Region {
+                x: x as u32,
+                y: y as u32,
+                width: cell,
+                height: cell,
+            },
+        ))
     }
 }
 
@@ -232,7 +250,17 @@ mod tests {
         let mut atlas = Atlas::new(2, 4, 8, &pixels).unwrap();
         assert_eq!(atlas.pages().len(), 1);
         assert_eq!(atlas.location(3).unwrap().rect, [0.625, 0.625, 0.25, 0.25]);
-        atlas.update(0, &[9; 16]).unwrap();
+        let (page_id, dirty) = atlas.update_region(0, &[9; 16]).unwrap();
+        assert_eq!(page_id, 0);
+        assert_eq!(
+            dirty,
+            horizon_legacy_gl::Region {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4
+            }
+        );
         let page = &atlas.pages()[0].pixels;
         let pixel = |x: usize, y: usize| page[(y * 8 + x) * 4];
         assert_eq!(
