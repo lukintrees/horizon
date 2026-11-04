@@ -159,6 +159,8 @@ pub struct FramePlan<'a> {
     pub terrain: Vec<SectionDraw<'a>>,
     pub solid_count: usize,
     pub entities: entity::Mesh,
+    /// Nonempty only for `prepare_supported_frame`; these quads are not drawn.
+    pub omitted_entity_overlays: Vec<(u32, usize)>,
     pub hud: hud::Mesh,
     pub view_projection: [f32; 16],
     pub fog: Fog,
@@ -178,13 +180,53 @@ pub fn prepare_frame<'a>(
     gamma: f32,
     fullbright: bool,
 ) -> Result<FramePlan<'a>, FrameError> {
+    prepare_frame_inner(
+        world, gui, frame, viewport, min_y, visible, gamma, fullbright, false,
+    )
+}
+
+/// Prepare an explicitly incomplete frame, omitting unsupported entity
+/// materials and returning their codes/counts in `omitted_entity_overlays`.
+/// HUD errors and malformed geometry still fail; no omission is silent.
+pub fn prepare_supported_frame<'a>(
+    world: &'a mut World,
+    gui: &mut PatchAtlas,
+    frame: &Frame<'_>,
+    viewport: [u32; 2],
+    min_y: i32,
+    visible: &[SectionKey],
+    gamma: f32,
+    fullbright: bool,
+) -> Result<FramePlan<'a>, FrameError> {
+    prepare_frame_inner(
+        world, gui, frame, viewport, min_y, visible, gamma, fullbright, true,
+    )
+}
+
+fn prepare_frame_inner<'a>(
+    world: &'a mut World,
+    gui: &mut PatchAtlas,
+    frame: &Frame<'_>,
+    viewport: [u32; 2],
+    min_y: i32,
+    visible: &[SectionKey],
+    gamma: f32,
+    fullbright: bool,
+    skip_unsupported: bool,
+) -> Result<FramePlan<'a>, FrameError> {
     gui.apply(&frame.hud.patches).map_err(FrameError::Hud)?;
     let view_projection = frame_view_projection(frame, viewport).map_err(FrameError::World)?;
     let lights = lightmap(frame, gamma, fullbright);
     let entities = if frame.title {
-        entity::Mesh::default()
+        entity::BuildReport::default()
+    } else if skip_unsupported {
+        entity::build_supported(gui.atlas(), frame.entities, &lights, frame.nether_lighting)
+            .map_err(FrameError::Entity)?
     } else {
-        entities(gui.atlas(), frame, &lights).map_err(FrameError::Entity)?
+        entity::BuildReport {
+            mesh: entities(gui.atlas(), frame, &lights).map_err(FrameError::Entity)?,
+            omitted: Vec::new(),
+        }
     };
     let hud = hud::build(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?;
     world.set_lightmap(lights);
@@ -208,7 +250,8 @@ pub fn prepare_frame<'a>(
     Ok(FramePlan {
         terrain,
         solid_count,
-        entities,
+        entities: entities.mesh,
+        omitted_entity_overlays: entities.omitted,
         hud,
         view_projection,
         fog: frame_fog(frame),
@@ -359,6 +402,40 @@ pub(crate) mod tests {
             Err(FrameError::World(PlanError::InvalidTransform))
         ));
         assert_eq!(gui.dirty().count(), 1); // glyphs survive a skipped frame
+        let mut unsupported = entities;
+        for vertex in &mut unsupported {
+            vertex.layer = 7;
+        }
+        let mixed = [entities, unsupported, entities].concat();
+        frame.entities = &mixed;
+        assert!(matches!(
+            prepare_frame(
+                &mut world,
+                &mut gui,
+                &frame,
+                [32, 32],
+                0,
+                &[(0, 0, 0)],
+                0.,
+                false
+            ),
+            Err(FrameError::Entity(entity::Error::UnsupportedOverlay(7)))
+        ));
+        let partial = prepare_supported_frame(
+            &mut world,
+            &mut gui,
+            &frame,
+            [32, 32],
+            0,
+            &[(0, 0, 0)],
+            0.,
+            false,
+        )
+        .unwrap();
+        assert_eq!(partial.omitted_entity_overlays, [(7, 1)]);
+        assert_eq!(partial.terrain.len(), 2);
+        assert!(!partial.entities.vertices.is_empty());
+        drop(partial);
         frame.title = true;
         let title = prepare_frame(
             &mut world,

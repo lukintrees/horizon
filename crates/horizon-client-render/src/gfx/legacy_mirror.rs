@@ -13,6 +13,7 @@ pub(super) struct Mirror {
     animator: SpriteAnimator,
     reported_frame: bool,
     reported_error: bool,
+    reported_omissions: bool,
 }
 impl Mirror {
     pub fn new(
@@ -34,6 +35,7 @@ impl Mirror {
             animator,
             reported_frame: false,
             reported_error: false,
+            reported_omissions: false,
         })
     }
 
@@ -61,14 +63,14 @@ impl Mirror {
         fullbright: bool,
         animated: bool,
     ) {
-        let result = (|| -> Result<(usize, usize, usize), String> {
+        let result = (|| -> Result<(usize, usize, usize, Vec<(u32, usize)>), String> {
             if animated {
                 self.animator
                     .advance(self.world.atlas_mut(), frame.ticks, None)
                     .map_err(|e| format!("sprite animation: {e}"))?;
             }
             let keys: Vec<_> = self.world.section_keys().collect();
-            let plan = scene::prepare_frame(
+            let plan = scene::prepare_supported_frame(
                 &mut self.world,
                 &mut self.gui,
                 frame,
@@ -83,14 +85,23 @@ impl Mirror {
                 plan.terrain.len(),
                 plan.entities.vertices.len(),
                 plan.hud.vertices.len(),
+                plan.omitted_entity_overlays,
             ))
         })();
         match result {
-            Ok((terrain, entities, hud)) if !frame.title && !self.reported_frame => {
-                log::info!(
-                    "Legacy CPU mirror prepared a game frame: {terrain} terrain draws, {entities} entity vertices, {hud} HUD vertices (no GL rendering)"
-                );
-                self.reported_frame = true;
+            Ok((terrain, entities, hud, omitted)) => {
+                if !omitted.is_empty() && !self.reported_omissions {
+                    log::warn!(
+                        "Legacy CPU mirror skipped unsupported entity overlay quads: {omitted:?}"
+                    );
+                    self.reported_omissions = true;
+                }
+                if !frame.title && !self.reported_frame {
+                    log::info!(
+                        "Legacy CPU mirror prepared a game frame: {terrain} terrain draws, {entities} entity vertices, {hud} HUD vertices (no GL rendering)"
+                    );
+                    self.reported_frame = true;
+                }
             }
             Err(error) if !self.reported_error => {
                 log::warn!(
@@ -118,6 +129,21 @@ mod tests {
         let frame = crate::legacy::scene::tests::test_frame(&hud);
         mirror.frame(&frame, [32, 32], 0, 0.5, false, true);
         assert!(mirror.reported_frame);
+        assert!(!mirror.reported_error);
+        let unsupported =
+            [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|uv| crate::mesher::Vertex {
+                pos: [uv[0], uv[1], 0.],
+                uv,
+                layer: 7,
+                color: u32::MAX,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            });
+        let mut frame = crate::legacy::scene::tests::test_frame(&hud);
+        frame.entities = &unsupported;
+        mirror.frame(&frame, [32, 32], 0, 0.5, false, true);
+        assert!(mirror.reported_omissions);
         assert!(!mirror.reported_error);
         mirror.remove_columns(&[(2, 3)]);
         assert!(mirror.world.is_empty());

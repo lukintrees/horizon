@@ -22,6 +22,14 @@ pub struct Mesh {
     pub draws: Vec<Draw>,
 }
 
+/// Output of the explicitly partial conversion. `omitted` contains overlay
+/// codes and skipped quad counts, ordered by first appearance.
+#[derive(Debug, Default)]
+pub struct BuildReport {
+    pub mesh: Mesh,
+    pub omitted: Vec<(u32, usize)>,
+}
+
 #[derive(Clone, Copy)]
 struct Point {
     pos: [f32; 3],
@@ -89,10 +97,33 @@ pub fn build(
     lightmap: &[u8; 1024],
     nether: bool,
 ) -> Result<Mesh, Error> {
+    Ok(build_inner(atlas, vertices, lightmap, nether, false)?.mesh)
+}
+
+/// Explicitly omit unsupported materials while reporting their codes and quad
+/// counts. Invalid geometry and mixed materials are still errors. Useful when
+/// a caller chooses a visibly incomplete frame over dropping all entities.
+pub fn build_supported(
+    atlas: &Atlas,
+    vertices: &[SourceVertex],
+    lightmap: &[u8; 1024],
+    nether: bool,
+) -> Result<BuildReport, Error> {
+    build_inner(atlas, vertices, lightmap, nether, true)
+}
+
+fn build_inner(
+    atlas: &Atlas,
+    vertices: &[SourceVertex],
+    lightmap: &[u8; 1024],
+    nether: bool,
+    skip_unsupported: bool,
+) -> Result<BuildReport, Error> {
     if !vertices.len().is_multiple_of(4) {
         return Err(Error::IncompleteQuad);
     }
     let mut mesh = Mesh::default();
+    let mut omitted: Vec<(u32, usize)> = Vec::new();
     for quad in vertices.as_chunks::<4>().0 {
         let overlay = quad[0].layer & 0xffff;
         if quad
@@ -101,13 +132,6 @@ pub fn build(
         {
             return Err(Error::MixedMaterial);
         }
-        let overlay = match overlay {
-            0 => EntityOverlay::None,
-            1 => EntityOverlay::Hurt,
-            5 => EntityOverlay::White(crate::overlay::white_alpha(15)),
-            16..=31 => EntityOverlay::White(crate::overlay::white_alpha(overlay - 16)),
-            value => return Err(Error::UnsupportedOverlay(value)),
-        };
         if quad.iter().any(|v| {
             v.pos.iter().any(|p| !p.is_finite())
                 || v.uv
@@ -116,6 +140,24 @@ pub fn build(
         }) {
             return Err(Error::InvalidVertex);
         }
+        let overlay = match overlay {
+            0 => EntityOverlay::None,
+            1 => EntityOverlay::Hurt,
+            5 => EntityOverlay::White(crate::overlay::white_alpha(15)),
+            16..=31 => EntityOverlay::White(crate::overlay::white_alpha(overlay - 16)),
+            value if skip_unsupported => {
+                if let Some((_, count)) = omitted.iter_mut().find(|(code, _)| *code == value) {
+                    *count += 1;
+                } else {
+                    omitted
+                        .try_reserve(1)
+                        .map_err(|_| Error::AllocationFailed)?;
+                    omitted.push((value, 1));
+                }
+                continue;
+            }
+            value => return Err(Error::UnsupportedOverlay(value)),
+        };
         let w = quad[0].normal[3];
         let cull_back = (w > 0 && w < 64) || (w < 0 && w > -127);
         let two_sided = w == -127;
@@ -144,7 +186,7 @@ pub fn build(
             }
         }
     }
-    Ok(mesh)
+    Ok(BuildReport { mesh, omitted })
 }
 
 fn emit_triangle(
@@ -312,6 +354,36 @@ mod tests {
             Error::InvalidVertex
         );
     }
+    #[test]
+    fn explicit_partial_build_preserves_supported_order_and_reports_omissions() {
+        let atlas = Atlas::new(1, 1, &[255; 4], 4).unwrap();
+        let normal = quad();
+        let mut glint = normal;
+        let mut text = normal;
+        for v in &mut glint {
+            v.layer = 7;
+        }
+        for v in &mut text {
+            v.layer = 2;
+        }
+        let vertices = [normal, glint, text, glint, normal].concat();
+        assert_eq!(
+            build(&atlas, &vertices, &[255; 1024], false).unwrap_err(),
+            Error::UnsupportedOverlay(7)
+        );
+        let partial = build_supported(&atlas, &vertices, &[255; 1024], false).unwrap();
+        assert_eq!(partial.omitted, [(7, 2), (2, 1)]);
+        let expected = build(&atlas, &[normal, normal].concat(), &[255; 1024], false).unwrap();
+        assert_eq!(partial.mesh.vertices, expected.vertices);
+        assert_eq!(partial.mesh.draws, expected.draws);
+        let mut bad = glint;
+        bad[0].layer = 0;
+        assert!(matches!(
+            build_supported(&atlas, &bad, &[255; 1024], false),
+            Err(Error::MixedMaterial)
+        ));
+    }
+
     #[test]
     fn culling_flags_and_nether_directional_light() {
         let atlas = Atlas::new(1, 1, &[255; 4], 4).unwrap();
