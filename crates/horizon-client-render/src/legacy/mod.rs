@@ -5,7 +5,10 @@
 //! of either graphics API so they can also be tested without a GPU.
 pub mod atlas;
 pub mod hud;
+#[cfg(feature = "legacy-scene")]
+pub mod scene;
 pub mod terrain;
+pub mod world;
 
 /// The prototype terrain shaders. They require a 2D atlas page with one-pixel
 /// gutters and non-mipmapped filtering; this is not the complete world pipeline.

@@ -35,6 +35,9 @@ pub struct Mesh {
     /// Six vertices per quad in the same winding as the main renderer.
     pub vertices: Vec<Vertex>,
     pub batches: Vec<Batch>,
+    /// Per-batch opaque-leaf flag. Opaque terrain does not alpha-test even
+    /// when the sprite has transparent texels; other solid quads use 0.5.
+    pub opaque: Vec<bool>,
 }
 
 /// Convert the two near-section render passes separately. Translucent quads
@@ -124,12 +127,19 @@ fn build_inner(
             return Err(MeshError::MixedSpriteLayers);
         }
         let location = atlas.location(u32::from(layer)).map_err(MeshError::Atlas)?;
+        let opaque = quad[0].layer & OPAQUE_LAYER != 0;
+        if quad.iter().any(|v| (v.layer & OPAQUE_LAYER != 0) != opaque) {
+            return Err(MeshError::MixedSpriteLayers);
+        }
         if mesh
             .batches
             .last()
-            .is_none_or(|last| last.page != location.page)
+            .is_none_or(|last| last.page != location.page || mesh.opaque.last() != Some(&opaque))
         {
             mesh.batches
+                .try_reserve(1)
+                .map_err(|_| MeshError::AllocationFailed)?;
+            mesh.opaque
                 .try_reserve(1)
                 .map_err(|_| MeshError::AllocationFailed)?;
             mesh.batches.push(Batch {
@@ -137,6 +147,7 @@ fn build_inner(
                 first: mesh.vertices.len(),
                 count: 0,
             });
+            mesh.opaque.push(opaque);
         }
         for index in [0, 1, 2, 0, 2, 3] {
             let vertex = quad[index];

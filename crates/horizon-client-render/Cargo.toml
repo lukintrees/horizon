@@ -76,6 +76,8 @@ wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 audio = ["dep:cpal"]
 # Helpers horizon-client's tests build their fixtures with.
 test-support = []
+# CPU frame conversion for the experimental GL world; not a selectable renderer.
+legacy-scene = []
 # Native GLX/WGL context bootstrap, currently only used by the developer example.
 legacy-gl-window = ["horizon-legacy-gl/window-context"]
 

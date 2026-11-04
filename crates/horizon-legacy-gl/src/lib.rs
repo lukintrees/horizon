@@ -522,6 +522,22 @@ impl Renderer {
         unsafe { self.draw_sequence(vertices, draws.iter().copied(), transform, None) }
     }
 
+    /// Draw ordered batches with per-pass depth/blending and terrain fog in
+    /// one upload. HUD passes in the list remain unfogged.
+    ///
+    /// # Safety
+    /// The same context used for `new` must be current on this thread.
+    pub unsafe fn draw_ordered_with_fog(
+        &mut self,
+        vertices: &[Vertex],
+        draws: &[Draw],
+        transform: &[f32; 16],
+        fog: Fog,
+    ) -> Result<(), Error> {
+        // SAFETY: caller guarantees the owning context is current.
+        unsafe { self.draw_sequence(vertices, draws.iter().copied(), transform, Some(fog)) }
+    }
+
     /// Draw terrain with environmental and render-distance fog. The origin is
     /// camera-relative independently of the projection transform.
     ///

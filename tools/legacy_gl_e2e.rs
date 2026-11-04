@@ -418,6 +418,24 @@ fn main() {
         assert_eq!(rgb(sample(16)), [220, 220, 0]);
 
         // Near translucent blue blends over red; a later far solid stays hidden.
+        // Exercise the same resident-section plan that accepts the game's
+        // SectionMesh: opaque leaves bypass alpha cutout, ordinary cutout does not.
+        let world_atlas = legacy::atlas::Atlas::new(1, 1, 4, &[0, 0, 200, 30]).unwrap();
+        let mut world = legacy::world::World::new(world_atlas, [255; 1024]);
+        let mut source = mesher::SectionMesh::default();
+        source.solid.extend(quad(-0.95, -0.05, 0., mesher::OPAQUE_LAYER));
+        source.solid.extend(quad(0.05, 0.95, 0., 0));
+        world.upload((0, 0, 0), &source).unwrap();
+        upload(&mut gpu, world.atlas());
+        clear(0x4000 | 0x0100);
+        let no_fog = horizon_legacy_gl::Fog { color: [1.; 4], ranges: [100., 101., 100., 101.], section_offset: [0.; 3] };
+        for section in world.plan(&[(0, 0, 0)], [0.; 3], 0, identity, Some(no_fog)).unwrap() {
+            gpu.draw_ordered_with_fog(section.vertices, &section.draws, &section.transform, section.fog.unwrap()).unwrap();
+        }
+        assert_eq!(rgb(sample(7)), [0, 0, 200], "opaque quad must ignore sprite alpha");
+        assert_eq!(rgb(sample(24)), [0, 0, 0], "ordinary cutout must discard");
+        upload(&mut gpu, &atlas);
+
         let red = legacy::terrain::build(&atlas, &quad(-0.9, 0.9, 0., 0)).unwrap();
         // WGSL computes distances at vertices, then interpolates them. All four
         // corners are equidistant here, so expected values are independent of

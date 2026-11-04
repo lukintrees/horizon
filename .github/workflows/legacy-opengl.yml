@@ -6,6 +6,7 @@ on:
       - 'crates/horizon-client-render/src/legacy/**'
       - 'crates/horizon-client-render/Cargo.toml'
       - 'crates/horizon-client-render/src/gfx.rs'
+      - 'crates/horizon-client-render/src/gfx/lightmap.rs'
       - 'crates/horizon-client/Cargo.toml'
       - 'crates/horizon-client-lib/Cargo.toml'
       - 'tools/build_win7_x86.ps1'
@@ -21,6 +22,7 @@ on:
       - 'crates/horizon-client-render/src/legacy/**'
       - 'crates/horizon-client-render/Cargo.toml'
       - 'crates/horizon-client-render/src/gfx.rs'
+      - 'crates/horizon-client-render/src/gfx/lightmap.rs'
       - 'crates/horizon-client/Cargo.toml'
       - 'crates/horizon-client-lib/Cargo.toml'
       - 'tools/build_win7_x86.ps1'
@@ -63,7 +65,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo clippy --locked -p horizon-client-render --lib --tests -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
+          if cargo clippy --locked -p horizon-client-render --features legacy-scene --lib --tests -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
             exit 0
           fi
           python3 - <<'PY'
@@ -82,7 +84,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo test --locked -p horizon-client-render --lib legacy:: 2>&1 | tee "$RUNNER_TEMP/legacy-test.log"; then
+          if cargo test --locked -p horizon-client-render --features legacy-scene --lib legacy:: 2>&1 | tee "$RUNNER_TEMP/legacy-test.log"; then
             exit 0
           fi
           python3 - <<'PY'

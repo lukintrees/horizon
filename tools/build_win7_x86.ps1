@@ -15,7 +15,7 @@ if ($env:RUSTFLAGS -notmatch 'target-feature=\+crt-static(?:\s|,|$)') {
 }
 if (-not $Release -and -not $env:CARGO_PROFILE_DEV_DEBUG) { $env:CARGO_PROFILE_DEV_DEBUG = '0' }
 $cargoArgs = @('+nightly', 'build', '-Z', 'build-std=std,panic_abort', '--locked',
-    '-p', 'horizon-client', '--no-default-features', '--bin', 'horizon-client',
+    '-p', 'horizon-client', '--no-default-features', '--features', 'legacy-scene', '--bin', 'horizon-client',
     '--target', 'i686-win7-windows-msvc')
 $buildProfile = 'debug'
 if ($Release) { $cargoArgs += '--release'; $buildProfile = 'release' }
