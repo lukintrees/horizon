@@ -355,12 +355,24 @@ mod tests {
             });
             let mut frame = test_frame(&hud);
             frame.hand = &hand;
+            let snapshots = [crate::block_entity_render::StaticSectionSnapshot {
+                section: [0, 0, 0],
+                origin: [0, 0, 0],
+                revision: 1,
+                entities: 1,
+                vertices: hand.to_vec().into(),
+            }];
+            let visible_static = [[0, 0, 0]];
+            frame.static_block_entities = &snapshots;
+            frame.visible_static_block_entity_sections = &visible_static;
             let report = renderer
                 .render(&frame, &[(0, 0, 0)], 0, 0.5, false, true)
                 .unwrap();
             assert!(report.presented);
             assert_eq!(report.terrain_draws, 2);
             assert_ne!(report.hand_vertices, 0);
+            assert_eq!(report.static_entity_draws, 1);
+            assert!(report.omitted_static_overlays.is_empty());
             assert!(report.omitted_hand_overlays.is_empty());
             assert_eq!(report.hud_vertices, 6);
             assert!(report.omitted_hud_blends.is_empty());
