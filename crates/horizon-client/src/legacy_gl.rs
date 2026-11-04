@@ -520,6 +520,7 @@ impl App {
                 Mode::Reference
             },
             game: Game::new(settings),
+            cursor: (0.0, 0.0),
             last_frame: Instant::now(),
             error: None,
         }

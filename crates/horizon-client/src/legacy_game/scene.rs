@@ -134,33 +134,26 @@ fn push_line(out: &mut Vec<f32>, a: [f32; 3], b: [f32; 3], color: [f32; 4], thic
     } else {
         2
     };
-    let mut quad = [[0.0; 3]; 4];
-    match axis {
-        0 => {
-            quad = [
-                [a[0], a[1] - thickness, a[2] - thickness],
-                [b[0], a[1] - thickness, a[2] - thickness],
-                [b[0], a[1] + thickness, a[2] + thickness],
-                [a[0], a[1] + thickness, a[2] + thickness],
-            ];
-        }
-        1 => {
-            quad = [
-                [a[0] - thickness, a[1], a[2] - thickness],
-                [a[0] + thickness, a[1], a[2] - thickness],
-                [a[0] + thickness, b[1], a[2] + thickness],
-                [a[0] - thickness, b[1], a[2] + thickness],
-            ];
-        }
-        _ => {
-            quad = [
-                [a[0] - thickness, a[1] - thickness, a[2]],
-                [a[0] + thickness, a[1] - thickness, a[2]],
-                [a[0] + thickness, a[1] + thickness, b[2]],
-                [a[0] - thickness, a[1] + thickness, b[2]],
-            ];
-        }
-    }
+    let quad = match axis {
+        0 => [
+            [a[0], a[1] - thickness, a[2] - thickness],
+            [b[0], a[1] - thickness, a[2] - thickness],
+            [b[0], a[1] + thickness, a[2] + thickness],
+            [a[0], a[1] + thickness, a[2] + thickness],
+        ],
+        1 => [
+            [a[0] - thickness, a[1], a[2] - thickness],
+            [a[0] + thickness, a[1], a[2] - thickness],
+            [a[0] + thickness, b[1], a[2] + thickness],
+            [a[0] - thickness, b[1], a[2] + thickness],
+        ],
+        _ => [
+            [a[0] - thickness, a[1] - thickness, a[2]],
+            [a[0] + thickness, a[1] - thickness, a[2]],
+            [a[0] + thickness, a[1] + thickness, b[2]],
+            [a[0] - thickness, a[1] + thickness, b[2]],
+        ],
+    };
     for at in ORDER {
         out.extend_from_slice(&quad[at]);
         out.extend_from_slice(&color);
