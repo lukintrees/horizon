@@ -48,6 +48,7 @@ pub struct Prepared<'a> {
     pub lightmap: [u8; 1024],
     pub screen: &'a [crate::screen_effects::ScreenQuad],
     entities: Cow<'a, [Vertex]>,
+    pub additive: Cow<'a, [Vertex]>,
     hand: &'a [Vertex],
     see_through: &'a [Vertex],
     hand_view_projection: [f32; 16],
@@ -113,28 +114,80 @@ impl<'a> Prepared<'a> {
             }
         }
         let mut count = 0usize;
-        for vertices in [frame.entities, frame.hand, frame.see_through]
-            .into_iter()
-            .chain(
-                frame
-                    .visible_static_block_entity_sections
-                    .iter()
-                    .filter_map(|key| snapshots.get(key).map(|s| s.vertices.as_ref())),
-            )
-        {
+        for vertices in [
+            frame.entities,
+            frame.hand,
+            frame.see_through,
+            frame.additive,
+        ]
+        .into_iter()
+        .chain(
+            frame
+                .visible_static_block_entity_sections
+                .iter()
+                .filter_map(|key| snapshots.get(key).map(|s| s.vertices.as_ref())),
+        ) {
             if !vertices.len().is_multiple_of(4) {
                 return Err(Error::Invalid("quad vertex count"));
             }
             count = count
                 .checked_add(vertices.len())
                 .filter(|&n| n <= limits.entity_vertices)
-                .ok_or(Error::Budget("combined entity/hand/static vertices"))?;
+                .ok_or(Error::Budget("combined frame vertices"))?;
         }
+        let entity_count =
+            count - frame.hand.len() - frame.see_through.len() - frame.additive.len();
+        if frame.lightning.bolts.len() > limits.lightning_bolts {
+            return Err(Error::Budget("lightning bolts"));
+        }
+        let bolt_vertices = frame
+            .lightning
+            .bolts
+            .len()
+            .checked_mul(gfx::lightning::QUADS as usize * 4)
+            .ok_or(Error::Budget("lightning vertices"))?;
+        if count
+            .checked_add(bolt_vertices)
+            .is_none_or(|n| n > limits.entity_vertices)
+        {
+            return Err(Error::Budget("combined frame vertices"));
+        }
+        let additive = if frame.lightning.bolts.is_empty() {
+            Cow::Borrowed(frame.additive)
+        } else {
+            if frame
+                .lightning
+                .uv
+                .iter()
+                .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            {
+                return Err(Error::Invalid("lightning white UV"));
+            }
+            let mut vertices = Vec::new();
+            vertices
+                .try_reserve_exact(bolt_vertices + frame.additive.len())
+                .map_err(|_| Error::Allocation)?;
+            for bolt in frame.lightning.bolts {
+                let offset = horizon_render_api::relative_origin(bolt.at, frame.camera.to_array())
+                    .ok_or(Error::Invalid("lightning position"))?;
+                // Match vs_lightning exactly: cast the f64 relative offset to
+                // f32 first, THEN add each local f32 vertex, in input bolt order.
+                for mut vertex in gfx::lightning::geometry(bolt.seed, frame.lightning.uv) {
+                    vertex.pos = std::array::from_fn(|axis| vertex.pos[axis] + offset[axis]);
+                    if vertex.pos.iter().any(|v| !v.is_finite()) {
+                        return Err(Error::Invalid("lightning position arithmetic"));
+                    }
+                    vertices.push(vertex);
+                }
+            }
+            vertices.extend_from_slice(frame.additive);
+            Cow::Owned(vertices)
+        };
         let has_static = snapshots.values().any(|s| !s.vertices.is_empty());
         let entities = if has_static {
             let mut vertices = Vec::new();
             vertices
-                .try_reserve_exact(count - frame.hand.len() - frame.see_through.len())
+                .try_reserve_exact(entity_count)
                 .map_err(|_| Error::Allocation)?;
             // Retain the game's visible-static ordering, then dynamic entities.
             // The coordinator retains stable order within each material kind.
@@ -244,6 +297,7 @@ impl<'a> Prepared<'a> {
             lightmap,
             screen: frame.screen,
             entities,
+            additive,
             hand: frame.hand,
             see_through: frame.see_through,
             hand_view_projection,
@@ -295,10 +349,6 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
             "celestial/stars",
         ),
         (!frame.weather.is_empty(), "weather"),
-        (
-            !frame.lightning.bolts.is_empty() || !frame.additive.is_empty(),
-            "lightning/additive",
-        ),
         (
             !frame.outline.is_empty()
                 || !frame.debug_lines.is_empty()
@@ -437,6 +487,99 @@ pub(super) mod tests {
         }; 4]
     }
     #[test]
+    fn actual_lightning_uses_shared_seed_geometry_offset_order_and_combined_limits() {
+        let hud = HudBatch::new([64; 2]);
+        let mut frame = source(&hud);
+        frame.camera = DVec3::new(30_000_000., 0., 0.);
+        let bolts = [
+            gfx::lightning::Bolt {
+                at: [30_000_000.25, 2., 3.],
+                seed: 9,
+            },
+            gfx::lightning::Bolt {
+                at: [30_000_001.5, 4., 5.],
+                seed: 9,
+            },
+        ];
+        frame.lightning = gfx::lightning::Input {
+            bolts: &bolts,
+            uv: [0.25, 0.5],
+        };
+        let extra = quad([9.; 3]);
+        frame.additive = &extra;
+        let plan = prepare(&frame).unwrap();
+        let template = gfx::lightning::geometry(9, [0.25, 0.5]);
+        assert_eq!(template.len(), 896);
+        assert_eq!(plan.additive.len(), 1796);
+        for (index, offset) in [[0.25, 2., 3.], [1.5, 4., 5.]].into_iter().enumerate() {
+            for (actual, local) in plan.additive[index * 896..(index + 1) * 896]
+                .iter()
+                .zip(&template)
+            {
+                assert_eq!(
+                    actual.pos,
+                    std::array::from_fn(|axis| local.pos[axis] + offset[axis])
+                );
+                assert_eq!(actual.color, local.color);
+                assert_eq!(actual.layer, local.layer);
+                assert_eq!(actual.uv, [0.25, 0.5]);
+            }
+        }
+        assert_eq!(plan.additive[1792].pos, [9.; 3]);
+        let mut limits = Limits {
+            entity_vertices: 1795,
+            ..Limits::default()
+        };
+        assert!(
+            Prepared::new(
+                &frame,
+                [64; 2],
+                VisibleSections::default(),
+                limits,
+                Options::default()
+            )
+            .is_err()
+        );
+        limits.entity_vertices = 1796;
+        limits.lightning_bolts = 1;
+        assert_eq!(
+            Prepared::new(
+                &frame,
+                [64; 2],
+                VisibleSections::default(),
+                limits,
+                Options::default()
+            )
+            .err(),
+            Some(Error::Budget("lightning bolts"))
+        );
+        frame.lightning.uv = [f32::NAN, 0.];
+        assert_eq!(
+            prepare(&frame).err(),
+            Some(Error::Invalid("lightning white UV"))
+        );
+        frame.lightning = gfx::lightning::Input {
+            bolts: &[],
+            uv: [f32::NAN; 2],
+        };
+        assert!(matches!(
+            prepare(&frame).unwrap().additive,
+            Cow::Borrowed(_)
+        ));
+        let bad = [gfx::lightning::Bolt {
+            at: [f64::INFINITY, 0., 0.],
+            seed: 1,
+        }];
+        frame.lightning = gfx::lightning::Input {
+            bolts: &bad,
+            uv: [0.; 2],
+        };
+        assert_eq!(
+            prepare(&frame).err(),
+            Some(Error::Invalid("lightning position"))
+        );
+    }
+    #[test]
     fn game_matrices_preserve_xy_bob_spin_and_unreverse_depth() {
         let hud = HudBatch::new([64; 2]);
         let mut frame = source(&hud);
@@ -535,7 +678,7 @@ pub(super) mod tests {
                 Options::default()
             )
             .err(),
-            Some(Error::Budget("combined entity/hand/static vertices"))
+            Some(Error::Budget("combined frame vertices"))
         );
         frame.visible_static_block_entity_sections = &[[1, 0, 0], [1, 0, 0]];
         assert_eq!(

@@ -452,6 +452,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_entity_glint");
     gui_glint(context)?;
     checks.push("backend_gui_glint");
+    additive_world(context)?;
+    checks.push("backend_world_additive");
     screen_sampling(context)?;
     checks.push("backend_screen_sampling");
     surface_lifecycle(context)?;
@@ -1973,6 +1975,174 @@ fn gui_glint(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "GUI foil resources not reclaimed",
+    )
+}
+
+fn additive_world(context: &Context) -> Result<(), String> {
+    use horizon_render_api::entity;
+    let mut renderer = Renderer::new(context, Budget::default())?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let clear = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[0; 4],
+    })?;
+    let lightmap = [0, 0, 0, 255].repeat(256);
+    let mut meshes = Vec::new();
+    let mut make = |code, z, color| -> Result<_, String> {
+        let source = quad([1.; 4], z, 1.).map(|v| entity::Input {
+            pos: v.pos,
+            uv: v.uv,
+            layer: code,
+            color,
+            light: 0,
+            normal: [0; 4],
+            glint_uv: [0.; 2],
+        });
+        let runs = entity::additive_runs(source, &lightmap, false, 4)
+            .map_err(|e| format!("additive fixture {e:?}"))?;
+        let mesh = renderer.create_entity_mesh(&runs[0].vertices, &runs[0].indices)?;
+        meshes.push(mesh);
+        Ok(Draw {
+            mesh,
+            texture: white,
+            lightmap: white,
+            origin: [0.; 3],
+            pass: runs[0].pass,
+            scissor: None,
+        })
+    };
+    let green = make(2, 0., 0x8000ff00)?;
+    let red_far = make(2, 0.5, 0x800000ff)?;
+    let blue_ray = make(37, 0., 0x80ff0000)?;
+    let transparent_ray = make(37, 0., 0x00ff0000)?;
+    let dim_green = make(0, 0., 0x8000ff00)?;
+    let tiny_green = make(2, 0., 0x0100ff00)?;
+    let mut render = |draws: &[Draw], fog| -> Result<(), String> {
+        let mut view = frame(draws);
+        view.clear = Clear::ColorDepth([16. / 255., 32. / 255., 48. / 255., 0.25]);
+        view.fog = fog;
+        renderer.render(&view)
+    };
+    render(&[green, red_far], None)?;
+    pixel(&mut renderer, [32, 32], [144, 160, 48])?;
+    require(
+        renderer.read_rgba([32, 32, 1, 1])?[3].abs_diff(192) <= 2,
+        "additive RGBA must use SRC_ALPHA/ONE, including alpha",
+    )?;
+    // Drop closure's exclusive borrow before readback, then use a macro per draw.
+    macro_rules! show {
+        ($draws:expr,$fog:expr) => {{
+            let draws = $draws;
+            let mut view = frame(&draws);
+            view.clear = Clear::ColorDepth([16. / 255., 32. / 255., 48. / 255., 0.25]);
+            view.fog = $fog;
+            renderer.render(&view)?;
+        }};
+    }
+    show!(
+        [
+            Draw {
+                texture: clear,
+                ..blue_ray
+            },
+            red_far
+        ],
+        None
+    );
+    pixel(&mut renderer, [32, 32], [16, 32, 176])?; // ray ignores texture alpha/RGB, writes depth
+    show!([transparent_ray, red_far], None);
+    pixel(&mut renderer, [32, 32], [16, 32, 48])?; // alpha 0 STILL writes ray depth
+    let fog = Fog {
+        color: [1., 1., 0.],
+        start: 0.,
+        end: 2. * 2f32.sqrt(),
+        game: Some(horizon_render_api::GameFog {
+            start: f32::MAX,
+            end: f32::MAX,
+            alpha: 0.,
+        }),
+    };
+    show!([blue_ray], Some(fog));
+    pixel(&mut renderer, [32, 32], [16, 32, 80])?; // fade both RGB AND alpha; ignore fog alpha
+    let full = Fog {
+        start: 0.,
+        end: 0.01,
+        ..fog
+    };
+    show!([green], Some(full));
+    pixel(&mut renderer, [32, 32], [16, 160, 48])?; // textured additive ignores world fog
+    show!([dim_green], None);
+    pixel(&mut renderer, [32, 32], [16, 32, 48])?; // code 0 does retain CPU lightmap
+    show!([tiny_green], None);
+    require(
+        renderer.read_rgba([32, 32, 1, 1])?[1] > 32,
+        "additive wrongly applied entity cutout",
+    )?;
+    let reverse: Vec<_> = quad([1.; 4], 0., 1.)
+        .map(|v| entity::LitVertex {
+            base: v,
+            back_color: [1.; 4],
+            light_color: [1.; 4],
+            glint_uv: [0.; 2],
+        })
+        .into();
+    let back = renderer.create_entity_mesh(&reverse, &[0, 2, 1, 0, 3, 2])?;
+    meshes.push(back);
+    show!(
+        [
+            Draw {
+                mesh: back,
+                ..blue_ray
+            },
+            red_far
+        ],
+        None
+    );
+    pixel(&mut renderer, [32, 32], [144, 32, 48])?; // back ray is culled, including its depth
+    let base = entity::runs(
+        quad([1.; 4], 0., 1.).map(|v| entity::Input {
+            pos: v.pos,
+            uv: v.uv,
+            layer: 0,
+            color: 0xffffffff,
+            light: 0,
+            normal: [0; 4],
+            glint_uv: [0.; 2],
+        }),
+        &lightmap,
+        false,
+        4,
+    )
+    .map_err(|e| format!("body {e:?}"))?;
+    let body = renderer.create_entity_mesh(&base[0].vertices, &base[0].indices)?;
+    meshes.push(body);
+    show!(
+        [Draw {
+            mesh: body,
+            pass: base[0].pass,
+            ..green
+        }],
+        Some(Fog {
+            color: [0., 0., 1.],
+            game: None,
+            start: 0.,
+            end: 0.01
+        })
+    );
+    pixel(&mut renderer, [32, 32], [0, 0, 255])?; // ordinary shader/fog state is restored
+    for id in meshes {
+        renderer.remove_mesh(id)?;
+    }
+    renderer.remove_texture(white)?;
+    renderer.remove_texture(clear)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "additive resource leak",
     )
 }
 

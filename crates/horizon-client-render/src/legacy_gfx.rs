@@ -34,6 +34,7 @@ pub struct Limits {
     pub hud_backing_bytes: usize,
     pub hud_page_count: usize,
     pub screen_quads: usize,
+    pub lightning_bolts: usize,
     /// Extracted sprite bytes plus one decoded virtual-atlas page.
     pub screen_bytes: usize,
 }
@@ -51,6 +52,7 @@ impl Default for Limits {
             hud_backing_bytes: 128 << 20,
             hud_page_count: 4096,
             screen_quads: 256,
+            lightning_bolts: 64,
             screen_bytes: 8 << 20,
         }
     }
@@ -265,11 +267,12 @@ impl TerrainHudRenderer {
         if prepared.lightmap.as_slice() != self.lightmap {
             self.update_lightmap(&prepared.lightmap)?;
         }
-        self.render_geometry_with_screen(
+        self.render_geometry_with_effects(
             &prepared.world,
             prepared.hud,
             &prepared.geometry(),
             prepared.screen,
+            &prepared.additive,
         )
     }
 
@@ -279,14 +282,15 @@ impl TerrainHudRenderer {
         hud: &HudBatch,
         geometry: &Geometry<'_>,
     ) -> Result<(), String> {
-        self.render_geometry_with_screen(world, hud, geometry, &[])
+        self.render_geometry_with_effects(world, hud, geometry, &[], &[])
     }
-    fn render_geometry_with_screen(
+    fn render_geometry_with_effects(
         &mut self,
         world: &SceneFrame<'_>,
         hud: &HudBatch,
         geometry: &Geometry<'_>,
         screen_quads: &[crate::screen_effects::ScreenQuad],
+        additive_vertices: &[crate::mesher::Vertex],
     ) -> Result<(), String> {
         let strength = entity::Strength::new(geometry.glint.strength).map_err(diagnostic)?;
         if !geometry.glint.ticks.is_finite() {
@@ -306,6 +310,7 @@ impl TerrainHudRenderer {
             .len()
             .checked_add(geometry.hand.len())
             .and_then(|n| n.checked_add(geometry.see_through.len()))
+            .and_then(|n| n.checked_add(additive_vertices.len()))
             .is_none_or(|n| n > self.limits.entity_vertices)
         {
             return Err("entity/hand input budget exceeded".into());
@@ -352,6 +357,20 @@ impl TerrainHudRenderer {
         .map_err(diagnostic)?;
         let remaining = remaining
             - see_through
+                .iter()
+                .map(|r| r.geometry.vertices.len())
+                .sum::<usize>();
+        let additive = entity_bridge::prepare_with(
+            additive_vertices,
+            &self.lightmap,
+            options,
+            self.hud.layout(),
+            remaining,
+            entity_bridge::View::Additive,
+        )
+        .map_err(diagnostic)?;
+        let remaining = remaining
+            - additive
                 .iter()
                 .map(|r| r.geometry.vertices.len())
                 .sum::<usize>();
@@ -413,7 +432,8 @@ impl TerrainHudRenderer {
             || !body.is_empty()
             || !particles.is_empty()
             || !hand.is_empty()
-            || !see_through.is_empty();
+            || !see_through.is_empty()
+            || !additive.is_empty();
         if !screens.is_empty()
             && (remaining.textures == 0
                 || remaining.meshes == 0
@@ -436,6 +456,7 @@ impl TerrainHudRenderer {
             .chain(&particles)
             .chain(&hand)
             .chain(&see_through)
+            .chain(&additive)
             .any(|run| {
                 std::mem::size_of_val(run.geometry.vertices.as_slice())
                     + std::mem::size_of_val(run.geometry.indices.as_slice())
@@ -445,7 +466,8 @@ impl TerrainHudRenderer {
                 || !body.is_empty()
                 || !particles.is_empty()
                 || !hand.is_empty()
-                || !see_through.is_empty())
+                || !see_through.is_empty()
+                || !additive.is_empty())
                 && remaining.meshes == 0)
         {
             return Err("no transient mesh capacity for legacy frame".into());
@@ -462,6 +484,13 @@ impl TerrainHudRenderer {
         let backing = &self.hud;
         self.cache
             .render_world(self.world.backend_mut(), &body, &view, |page| {
+                backing.load(page)
+            })
+            .map_err(diagnostic)?;
+        // The classic game draws lightning, then source-ordered additive runs
+        // after body/water-mask, BEFORE translucent terrain and particles.
+        self.cache
+            .render_world(self.world.backend_mut(), &additive, &view, |page| {
                 backing.load(page)
             })
             .map_err(diagnostic)?;
@@ -579,6 +608,217 @@ mod tests {
         IDENTITY,
         atlas::{SpriteSize, build_page, pack_atlas},
     };
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_actual_lightning_and_additive_precede_translucency_and_preserve_ray_depth() {
+        use crate::{gfx::lightning, mesher::Vertex};
+        let atlas = HudAtlas::boot();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.fill(&atlas, 0., 0., 1., 1., u32::MAX);
+        let white_uv = hud.vertices[0].uv;
+        hud.vertices.clear();
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits::default(),
+        )
+        .unwrap();
+        let template = lightning::geometry(9, white_uv);
+        let mid: [f64; 3] = std::array::from_fn(|axis| {
+            template[..4]
+                .iter()
+                .map(|v| f64::from(v.pos[axis]))
+                .sum::<f64>()
+                / 4.
+        });
+        let bolts = [lightning::Bolt {
+            at: [30_000_000., 0., 0.],
+            seed: 9,
+        }; 2];
+        let mut source = frame::tests::source(&hud);
+        source.camera = glam::DVec3::new(30_000_000. + mid[0], mid[1], mid[2] - 16.);
+        source.yaw = 0.;
+        source.pitch = 0.;
+        source.fov_degrees = 90.;
+        source.sky.fog_color = [16. / 255., 32. / 255., 48. / 255.];
+        source.distance = 512.;
+        let empty = frame::VisibleSections::default();
+        let options = frame::Options::default();
+        renderer.render_game_frame(&source, empty, options).unwrap();
+        let background = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        source.lightning = lightning::Input {
+            bolts: &bolts[..1],
+            uv: white_uv,
+        };
+        renderer.render_game_frame(&source, empty, options).unwrap();
+        let single = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        assert!(
+            single
+                .chunks_exact(4)
+                .zip(background.chunks_exact(4))
+                .any(|(a, b)| a[..3] != b[..3]),
+            "actual seeded lightning did not draw"
+        );
+        source.lightning.bolts = &bolts;
+        renderer.render_game_frame(&source, empty, options).unwrap();
+        let doubled = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        assert!(
+            doubled
+                .chunks_exact(4)
+                .zip(single.chunks_exact(4))
+                .any(|(a, b)| (0..3).any(|i| a[i] > b[i])),
+            "shared seeds lost a bolt instance"
+        );
+        source.lightning.bolts = &bolts[..1];
+        source.fog = Some(crate::fog::FogData {
+            color: [16. / 255., 32. / 255., 48. / 255., 1.],
+            environmental_start: 0.,
+            environmental_end: 0.,
+            render_distance_start: 0.,
+            render_distance_end: 0.,
+            sky_end: 0.,
+            cloud_end: 0.,
+        });
+        renderer.render_game_frame(&source, empty, options).unwrap();
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), single); // unlit/unfogged lightning
+        source.fog = None;
+        let mut water = SectionMesh::default();
+        let camera = source.camera.to_array();
+        water
+            .translucent
+            .extend([[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]].map(|p| {
+                TerrainVertex::new(
+                    [
+                        ((camera[0] - 30_000_000.) + f64::from(p[0])) as f32,
+                        (camera[1] + f64::from(p[1])) as f32,
+                        (camera[2] + 1.) as f32,
+                    ],
+                    [0.5; 2],
+                    0,
+                    0x80ff0000,
+                    0,
+                )
+            }));
+        let key = [1_875_000, 0, 0];
+        let keys = [key];
+        renderer.upload_section(key, &water).unwrap();
+        source.sky.ambient_light_color = [1.; 3];
+        let visible = frame::VisibleSections {
+            solid: &[],
+            translucent: &keys,
+        };
+        renderer
+            .render_game_frame(&source, visible, options)
+            .unwrap();
+        let covered = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        for (actual, bolt) in covered.chunks_exact(4).zip(single.chunks_exact(4)) {
+            for c in 0..3 {
+                let expected = (f32::from(bolt[c]) * (127. / 255.) + if c == 2 { 128. } else { 0. })
+                    .round() as u8;
+                assert!(
+                    actual[c].abs_diff(expected) <= 2,
+                    "translucent terrain did not cover lightning: {actual:?}/{bolt:?}"
+                );
+            }
+        }
+        source.lightning.bolts = &[];
+        let quad = |z: f32, layer: u32, color: u32| {
+            [[-1., -1., z], [-1., 1., z], [1., 1., z], [1., -1., z]].map(|pos| Vertex {
+                pos,
+                uv: white_uv,
+                layer,
+                color,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            })
+        };
+        let near = |renderer: &mut TerrainHudRenderer, expected: [u8; 3]| {
+            let actual = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+            assert!(
+                actual[..3]
+                    .iter()
+                    .zip(expected)
+                    .all(|(&a, b)| a.abs_diff(b) <= 2),
+                "{actual:?} != {expected:?}"
+            );
+        };
+        let mut extra: Vec<_> = quad(2., 2, 0x8000ff00)
+            .into_iter()
+            .chain(quad(3., 2, 0x800000ff))
+            .collect();
+        {
+            let mut view = frame::tests::source(&hud);
+            view.camera = source.camera;
+            view.yaw = 0.;
+            view.pitch = 0.;
+            view.fov_degrees = 90.;
+            view.sky.fog_color = source.sky.fog_color;
+            view.additive = &extra;
+            renderer.render_game_frame(&view, empty, options).unwrap();
+        }
+        near(&mut renderer, [144, 160, 48]); // ordinary additive does NOT write depth
+        extra[..4].copy_from_slice(&quad(2., 37, 0x80ff0000));
+        {
+            let mut view = frame::tests::source(&hud);
+            view.camera = source.camera;
+            view.yaw = 0.;
+            view.pitch = 0.;
+            view.fov_degrees = 90.;
+            view.sky.fog_color = source.sky.fog_color;
+            view.additive = &extra;
+            renderer.render_game_frame(&view, empty, options).unwrap();
+        }
+        near(&mut renderer, [16, 32, 176]); // near rays DO hide farther additive quads
+        {
+            let mut view = frame::tests::source(&hud);
+            view.camera = source.camera;
+            view.yaw = 0.;
+            view.pitch = 0.;
+            view.fov_degrees = 90.;
+            view.sky.fog_color = source.sky.fog_color;
+            view.fog = Some(crate::fog::FogData {
+                color: [16. / 255., 32. / 255., 48. / 255., 0.],
+                environmental_start: 0.,
+                environmental_end: 0.,
+                render_distance_start: 0.,
+                render_distance_end: 0.,
+                sky_end: 0.,
+                cloud_end: 0.,
+            });
+            view.additive = &extra;
+            renderer.render_game_frame(&view, empty, options).unwrap();
+        }
+        near(&mut renderer, [16, 32, 48]); // ray RGBA fog fade ignores fog color alpha
+        let stable = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        renderer.limits.lightning_bolts = 0;
+        source.lightning.bolts = &bolts[..1];
+        assert!(renderer.render_game_frame(&source, empty, options).is_err());
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        renderer.limits.lightning_bolts = 64;
+        extra[0].layer = 1;
+        source.lightning.bolts = &[];
+        source.additive = &extra;
+        assert!(renderer.render_game_frame(&source, empty, options).is_err());
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        renderer.unload_section(key).unwrap();
+        renderer.world.collect_garbage().unwrap();
+        assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 0);
+    }
     #[test]
     #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
     fn bridge_actual_frame_screen_repeat_clamp_blur_vignette_order_and_patches() {

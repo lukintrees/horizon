@@ -27,6 +27,7 @@ fn input(v: &Vertex) -> entity::Input {
 pub enum View {
     World,
     SeeThrough,
+    Additive,
 }
 #[derive(Debug)]
 pub enum PrepareError {
@@ -67,6 +68,12 @@ pub fn prepare_with(
         View::World => {
             entity::runs_with(vertices.iter().map(input), lightmap, options, max_vertices)
         }
+        View::Additive => entity::additive_runs(
+            vertices.iter().map(input),
+            lightmap,
+            options.nether,
+            max_vertices,
+        ),
         View::SeeThrough => entity::see_through_runs(
             vertices.iter().map(input),
             lightmap,

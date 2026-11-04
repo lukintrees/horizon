@@ -80,6 +80,7 @@ struct Uniforms {
     glint: i32,
     gui_glint: i32,
     screen: i32,
+    additive: i32,
 }
 
 pub struct Renderer<'a> {
@@ -182,6 +183,7 @@ impl<'a> Renderer<'a> {
                 glint: -1,
                 gui_glint: -1,
                 screen: -1,
+                additive: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -213,6 +215,7 @@ impl<'a> Renderer<'a> {
                 glint: location(c"glint_strength")?,
                 gui_glint: location(c"gui_glint")?,
                 screen: location(c"screen_mode")?,
+                additive: location(c"additive_mode")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -606,6 +609,12 @@ impl RenderBackend for Renderer<'_> {
                     horizon_render_api::screen::Blend::Vignette => 2.,
                 });
                 (self.gl.uniform1f)(self.uniforms.screen, mode);
+                let additive = match pass {
+                    Pass::Entity(m) if m.kind == Kind::Additive => 1.,
+                    Pass::Entity(m) if m.kind == Kind::DragonRays => 2.,
+                    _ => 0.,
+                };
+                (self.gl.uniform1f)(self.uniforms.additive, additive);
                 let mesh = &self.meshes[&draw.mesh];
                 let offset = self.validate_draw(draw, frame)?;
                 (self.gl.uniform3f)(self.uniforms.origin, offset[0], offset[1], offset[2]);
@@ -715,12 +724,15 @@ impl RenderBackend for Renderer<'_> {
                     },
                 );
                 let depth_write = matches!(pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
-                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough));
+                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive));
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match pass {
                     Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),
                     Pass::OverlayAdditive => Some((1, 1, 1, 1)),
                     Pass::OverlayVignette => Some((0, 0x0301, 0, 1)),
+                    Pass::Entity(m) if matches!(m.kind, Kind::Additive | Kind::DragonRays) => {
+                        Some((0x0302, 1, 0x0302, 1))
+                    }
                     Pass::Overlay | Pass::OverlayDepth | Pass::Entity(_) => {
                         Some((0x0302, 0x0303, 1, 0x0303))
                     }

@@ -5,6 +5,7 @@ uniform sampler2D foil;
 uniform float glint_strength;
 uniform float gui_glint;
 uniform float screen_mode;
+uniform float additive_mode;
 varying vec2 foil_uv;
 uniform float entity_mode;
 uniform float mask_only;
@@ -36,6 +37,20 @@ void main() {
         vec4 result = sample_color * tint;
         if (screen_mode > 1.5) result.a = 1.0;
         else if (result.a <= 0.0) discard;
+        gl_FragColor = result;
+        return;
+    }
+    if (additive_mode > 0.5) {
+        // fs_celestial does not choose back_color, apply overlay/cutout/glint,
+        // or fog textured additive geometry. Rays ignore atlas/light entirely.
+        vec4 result = sample_color * tint * vertex_light;
+        if (additive_mode > 1.5) {
+            float faded = linear_fog(distance_to_eye, fog.a, fog_end);
+            if (game_fog.w > 0.5) faded = max(faded,
+                linear_fog(cylindrical_distance, game_fog.x, game_fog.y));
+            // DRAGON_RAYS intentionally ignores fog COLOR ALPHA in WGSL.
+            result = tint * (1.0 - faded);
+        }
         gl_FragColor = result;
         return;
     }

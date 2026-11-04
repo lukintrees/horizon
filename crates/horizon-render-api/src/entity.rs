@@ -60,6 +60,10 @@ pub enum Kind {
     Shadow,
     Item,
     WaterMask,
+    /// Explicit additive view: textured, no fog, SRC_ALPHA/ONE, no depth writes.
+    Additive,
+    /// Untextured dragon rays: cull back, write depth, fade RGBA by world fog.
+    DragonRays,
     Particle,
     SeeThrough,
 }
@@ -157,6 +161,35 @@ pub fn runs_with(
     options: Options,
     max_vertices: usize,
 ) -> Result<Vec<gui::Run<LitVertex>>, Error> {
+    runs_view(input, lightmap, options, max_vertices, false)
+}
+
+/// fs_celestial's world-only additive view. Never infer it from ordinary body
+/// geometry: the same overlay 0 has a different shader and depth/blend policy.
+pub fn additive_runs(
+    input: impl IntoIterator<Item = Input>,
+    lightmap: &[u8],
+    nether: bool,
+    max_vertices: usize,
+) -> Result<Vec<gui::Run<LitVertex>>, Error> {
+    runs_view(
+        input,
+        lightmap,
+        Options {
+            nether,
+            glint: None,
+        },
+        max_vertices,
+        true,
+    )
+}
+fn runs_view(
+    input: impl IntoIterator<Item = Input>,
+    lightmap: &[u8],
+    options: Options,
+    max_vertices: usize,
+    additive: bool,
+) -> Result<Vec<gui::Run<LitVertex>>, Error> {
     if options.glint.is_some_and(|g| !g.ticks.is_finite()) {
         return Err(Error::InvalidGlint);
     }
@@ -189,7 +222,11 @@ pub fn runs_with(
             return Err(Error::UnsupportedMaterial(first.layer));
         }
         let code = first.layer & 0xffff;
+        if additive && !matches!(code, 0 | 2 | 3 | 37) {
+            return Err(Error::UnsupportedMaterial(code));
+        }
         let overlay = match code {
+            2 | 3 | 37 if additive => Overlay::None,
             0 | 7 | 13 | 14 | 15 | 32 | 33 | 35 | 36 => Overlay::None,
             1 | 8 => Overlay::Hurt,
             5 => Overlay::White(15),
@@ -208,9 +245,15 @@ pub fn runs_with(
         let w = (f32::from(first.normal[3]) / 127.).max(-1.);
         let material = Material {
             overlay,
-            cull: code != 13
-                && (code == 14 || code == 35 || (w > 0. && w < 0.5) || (w < 0. && w > -0.996)),
+            cull: if additive {
+                code == 37
+            } else {
+                code != 13
+                    && (code == 14 || code == 35 || (w > 0. && w < 0.5) || (w < 0. && w > -0.996))
+            },
             kind: match code {
+                37 if additive => Kind::DragonRays,
+                _ if additive => Kind::Additive,
                 13 => Kind::WaterMask,
                 14 => Kind::Shadow,
                 15 => Kind::Particle,
@@ -223,7 +266,7 @@ pub fn runs_with(
         if quad.iter().any(|v| {
             v.pos.iter().any(|f| !f.is_finite())
                 || (glint.is_some() && v.glint_uv.iter().any(|f| !f.is_finite()))
-                || (code != 13
+                || (!matches!(code, 13 | 37)
                     && v.uv
                         .iter()
                         .any(|f| !f.is_finite() || !(0.0..=1.0).contains(f)))
@@ -255,12 +298,20 @@ pub fn runs_with(
             LitVertex {
                 base: Vertex {
                     pos: v.pos,
-                    uv: if code == 13 { [0.; 2] } else { v.uv },
+                    uv: if matches!(code, 13 | 37) {
+                        [0.; 2]
+                    } else {
+                        v.uv
+                    },
                     light_uv: crate::light_uv(v.light as u16),
                     color: tint(front),
                 },
                 back_color: tint(back),
-                light_color: sample(lightmap, v.light),
+                light_color: if additive && matches!(code, 2 | 37) {
+                    [1.; 4]
+                } else {
+                    sample(lightmap, v.light)
+                },
                 glint_uv: if glint.is_none() {
                     [0.; 2]
                 } else if code == 36 {
@@ -326,6 +377,115 @@ mod tests {
             normal: [0, 127, 0, -127],
             glint_uv: [0.; 2],
         }
+    }
+    #[test]
+    fn additive_view_preserves_source_order_unlit_policy_and_ray_uv_independence() {
+        let lightmap = [32, 64, 96, 255].repeat(256);
+        let quad = |layer| {
+            [Input {
+                layer,
+                normal: [0; 4],
+                color: 0x80402010,
+                ..input()
+            }; 4]
+        };
+        let source: Vec<_> = [0, 2, 37, 3, 2].into_iter().flat_map(quad).collect();
+        let result = additive_runs(source, &lightmap, false, 20).unwrap();
+        assert_eq!(result.len(), 3); // equal adjacent policies may share a run
+        for (run, ray) in result.iter().zip([false, true, false]) {
+            let Pass::Entity(m) = run.pass else {
+                unreachable!()
+            };
+            assert_eq!(
+                m.kind,
+                if ray {
+                    Kind::DragonRays
+                } else {
+                    Kind::Additive
+                }
+            );
+            assert_eq!(m.cull, ray);
+            assert_eq!(m.overlay, Overlay::None);
+            assert!(m.glint.is_none());
+        }
+        let vertices: Vec<_> = result.iter().flat_map(|run| &run.vertices).collect();
+        for (quad, code) in vertices.chunks_exact(4).zip([0, 2, 37, 3, 2]) {
+            assert_eq!(
+                quad[0].light_color,
+                if matches!(code, 2 | 37) {
+                    [1.; 4]
+                } else {
+                    [32. / 255., 64. / 255., 96. / 255., 1.]
+                }
+            );
+        }
+        let ray = additive_runs(
+            [Input {
+                uv: [f32::NAN; 2],
+                ..quad(37)[0]
+            }; 4],
+            &lightmap,
+            false,
+            4,
+        )
+        .unwrap();
+        assert_eq!(ray[0].vertices[0].base.uv, [0.; 2]);
+        assert_eq!(
+            runs(quad(2), &lightmap, false, 4).err(),
+            Some(Error::UnsupportedMaterial(2))
+        );
+        assert_eq!(
+            runs(quad(37), &lightmap, false, 4).err(),
+            Some(Error::UnsupportedMaterial(37))
+        );
+        assert!(
+            matches!(runs(quad(0),&lightmap,false,4).unwrap()[0].pass,Pass::Entity(m) if m.kind==Kind::Body)
+        );
+    }
+    #[test]
+    fn additive_view_rejects_bad_materials_mixed_quads_and_shared_vertex_budget() {
+        let q = [Input {
+            layer: 2,
+            normal: [0; 4],
+            ..input()
+        }; 4];
+        assert_eq!(
+            additive_runs(q, &[255; 1024], false, 3).err(),
+            Some(Error::VertexBudget)
+        );
+        let mut mixed = q;
+        mixed[1].layer = 0;
+        assert_eq!(
+            additive_runs(mixed, &[255; 1024], false, 4).err(),
+            Some(Error::MixedMaterial)
+        );
+        for code in [1, 4, 7, 13, 15, 32, 36, 38, 0x02000002] {
+            assert!(
+                additive_runs(
+                    [Input {
+                        layer: code,
+                        ..q[0]
+                    }; 4],
+                    &[255; 1024],
+                    false,
+                    4
+                )
+                .is_err()
+            );
+        }
+        assert!(see_through_runs(q, &[255; 1024], false, 4).is_err());
+        assert!(
+            additive_runs(
+                [Input {
+                    uv: [f32::NAN, 0.],
+                    ..q[0]
+                }; 4],
+                &[255; 1024],
+                false,
+                4
+            )
+            .is_err()
+        );
     }
     #[test]
     fn two_sided_normals_overlay_and_light_interpolation_match_shader_order() {
