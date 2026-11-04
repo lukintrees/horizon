@@ -64,6 +64,23 @@ jobs:
         if: steps.clippy.outputs.status != '0'
         continue-on-error: true
         run: python tools/gl21_annotate.py clippy /tmp/clippy.txt
+      # `checks` runs clippy on the whole workspace and fails with no annotation this sandbox can read
+      # (its log is on blob storage it has no route to). The same command, annotated: a complaint the
+      # two packages' own clippy run does not make — a dependency's lint, a target only
+      # `--all-targets` builds — shows up here.
+      - name: Clippy, whole workspace, as `checks` runs it
+        id: workspace
+        run: |
+          set +e
+          cargo +stable clippy --workspace --all-targets --locked --message-format=short \
+            -- -D warnings > /tmp/workspace.txt 2>&1
+          status=$?
+          grep -E "^(error|warning)" /tmp/workspace.txt | head -40
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Turn the workspace's complaints into annotations
+        if: steps.workspace.outputs.status != '0'
+        continue-on-error: true
+        run: python tools/gl21_annotate.py clippy /tmp/workspace.txt
       # The GL 2.1 tests, and only those: a failed assertion is a line in a file, and
       # `gl21_annotate.py test` puts it back on the file. The other tests of
       # `horizon-client-render` take a wgpu device, and a runner without one has them panicking
