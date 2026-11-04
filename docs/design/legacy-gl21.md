@@ -41,7 +41,7 @@ workflow ветки [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy
 Rust 1.99 (npm-пакеты `@toolchain-bin/*`, системный `x86_64-linux-gnu-ld.bfd`), но crates.io и
 `static.rust-lang.org` отсюда недоступны. Поэтому полный `cargo check -p horizon-client` перенесён в
 [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml) — свой workflow только для ветки
-`arena/81644160-horizon`: на ранере GitHub ставятся Rust 1.90 и зависимости, затем выполняется gate PR 2b.
+`arena/81644160-horizon`: на ранере GitHub ставятся Rust 1.99 (минимум 1.95 требует `horizon-mods`) и зависимости, затем выполняется gate PR 2b.
 Локально проверены аддитивные модули отдельным крейтом без внешних зависимостей: `cargo test` (16 тестов),
 `cargo clippy --offline --all-targets -- -D warnings`, `rustfmt --check`; плюс `python3 -m py_compile`,
 `python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract -v` (16 тестов), полный
@@ -467,7 +467,7 @@ python3 tools/gl21_caps.py --label ci-gl21 --check --no-write --stdout
 
 Эти Python-проверки и gate PR 2b уже выполняет собственный workflow ветки
 [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml): на ранере GitHub доступны crates.io и
-Rust 1.90, поэтому там запускаются `cargo check -p horizon-client --features legacy-gl --no-default-features`,
+Rust 1.99 (≥1.95), поэтому там запускаются `cargo check -p horizon-client --features legacy-gl --no-default-features`,
 `cargo test -p horizon-client-render --lib gfx21 --features legacy-gl`, `rustfmt` и `clippy`. Чужие actions,
 PR и workflow не просматриваются и не меняются.
 

@@ -23,10 +23,10 @@ jobs:
       - name: Check out this branch
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.90 (workspace rust-version)
+      - name: Install Rust 1.99 (workspace needs >= 1.95)
         run: |
-          rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
-          rustup default 1.90.0
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.0
           rustc --version
           cargo --version
 
