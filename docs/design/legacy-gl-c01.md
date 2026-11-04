@@ -23,6 +23,9 @@ Game переведённым на legacy. `CONTRACT_VERSION = 1`; текущи�
 Только интегратор меняет эти общие точки. Полный executable protected-path список:
 [`.github/legacy-gl-policy.json`](../../.github/legacy-gl-policy.json).
 `render_contract` и `platform_contract` не создаются повторно в другом crate.
+Граница «общий CPU-слой не называет wgpu handle types» проверяется
+`tests/test_legacy_cpu_contracts.py` (комментарии разрешены, код — нет); полный
+wgpu-free dependency graph остаётся за D01.
 
 ### Владение и ошибки
 
