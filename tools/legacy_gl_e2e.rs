@@ -445,15 +445,8 @@ fn main() {
         );
         let gui_mesh = legacy::hud::build(&gui_atlas, &gui_batch, [32, 32]).unwrap();
         let gui_draw = |gui: &mut horizon_legacy_gl::Renderer| {
-            for run in &gui_mesh.runs {
-                gui.draw(
-                    &gui_mesh.vertices,
-                    std::slice::from_ref(&run.batch),
-                    &identity,
-                    run.blend.pass(),
-                )
+            gui.draw_ordered(&gui_mesh.vertices, &gui_mesh.draws(), &identity)
                 .unwrap();
-            }
         };
         gui_draw(&mut gui);
         assert_eq!(rgb(sample(5)), [200, 0, 0]);
@@ -499,15 +492,8 @@ fn main() {
         let invert = legacy::hud::build(&gui_atlas, &overlay, [32, 32]).unwrap();
         clear_color(0.25, 0.5, 0.75, 1.0);
         clear(0x4000 | 0x0100);
-        for run in &invert.runs {
-            gui.draw(
-                &invert.vertices,
-                std::slice::from_ref(&run.batch),
-                &identity,
-                run.blend.pass(),
-            )
+        gui.draw_ordered(&invert.vertices, &invert.draws(), &identity)
             .unwrap();
-        }
         let inverted = rgb(sample(16));
         assert!(
             inverted[0].abs_diff(191) <= 1
@@ -515,6 +501,21 @@ fn main() {
                 && inverted[2].abs_diff(64) <= 1,
             "HUD invert {inverted:?}"
         );
+        // Different blend modes share one upload and must remain in input order.
+        let mut mixed = hud::HudBatch::new([32, 32]);
+        let positions = [[0., 0.], [32., 0.], [32., 32.], [0., 32.]];
+        let uvs = [[0.0625, 0.125]; 4];
+        mixed.quad(positions, uvs, 0xff00_00ff); // red
+        mixed.quad(positions, uvs, u32::MAX); // invert to cyan
+        mixed.quad(positions, uvs, 0xff00_0028); // add red
+        mixed.blends.push((6..12, hud::Blend::Invert));
+        mixed.blends.push((12..18, hud::Blend::Additive));
+        let mixed = legacy::hud::build(&gui_atlas, &mixed, [32, 32]).unwrap();
+        clear_color(0., 0., 0., 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&mixed.vertices, &mixed.draws(), &identity)
+            .unwrap();
+        assert_eq!(rgb(sample(16)), [40, 255, 255], "HUD mixed blend order");
         gui.destroy();
         gpu.destroy();
         destroy(context);

@@ -56,7 +56,7 @@ pub struct Page<'a> {
     pub pixels: &'a [u8],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pass {
     /// Depth writes on, blending off; cutout pixels can be discarded.
     Solid {
@@ -70,6 +70,13 @@ pub enum Pass {
     HudAlpha,
     HudInvert,
     HudAdditive,
+}
+
+/// One draw in an ordered, mixed-pass vertex buffer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Draw {
+    pub batch: Batch,
+    pub pass: Pass,
 }
 
 macro_rules! gl_functions {
@@ -424,11 +431,11 @@ impl Renderer {
         }
     }
 
-    /// Upload and draw the batches in order. Changes GL program, buffer,
-    /// textures, attributes and depth/blend/cull state; it does not restore
-    /// previous state. The caller sets viewport, clear and framebuffer. The
-    /// transform is column-major and must produce OpenGL clip coordinates
-    /// (depth -1..1), not the 0..1 convention used by wgpu.
+    /// Upload and draw batches in order using one render pass. Changes GL
+    /// program, buffer, textures, attributes and depth/blend/cull state; it
+    /// does not restore previous state. The caller sets viewport, clear and
+    /// framebuffer. `transform` is column-major OpenGL clip space (-1..1
+    /// depth), not the 0..1 convention used by wgpu.
     ///
     /// # Safety
     /// The same context used for `new` must be current on this thread.
@@ -439,58 +446,60 @@ impl Renderer {
         transform: &[f32; 16],
         pass: Pass,
     ) -> Result<(), Error> {
-        validate_batches(vertices, batches, self.textures.len())?;
-        // SAFETY: caller guarantees the owning context is current; all slice
-        // pointers and byte sizes are validated and remain live for each call.
+        // SAFETY: caller guarantees the owning context is current.
+        unsafe {
+            self.draw_sequence(
+                vertices,
+                batches.iter().copied().map(|batch| Draw { batch, pass }),
+                transform,
+            )
+        }
+    }
+
+    /// Draw runs with different blend/depth passes, in order, with one VBO
+    /// upload. All ranges are validated before any GL state is changed.
+    ///
+    /// # Safety
+    /// The same context used for `new` must be current on this thread.
+    pub unsafe fn draw_ordered(
+        &mut self,
+        vertices: &[Vertex],
+        draws: &[Draw],
+        transform: &[f32; 16],
+    ) -> Result<(), Error> {
+        // SAFETY: caller guarantees the owning context is current.
+        unsafe { self.draw_sequence(vertices, draws.iter().copied(), transform) }
+    }
+
+    unsafe fn draw_sequence(
+        &mut self,
+        vertices: &[Vertex],
+        draws: impl Iterator<Item = Draw> + Clone,
+        transform: &[f32; 16],
+    ) -> Result<(), Error> {
+        validate_batches(vertices, &[], self.textures.len())?;
+        for draw in draws.clone() {
+            validate_batches(
+                vertices,
+                std::slice::from_ref(&draw.batch),
+                self.textures.len(),
+            )?;
+        }
+        // SAFETY: the owning context is current; slice pointers and byte sizes
+        // are validated and remain live for each call.
         unsafe {
             let gl = &self.gl;
             let preexisting = (gl.get_error)();
             if preexisting != 0 {
                 return Err(Error::Gl(preexisting));
             }
-            let cutoff = match pass {
-                Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
-                Pass::HudInvert => 0.0001,
-                Pass::HudAlpha | Pass::HudAdditive => 0.004,
-            };
             (gl.use_program)(self.program);
             (gl.uniform_matrix)(self.view_projection, 1, 0, transform.as_ptr());
             (gl.uniform_1i)(self.atlas, 0);
-            (gl.uniform_1f)(self.alpha_cutoff, cutoff);
-            (gl.enable)(0x0b71); // depth test
             (gl.depth_func)(0x0201); // less
             (gl.depth_range)(0.0, 1.0);
             (gl.color_mask)(1, 1, 1, 1);
             (gl.disable)(0x0b44); // culling is not yet selected per material
-            match pass {
-                Pass::Solid { .. } => {
-                    (gl.disable)(0x0be2);
-                    (gl.depth_mask)(1);
-                }
-                Pass::Translucent { .. } | Pass::HudAlpha => {
-                    if matches!(pass, Pass::HudAlpha) {
-                        (gl.disable)(0x0b71);
-                    }
-                    (gl.enable)(0x0be2);
-                    (gl.blend_equation)(0x8006); // GL_FUNC_ADD
-                    (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
-                    (gl.depth_mask)(0);
-                }
-                Pass::HudInvert => {
-                    (gl.disable)(0x0b71);
-                    (gl.enable)(0x0be2);
-                    (gl.blend_equation)(0x8006);
-                    (gl.blend_func_separate)(0x0307, 0x0301, 1, 0);
-                    (gl.depth_mask)(0);
-                }
-                Pass::HudAdditive => {
-                    (gl.disable)(0x0b71);
-                    (gl.enable)(0x0be2);
-                    (gl.blend_equation)(0x8006);
-                    (gl.blend_func_separate)(1, 1, 1, 1);
-                    (gl.depth_mask)(0);
-                }
-            }
             (gl.active_texture)(0x84c0);
             (gl.bind_buffer)(GL_ARRAY_BUFFER, self.buffer);
             (gl.buffer_data)(
@@ -509,14 +518,23 @@ impl Renderer {
                 (gl.enable_attrib)(index);
                 (gl.attrib_pointer)(index, size, 0x1406, 0, stride, offset as *const c_void);
             }
-            for batch in batches {
-                (gl.bind_texture)(GL_TEXTURE_2D, self.textures[batch.page]);
-                (gl.draw_arrays)(0x0004, batch.first as i32, batch.count as i32);
+            let mut current_pass = None;
+            let mut current_page = None;
+            for draw in draws {
+                if current_pass != Some(draw.pass) {
+                    set_pass(gl, self.alpha_cutoff, draw.pass);
+                    current_pass = Some(draw.pass);
+                }
+                if current_page != Some(draw.batch.page) {
+                    (gl.bind_texture)(GL_TEXTURE_2D, self.textures[draw.batch.page]);
+                    current_page = Some(draw.batch.page);
+                }
+                (gl.draw_arrays)(0x0004, draw.batch.first as i32, draw.batch.count as i32);
             }
             for index in 0..4 {
                 (gl.disable_attrib)(index);
             }
-            (gl.depth_mask)(1); // do not leave subsequent clears with writes disabled
+            (gl.depth_mask)(1); // subsequent clears must write depth
             let error = (gl.get_error)();
             if error != 0 {
                 Err(Error::Gl(error))
@@ -538,6 +556,50 @@ impl Renderer {
             }
             (self.gl.delete_buffers)(1, &self.buffer);
             (self.gl.delete_program)(self.program);
+        }
+    }
+}
+
+unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
+    // SAFETY: called with the owning GL context current.
+    unsafe {
+        let cutoff = match pass {
+            Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
+            Pass::HudInvert => 0.0001,
+            Pass::HudAlpha | Pass::HudAdditive => 0.004,
+        };
+        (gl.uniform_1f)(uniform, cutoff);
+        match pass {
+            Pass::Solid { .. } => {
+                (gl.enable)(0x0b71);
+                (gl.disable)(0x0be2);
+                (gl.depth_mask)(1);
+            }
+            Pass::Translucent { .. } | Pass::HudAlpha => {
+                if matches!(pass, Pass::HudAlpha) {
+                    (gl.disable)(0x0b71);
+                } else {
+                    (gl.enable)(0x0b71);
+                }
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
+                (gl.depth_mask)(0);
+            }
+            Pass::HudInvert => {
+                (gl.disable)(0x0b71);
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(0x0307, 0x0301, 1, 0);
+                (gl.depth_mask)(0);
+            }
+            Pass::HudAdditive => {
+                (gl.disable)(0x0b71);
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(1, 1, 1, 1);
+                (gl.depth_mask)(0);
+            }
         }
     }
 }

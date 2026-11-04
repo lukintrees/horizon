@@ -186,6 +186,19 @@ pub struct Mesh {
     pub runs: Vec<Run>,
 }
 
+impl Mesh {
+    /// Convert to the backend's ordered draws so the vertex buffer is uploaded once.
+    pub fn draws(&self) -> Vec<horizon_legacy_gl::Draw> {
+        self.runs
+            .iter()
+            .map(|run| horizon_legacy_gl::Draw {
+                batch: run.batch,
+                pass: run.blend.pass(),
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Point {
     pos: [f32; 2],
