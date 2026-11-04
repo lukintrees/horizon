@@ -10,7 +10,7 @@
 //! issues the calls; the sizes are decided here so that a mistake is a failing test in CI rather
 //! than a driver reading past the end of a buffer on a player's machine.
 
-use horizon_client_render::gl21::{Texture, program};
+use horizon_client_render::gl21::{self, Texture, program};
 
 /// A texture the renderer binds, by the name the device knows it by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

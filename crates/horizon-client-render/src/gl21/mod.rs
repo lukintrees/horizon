@@ -50,11 +50,13 @@ pub use atlas::Atlas;
 pub use backend::{Loader, Request};
 pub use context::{Capabilities, glsl_name};
 pub use draws::{Pass, Plan, SectionDraw, SectionRuns, draw_calls, plan, section_runs};
-pub use frame::{Draw, Frame, Run, Section};
+pub use frame::{Draw, Frame, Run, Section, Sky};
 pub use hud::{GlHudVertex, HudDraws, HudRun};
 pub use profile::Profile;
 pub use program::{Attribute, AttributeKind, Uniform};
-pub use renderer::{Device, FrameUniforms, HudFrame, Program, Renderer, Texture, View, Viewport};
+pub use renderer::{
+    Device, FrameUniforms, HudFrame, Program, Renderer, TerrainUniforms, Texture, View, Viewport,
+};
 pub use state::State;
 pub use vertex::{Batches, GlVertex};
 

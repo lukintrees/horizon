@@ -160,7 +160,10 @@ impl Context {
                 wayland_window = Some(egl_window);
                 egl_window
             }
-            RawWindowHandle::Win32(handle) => handle.hwnd.as_ptr(),
+            // A Windows `HWND` and a macOS `NSView` are both opaque pointers EGL takes as they
+            // are: `raw-window-handle` keeps each as a `NonZeroIsize`/`NonNull`, and the cast is
+            // the one in its own documentation.
+            RawWindowHandle::Win32(handle) => handle.hwnd.get() as *mut c_void,
             RawWindowHandle::AppKit(handle) => handle.ns_view.as_ptr(),
             other => {
                 return Err(format!(

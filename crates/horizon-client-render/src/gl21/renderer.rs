@@ -480,6 +480,9 @@ mod tests {
         Section {
             handle,
             revision: 1,
+            // Section-relative positions with the origin at the camera: what the mesher writes,
+            // and what `u_origin` adds back.
+            origin: [0.0; 3],
             distance_sq: 1.0,
             visibility: 1.0,
             solid,

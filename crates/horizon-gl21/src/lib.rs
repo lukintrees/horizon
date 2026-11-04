@@ -53,6 +53,6 @@ pub use horizon_client_render::gl21::Renderer;
 
 /// The renderer's names, for a caller that draws: `Renderer::draw`'s view, sections, sky and HUD.
 pub use horizon_client_render::gl21::{
-    Device, FrameUniforms, HudDraws, HudFrame, Pass, Program, Section, Sky, State, Texture, View,
-    Viewport,
+    Atlas, Device, FrameUniforms, GlHudVertex, GlVertex, HudDraws, HudFrame, Pass, Program,
+    Section, Sky, TerrainUniforms, Texture, View, Viewport,
 };
