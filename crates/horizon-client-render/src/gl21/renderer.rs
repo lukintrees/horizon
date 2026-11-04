@@ -82,6 +82,13 @@ pub struct Viewport {
     pub height: u32,
 }
 
+impl Viewport {
+    /// A window `width`×`height` pixels.
+    pub const fn new(width: u32, height: u32) -> Viewport {
+        Viewport { width, height }
+    }
+}
+
 /// What the renderer needs of a graphics device, one method per call it makes.
 ///
 /// Deliberately small and free of GL types: no `GLuint`, no `glow::Context`. A driver implements it,
@@ -358,6 +365,11 @@ mod tests {
         }
     }
 
+    /// `renderer.draw` for a frame of sections only: every test below wants that shape.
+    fn draw_world(renderer: &mut Renderer, device: &mut Recording, sections: &[Section<'_>]) {
+        renderer.draw(device, Viewport::new(320, 240), [0.0; 4], sections, None, None);
+    }
+
     fn hud_batch(verts: usize, blend: Blend) -> HudDraws {
         use crate::hud::{HudBatch, HudVertex};
         let mut batch = HudBatch::new([320, 240]);
@@ -386,7 +398,7 @@ mod tests {
         let hud = hud_batch(6, Blend::Alpha);
         renderer.draw(
             &mut device,
-            Viewport { width: 800, height: 600 },
+            Viewport::new(800, 600),
             [0.1, 0.2, 0.3, 1.0],
             &[section(1, &solid, &[])],
             None,
@@ -427,7 +439,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport::new(320, 240),
             [0.0; 4],
             &[section(1, &a, &[]), section(2, &b, &[])],
             None,
@@ -457,7 +469,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport::new(320, 240),
             [0.0; 4],
             &[section(1, &solid, &translucent)],
             Some((&sky, 7)),
@@ -490,14 +502,14 @@ mod tests {
         let solid = vertices(6, 3);
         let mut renderer = Renderer::new(1024);
         let mut device = Recording::default();
-        let viewport = Viewport { width: 320, height: 240 };
-        renderer.draw(&mut device, viewport, [0.0; 4], &[section(1, &solid, &[])], None, None);
+        let sections = [section(1, &solid, &[])];
+        draw_world(&mut renderer, &mut device, &sections);
         let uploads = |device: &Recording| {
             device.calls.iter().filter(|c| c.starts_with("upload ")).count()
         };
         assert_eq!(uploads(&device), 1);
         device.calls.clear();
-        renderer.draw(&mut device, viewport, [0.0; 4], &[section(1, &solid, &[])], None, None);
+        draw_world(&mut renderer, &mut device, &sections);
         let uploads = uploads(&device);
         assert_eq!(uploads, 0, "{:?}", device.calls);
         // The picture is still drawn, though: nothing to send is not nothing to draw.
@@ -527,7 +539,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport::new(320, 240),
             [0.0; 4],
             &[],
             None,
@@ -555,7 +567,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport::new(320, 240),
             [0.5; 4],
             &[],
             None,
@@ -581,7 +593,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport::new(320, 240),
             [0.0; 4],
             &[section(1, &solid, &translucent)],
             Some((&sky, 1)),
@@ -610,7 +622,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport::new(320, 240),
             [0.0; 4],
             &[],
             Some((&sky, 3)),
