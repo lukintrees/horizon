@@ -79,7 +79,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo clippy --locked -p horizon-client-render --features legacy-scene,legacy-gl-window --lib --tests --example legacy_scene_replay -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
+          if cargo clippy --locked -p horizon-client-render --features legacy-live --lib --tests --example legacy_scene_replay -- -D warnings 2>&1 | tee "$RUNNER_TEMP/legacy-clippy.log"; then
             exit 0
           fi
           python3 - <<'PY'

@@ -112,6 +112,8 @@ winresource = "0.1"
 default = ["audio", "controllers"]
 # Compile the experimental GL scene adapter (does not select a renderer).
 legacy-scene = ["horizon-client-render/legacy-scene"]
+# Experimental live GL output, not a standalone GL backend.
+legacy-live = ["horizon-client-render/legacy-live"]
 # Sound output. Without it (and `controllers`) the program links neither libasound nor libudev on
 # Linux: the server build (`--no-default-features`, released as horizon-engine; docs/server.md).
 audio = ["horizon-client-render/audio", "horizon-client-lib/audio"]

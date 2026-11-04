@@ -1,5 +1,6 @@
 # Experimental cross-build on a supported Windows development machine.
-# This builds the existing wgpu client, NOT a client with legacy GL integrated.
+# This builds the wgpu client with an opt-in incomplete GL preview; it is not
+# a standalone OpenGL fallback and still requires a working wgpu device.
 # Rust's Win7 target is tier 3; neither a successful build nor the incomplete PE
 # import audit proves that the binary will run on Windows 7.
 param(
@@ -15,7 +16,7 @@ if ($env:RUSTFLAGS -notmatch 'target-feature=\+crt-static(?:\s|,|$)') {
 }
 if (-not $Release -and -not $env:CARGO_PROFILE_DEV_DEBUG) { $env:CARGO_PROFILE_DEV_DEBUG = '0' }
 $cargoArgs = @('+nightly', 'build', '-Z', 'build-std=std,panic_abort', '--locked',
-    '-p', 'horizon-client', '--no-default-features', '--features', 'legacy-scene', '--bin', 'horizon-client',
+    '-p', 'horizon-client', '--no-default-features', '--features', 'legacy-live', '--bin', 'horizon-client',
     '--target', 'i686-win7-windows-msvc')
 $buildProfile = 'debug'
 if ($Release) { $cargoArgs += '--release'; $buildProfile = 'release' }

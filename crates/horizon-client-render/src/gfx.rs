@@ -1249,6 +1249,17 @@ pub struct Renderer {
     /// Optional live CPU bridge diagnostic, not a GL renderer or fallback.
     #[cfg(feature = "legacy-scene")]
     legacy_mirror: Option<legacy_mirror::Mirror>,
+    /// Opt-in partial GL output. This remains a diagnostic on top of wgpu.
+    #[cfg(all(
+        feature = "legacy-live",
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    legacy_live: Option<crate::legacy::renderer::Renderer>,
+    #[cfg(all(
+        feature = "legacy-live",
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    legacy_live_omissions_reported: bool,
     /// A scene to write from the next frame (`horizon-ctl render-capture DIR`).
     pub capture: Option<capture::Request>,
     /// Outcome of the last capture: its summary, or the error.
@@ -2821,6 +2832,40 @@ impl Renderer {
                 Err(error) => {
                     log::warn!(
                         "Legacy CPU mirror could not start: {error}; wgpu continues normally"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        let legacy_live = if !offscreen
+            && std::env::var_os("HORIZON_LEGACY_GL_PREVIEW").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+        {
+            let textures = crate::legacy::renderer::Textures {
+                terrain_pixels: sprite_pixels,
+                terrain_side: sprite_size,
+                terrain_layers: layers,
+                gui_pixels: hud_atlas.0,
+                gui_width: hud_atlas.1,
+                gui_height: hud_atlas.2,
+                animations,
+            };
+            match crate::legacy::renderer::Renderer::new(window.clone(), textures) {
+                Ok(renderer) => {
+                    log::warn!(
+                        "Experimental partial GL preview enabled; it still requires wgpu and omits many game passes"
+                    );
+                    Some(renderer)
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Experimental GL preview could not start: {error}; wgpu remains active"
                     );
                     None
                 }
@@ -4443,6 +4488,16 @@ impl Renderer {
                 .then(capture::Copies::default),
             #[cfg(feature = "legacy-scene")]
             legacy_mirror,
+            #[cfg(all(
+                feature = "legacy-live",
+                any(target_os = "linux", target_os = "windows")
+            ))]
+            legacy_live,
+            #[cfg(all(
+                feature = "legacy-live",
+                any(target_os = "linux", target_os = "windows")
+            ))]
+            legacy_live_omissions_reported: false,
             capture: None,
             capture_result: None,
         })
@@ -4876,6 +4931,18 @@ impl Renderer {
         self.occlusion.update(camera, (distance / 16.0) as i32 + 2);
     }
     pub fn upload(&mut self, key: SectionKey, mesh: &SectionMesh) {
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        if let Some(renderer) = &mut self.legacy_live
+            && let Err(error) = renderer.upload(key, mesh)
+        {
+            log::warn!(
+                "Experimental GL preview disabled after section upload: {error}; wgpu resumes"
+            );
+            self.legacy_live = None;
+        }
         #[cfg(feature = "legacy-scene")]
         if let Some(mirror) = &mut self.legacy_mirror
             && let Err(error) = mirror.upload(key, mesh)
@@ -5454,6 +5521,13 @@ impl Renderer {
     }
     /// Drops every section, for a level whose chunks hold `layout`.
     pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) {
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        if let Some(renderer) = &mut self.legacy_live {
+            renderer.clear_sections();
+        }
         #[cfg(feature = "legacy-scene")]
         if let Some(mirror) = &mut self.legacy_mirror {
             mirror.clear();
@@ -5638,6 +5712,13 @@ impl Renderer {
     }
     pub fn remove_columns(&mut self, columns: impl IntoIterator<Item = (i32, i32)>) {
         let columns: Vec<(i32, i32)> = columns.into_iter().collect();
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        if let Some(renderer) = &mut self.legacy_live {
+            renderer.remove_columns(columns.iter().copied());
+        }
         #[cfg(feature = "legacy-scene")]
         if let Some(mirror) = &mut self.legacy_mirror {
             mirror.remove_columns(&columns);
@@ -6391,10 +6472,64 @@ impl Renderer {
             let result = self.write_capture(&request, frame);
             self.capture_result = Some(result.map_err(|e| e.to_string()));
         }
+        // This path is deliberately opt-in and still maintains wgpu's resources
+        // for fallback, captures and screenshots. All resident sections are
+        // drawn: the native backend does not yet share wgpu's visibility culler.
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        let legacy_presented = if self.screenshot.is_none() && !self.suspended {
+            if let Some(renderer) = &mut self.legacy_live {
+                let visible: Vec<_> = renderer.section_keys().collect();
+                match renderer.render(
+                    frame,
+                    &visible,
+                    self.layout.min_y(),
+                    self.gamma,
+                    self.fullbright,
+                    self.animated_textures,
+                ) {
+                    Ok(report) => {
+                        if !self.legacy_live_omissions_reported
+                            && (!report.omitted_entity_overlays.is_empty()
+                                || !report.omitted_hud_blends.is_empty())
+                        {
+                            log::warn!(
+                                "Experimental GL preview omitted entity overlays {:?} and HUD blends {:?}",
+                                report.omitted_entity_overlays,
+                                report.omitted_hud_blends
+                            );
+                            self.legacy_live_omissions_reported = true;
+                        }
+                        Some(report.presented)
+                    }
+                    Err(error) => {
+                        log::warn!("Experimental GL preview failed: {error}; wgpu resumes");
+                        self.legacy_live = None;
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        #[cfg(not(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        )))]
+        let legacy_presented: Option<bool> = None;
         let scaled = self.screenshot_size();
-        let rendered = match scaled {
-            Some(size) => self.draw_scaled_frame(frame, size),
-            None => self.draw_frame(frame, None),
+        let rendered = if legacy_presented.is_some() {
+            // Flush pending wgpu copies/patches below even though GL presented.
+            Ok(false)
+        } else {
+            match scaled {
+                Some(size) => self.draw_scaled_frame(frame, size),
+                None => self.draw_frame(frame, None),
+            }
         };
         // A frame that was not drawn still submits the section copies and
         // atlas patches (glyphs, skins, maps), which the caller already took.
@@ -6422,7 +6557,7 @@ impl Renderer {
             self.queue.submit([copies]);
         }
         // A scaled screenshot's frame never reached the window.
-        rendered.map(|drawn| drawn && scaled.is_none())
+        rendered.map(|drawn| legacy_presented.unwrap_or(drawn && scaled.is_none()))
     }
     /// Whether the device's loss callback has fired. A surface reconfigure
     /// alone cannot restore resources belonging to a lost device.
