@@ -463,6 +463,36 @@ fn main() {
             horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
         );
         assert_eq!(rgb(sample(16)), [220, 220, 0]);
+        // Advance a real adapter animation and send its dirty region to GL.
+        let animation = sprites::test_frames(
+            1,
+            vec![vec![0, 200, 0, 255], vec![200, 0, 0, 255]],
+            r#"{"frametime":2,"frames":[0,1],"interpolate":true}"#,
+        );
+        let mut animator = legacy::animation::SpriteAnimator::new(&[animation], &atlas);
+        animator.advance(&mut atlas, 1, None).unwrap();
+        let pending: Vec<_> = animator.dirty().collect();
+        for (index, rect) in pending {
+            let p = &atlas.pages()[index];
+            gpu.update_page_region(
+                index,
+                horizon_legacy_gl::Page {
+                    side: p.side,
+                    pixels: &p.pixels,
+                },
+                rect,
+            )
+            .unwrap();
+            animator.uploaded(index).unwrap();
+        }
+        assert_eq!(animator.dirty().count(), 0);
+        clear(0x4000 | 0x0100);
+        draw(
+            &mut gpu,
+            &ordered,
+            horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+        );
+        assert_eq!(rgb(sample(16)), [100, 100, 0]);
 
         // Near translucent blue blends over red; a later far solid stays hidden.
         // Exercise the same resident-section plan that accepts the game's
