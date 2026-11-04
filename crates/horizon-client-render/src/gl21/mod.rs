@@ -91,9 +91,10 @@ pub fn poorest_paths() -> bool {
     )
 }
 
-/// `poorest_paths`, from the variables' values rather than from the environment.
+/// `poorest_paths`, from the variables' values rather than from the environment. A profile name
+/// only counts when it names a profile: a typo must not quietly change which paths a run takes.
 pub fn poorest_paths_from(profile: Option<&str>, paths: Option<&str>) -> bool {
-    let named_profile = profile.is_some_and(|name| !name.trim().is_empty());
+    let named_profile = profile.is_some_and(|name| named(name).is_ok());
     named_profile || paths == Some("1")
 }
 

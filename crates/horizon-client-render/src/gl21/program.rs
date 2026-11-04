@@ -390,7 +390,10 @@ mod tests {
         let wants_pos = problems.iter().any(|p| p.contains("`a_pos`"));
         assert!(names_position, "{problems:?}");
         assert!(wants_pos, "{problems:?}");
-        assert_eq!(problems.len(), 2, "the renamed slot and the missing one");
+        // Every attribute of the layout it fails to declare is its own problem, and so is every
+        // uniform the stage no longer declares: the point is that none of them pass silently.
+        let missing_attributes = problems.iter().filter(|p| p.contains("declared by no shader"));
+        assert_eq!(missing_attributes.count(), TERRAIN.len() + TERRAIN_UNIFORMS.len());
 
         // The same slot with the wrong width: a driver would bind it and read garbage.
         let narrow = [(
