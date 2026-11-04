@@ -28,12 +28,11 @@ mod app {
     impl Drop for State {
         fn drop(&mut self) {
             unsafe {
-                if let Some(context) = &self.context {
-                    if context.make_current().is_ok() {
-                        if let Some(renderer) = self.renderer.take() {
-                            renderer.destroy();
-                        }
-                    }
+                if let Some(context) = &self.context
+                    && context.make_current().is_ok()
+                    && let Some(renderer) = self.renderer.take()
+                {
+                    renderer.destroy();
                 }
             }
             self.context.take();
@@ -82,17 +81,19 @@ mod app {
         let renderer = state.renderer.as_mut().ok_or("no renderer")?;
         unsafe {
             context.make_current().map_err(|e| format!("{e:?}"))?;
-            let viewport = std::mem::transmute::<_, unsafe extern "system" fn(i32, i32, i32, i32)>(
-                gl_proc(context, c"glViewport")?,
+            let viewport = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(i32, i32, i32, i32),
+            >(gl_proc(context, c"glViewport")?);
+            let clear_color = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(f32, f32, f32, f32),
+            >(gl_proc(context, c"glClearColor")?);
+            let clear = std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32)>(
+                gl_proc(context, c"glClear")?,
             );
-            let clear_color = std::mem::transmute::<_, unsafe extern "system" fn(f32, f32, f32, f32)>(
-                gl_proc(context, c"glClearColor")?,
-            );
-            let clear = std::mem::transmute::<_, unsafe extern "system" fn(u32)>(gl_proc(
-                context, c"glClear",
-            )?);
             let read = std::mem::transmute::<
-                _,
+                *const c_void,
                 unsafe extern "system" fn(i32, i32, i32, i32, u32, u32, *mut c_void),
             >(gl_proc(context, c"glReadPixels")?);
             let size = state.window.inner_size();
@@ -130,12 +131,13 @@ mod app {
                 .map_err(|e| format!("{e:?}"))?;
             if smoke {
                 let get_string = std::mem::transmute::<
-                    _,
+                    *const c_void,
                     unsafe extern "system" fn(u32) -> *const c_char,
                 >(gl_proc(context, c"glGetString")?);
-                let get_error = std::mem::transmute::<_, unsafe extern "system" fn() -> u32>(
-                    gl_proc(context, c"glGetError")?,
-                );
+                let get_error = std::mem::transmute::<
+                    *const c_void,
+                    unsafe extern "system" fn() -> u32,
+                >(gl_proc(context, c"glGetError")?);
                 let string = |id| {
                     let value = get_string(id);
                     if value.is_null() {
@@ -151,10 +153,10 @@ mod app {
                 {
                     return Err(format!("expected llvmpipe, got {renderer_name}"));
                 }
-                if let Ok(expected) = std::env::var("MESA_GL_VERSION_OVERRIDE") {
-                    if !version.starts_with(&format!("{expected} ")) {
-                        return Err(format!("expected GL {expected}, got {version}"));
-                    }
+                if let Ok(expected) = std::env::var("MESA_GL_VERSION_OVERRIDE")
+                    && !version.starts_with(&format!("{expected} "))
+                {
+                    return Err(format!("expected GL {expected}, got {version}"));
                 }
                 let mut pixel = [0u8; 4];
                 read(
