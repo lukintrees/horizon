@@ -18,7 +18,7 @@ void main() {
     gl_Position = view_projection * vec4(position, 1.0);
     // Keep the sky fan beyond the far plane visible, while retaining normal
     // perspective clipping against the camera and the viewport edges.
-    if (screen_uv_mode > 2.5) gl_Position.z = 0.0;
+    if (screen_uv_mode > 2.5 && screen_uv_mode < 3.5) gl_Position.z = 0.0;
     uv = sprite_uv;
     rect = entity_mode > 0.5 ? vec4(0.0, 0.0, 1.0, 1.0) : atlas_rect;
     entity_light = entity_mode > 0.5 ? atlas_rect.rgb : vec3(1.0);

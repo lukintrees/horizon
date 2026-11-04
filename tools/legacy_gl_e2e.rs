@@ -816,6 +816,22 @@ fn main() {
                 && white_pixel[2].abs_diff(96) <= 1,
             "white flash then lightmap: {white_pixel:?}"
         );
+        let mut unlit_quad = entity_quad;
+        for v in &mut unlit_quad { v.layer = 2; v.normal = [0; 4]; }
+        let unlit = legacy::entity::build(&gui_atlas, &unlit_quad, &[0; 1024], false).unwrap();
+        clear_color(0., 0., 0., 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered_with_fog(&unlit.vertices, &unlit.draws, &identity, horizon_legacy_gl::Fog {
+            color: [0.,0.,1.,1.], ranges: [-2.,-1.,-2.,-1.], section_offset: [0.;3],
+        }).unwrap();
+        assert_eq!(rgb(sample(5)), [200,0,0], "unlit overlay ignores lightmap and world fog");
+        for v in &mut unlit_quad { v.color = 0x80ff_ffff; }
+        let celestial = legacy::entity::build_celestial(&gui_atlas, &unlit_quad, false).unwrap();
+        clear_color(0.1, 0.2, 0.3, 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&celestial.mesh.vertices, &celestial.mesh.draws, &identity).unwrap();
+        let celestial_pixel = rgb(sample(5));
+        assert!(celestial_pixel[0].abs_diff(126) <= 1 && celestial_pixel[1].abs_diff(51) <= 1 && celestial_pixel[2].abs_diff(77) <= 1, "celestial additive: {celestial_pixel:?}");
         let mut gui_batch = hud::HudBatch::new([32, 32]);
         gui_batch.quad(
             [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
@@ -1043,6 +1059,16 @@ fn main() {
         }
         gui.draw(&foreground, &[sky_draw.batch], &identity, horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 }).unwrap();
         assert_eq!(rgb(sample(16)), [255, 255, 255], "world must draw over sky");
+        let mut stars = sky;
+        for vertex in &mut stars { vertex.color = [0.5; 4]; }
+        let stars_draw = horizon_legacy_gl::Draw { pass: horizon_legacy_gl::Pass::Stars, ..sky_draw };
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&stars, &[stars_draw], &identity).unwrap();
+        assert_eq!(rgb(sample(16)), [0, 0, 0], "stars respect the far clip plane");
+        for vertex in &mut stars { vertex.position[2] = 0.; }
+        gui.draw_ordered(&stars, &[stars_draw], &identity).unwrap();
+        let pixel = rgb(sample(16));
+        assert!(pixel.iter().all(|c| c.abs_diff(64) <= 1), "stars add brightness squared: {pixel:?}");
 
         // Screen overlays repeat or clamp within a sprite, not across the
         // complete atlas page. Negative coordinates must repeat as fract().

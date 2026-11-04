@@ -97,7 +97,7 @@ pub fn build(
     lightmap: &[u8; 1024],
     nether: bool,
 ) -> Result<Mesh, Error> {
-    Ok(build_inner(atlas, vertices, lightmap, nether, false)?.mesh)
+    Ok(build_inner(atlas, vertices, lightmap, nether, false, false)?.mesh)
 }
 
 /// Explicitly omit unsupported materials while reporting their codes and quad
@@ -109,7 +109,17 @@ pub fn build_supported(
     lightmap: &[u8; 1024],
     nether: bool,
 ) -> Result<BuildReport, Error> {
-    build_inner(atlas, vertices, lightmap, nether, true)
+    build_inner(atlas, vertices, lightmap, nether, true, false)
+}
+
+/// Build unlit additive sky bodies, retaining page clipping and reporting any
+/// unsupported materials. Their source geometry uses overlay 2.
+pub fn build_celestial(
+    atlas: &Atlas,
+    vertices: &[SourceVertex],
+    skip_unsupported: bool,
+) -> Result<BuildReport, Error> {
+    build_inner(atlas, vertices, &[255; 1024], false, skip_unsupported, true)
 }
 
 fn build_inner(
@@ -118,6 +128,7 @@ fn build_inner(
     lightmap: &[u8; 1024],
     nether: bool,
     skip_unsupported: bool,
+    celestial: bool,
 ) -> Result<BuildReport, Error> {
     if !vertices.len().is_multiple_of(4) {
         return Err(Error::IncompleteQuad);
@@ -140,12 +151,14 @@ fn build_inner(
         }) {
             return Err(Error::InvalidVertex);
         }
-        let overlay = match overlay {
-            0 => EntityOverlay::None,
-            1 => EntityOverlay::Hurt,
-            5 => EntityOverlay::White(crate::overlay::white_alpha(15)),
-            16..=31 => EntityOverlay::White(crate::overlay::white_alpha(overlay - 16)),
-            value if skip_unsupported => {
+        let unlit = overlay == 2;
+        let overlay = match (celestial, overlay) {
+            (_, 2) => EntityOverlay::None,
+            (false, 0) => EntityOverlay::None,
+            (false, 1) => EntityOverlay::Hurt,
+            (false, 5) => EntityOverlay::White(crate::overlay::white_alpha(15)),
+            (false, 16..=31) => EntityOverlay::White(crate::overlay::white_alpha(overlay - 16)),
+            (_, value) if skip_unsupported => {
                 if let Some((_, count)) = omitted.iter_mut().find(|(code, _)| *code == value) {
                     *count += 1;
                 } else {
@@ -156,12 +169,14 @@ fn build_inner(
                 }
                 continue;
             }
-            value => return Err(Error::UnsupportedOverlay(value)),
+            (_, value) => return Err(Error::UnsupportedOverlay(value)),
         };
         let w = quad[0].normal[3];
         let cull_back = (w > 0 && w < 64) || (w < 0 && w > -127);
         let two_sided = w == -127;
-        let faces: &[(Faces, bool)] = if two_sided {
+        let faces: &[(Faces, bool)] = if celestial {
+            &[(Faces::Both, false)]
+        } else if two_sided {
             &[(Faces::Front, false), (Faces::Back, true)]
         } else if cull_back {
             &[(Faces::Front, false)]
@@ -171,7 +186,11 @@ fn build_inner(
         for &(faces, back) in faces {
             let points = quad.map(|v| {
                 let rgba = v.color.to_le_bytes().map(|c| f32::from(c) / 255.0);
-                let light = lightmap_rgb(v.light as u16, lightmap);
+                let light = if unlit {
+                    [1.; 3]
+                } else {
+                    lightmap_rgb(v.light as u16, lightmap)
+                };
                 let shade = directional(v.normal, nether, back);
                 Point {
                     pos: v.pos,
@@ -182,7 +201,14 @@ fn build_inner(
             });
             for indices in [[0, 1, 2], [0, 2, 3]] {
                 let triangle = indices.map(|i| points[i]);
-                emit_triangle(atlas, &mut mesh, &triangle, Pass::Entity { faces, overlay })?;
+                let pass = if celestial {
+                    Pass::Celestial
+                } else if unlit {
+                    Pass::EntityUnlit { faces }
+                } else {
+                    Pass::Entity { faces, overlay }
+                };
+                emit_triangle(atlas, &mut mesh, &triangle, pass)?;
             }
         }
     }
@@ -364,7 +390,7 @@ mod tests {
             v.layer = 7;
         }
         for v in &mut text {
-            v.layer = 2;
+            v.layer = 4;
         }
         let vertices = [normal, glint, text, glint, normal].concat();
         assert_eq!(
@@ -372,7 +398,7 @@ mod tests {
             Error::UnsupportedOverlay(7)
         );
         let partial = build_supported(&atlas, &vertices, &[255; 1024], false).unwrap();
-        assert_eq!(partial.omitted, [(7, 2), (2, 1)]);
+        assert_eq!(partial.omitted, [(7, 2), (4, 1)]);
         let expected = build(&atlas, &[normal, normal].concat(), &[255; 1024], false).unwrap();
         assert_eq!(partial.mesh.vertices, expected.vertices);
         assert_eq!(partial.mesh.draws, expected.draws);
@@ -382,6 +408,41 @@ mod tests {
             build_supported(&atlas, &bad, &[255; 1024], false),
             Err(Error::MixedMaterial)
         ));
+    }
+
+    #[test]
+    fn unlit_and_celestial_use_white_light_and_page_clipping() {
+        let atlas = Atlas::new(8, 4, &[255; 128], 4).unwrap();
+        let mut q = quad();
+        for v in &mut q {
+            v.layer = 2;
+            v.normal = [0; 4];
+        }
+        let mesh = build(&atlas, &q, &[0; 1024], false).unwrap();
+        assert!(mesh.vertices.iter().all(|v| v.atlas_rect[..3] == [1.; 3]));
+        assert!(
+            mesh.draws
+                .iter()
+                .all(|d| d.pass == Pass::EntityUnlit { faces: Faces::Both })
+        );
+        let celestial = build_celestial(&atlas, &q, false).unwrap();
+        assert!(
+            celestial
+                .mesh
+                .draws
+                .iter()
+                .all(|d| d.pass == Pass::Celestial)
+        );
+        assert!(celestial.mesh.draws.iter().any(|d| d.batch.page == 0));
+        assert!(celestial.mesh.draws.iter().any(|d| d.batch.page == 1));
+        assert_eq!(
+            build_celestial(&atlas, &quad(), true).unwrap().omitted,
+            [(0, 1)]
+        );
+        assert_eq!(
+            build_celestial(&atlas, &quad(), false).unwrap_err(),
+            Error::UnsupportedOverlay(0)
+        );
     }
 
     #[test]

@@ -195,6 +195,9 @@ pub struct StaticEntityDraw {
 /// translucent terrain, hand, then HUD. Many other game passes are missing.
 pub struct FramePlan<'a> {
     pub sky: Option<sky::Sky>,
+    pub stars: Option<([f32; 16], f32)>,
+    pub celestial: entity::Mesh,
+    pub omitted_celestial_overlays: Vec<(u32, usize)>,
     pub terrain: Vec<SectionDraw<'a>>,
     pub solid_count: usize,
     pub entities: entity::Mesh,
@@ -267,6 +270,15 @@ fn prepare_frame_inner<'a>(
     let view_projection = frame_view_projection(frame, viewport).map_err(FrameError::World)?;
     let lights = lightmap(frame, gamma, fullbright);
     let sky = sky::build(frame, frame_fog(frame).color).map_err(FrameError::Sky)?;
+    let stars = sky::stars(frame, view_projection).map_err(FrameError::Sky)?;
+    let celestial = if frame.title || frame.sky_blocked || !(frame.skybox || frame.end_sky) {
+        entity::BuildReport::default()
+    } else {
+        // Match wgpu's bounded celestial vertex buffer.
+        let count = frame.celestial.len().min(2048 * 4) / 4 * 4;
+        entity::build_celestial(gui.atlas(), &frame.celestial[..count], skip_unsupported)
+            .map_err(FrameError::Entity)?
+    };
     let entities = if frame.title {
         entity::BuildReport::default()
     } else if skip_unsupported {
@@ -393,6 +405,9 @@ fn prepare_frame_inner<'a>(
         .unwrap_or(terrain.len());
     Ok(FramePlan {
         sky,
+        stars,
+        celestial: celestial.mesh,
+        omitted_celestial_overlays: celestial.omitted,
         terrain,
         solid_count,
         entities: entities.mesh,

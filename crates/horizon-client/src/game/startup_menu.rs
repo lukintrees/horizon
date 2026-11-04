@@ -465,9 +465,7 @@ impl Loading {
     }
 
     fn menu_size(&self) -> [u32; 2] {
-        self.renderer
-            .as_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height])
+        self.renderer.as_ref().map_or([1280, 720], |r| r.viewport())
     }
 
     fn save_menu_address(&mut self) {
@@ -1017,10 +1015,7 @@ impl Loading {
                 if self.menu.options_open && self.menu.dragging {
                     self.menu_options_click(true, false);
                 } else if let Some(title) = &mut self.menu.title {
-                    let size = self
-                        .renderer
-                        .as_ref()
-                        .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+                    let size = self.renderer.as_ref().map_or([1280, 720], |r| r.viewport());
                     let b = HudBatch::new(size);
                     title.drag(self.menu.cursor, (b.width, b.height));
                     title.drag_field(&self.gui.as_ref().unwrap().atlas, self.menu.cursor.0);

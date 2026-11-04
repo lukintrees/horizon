@@ -105,6 +105,14 @@ pub enum Pass {
     HudVignette,
     /// Opaque untextured sky fan drawn behind the world, without depth writes.
     Sky,
+    /// Unlit entity geometry with normal entity depth and alpha blending.
+    EntityUnlit {
+        faces: Faces,
+    },
+    /// Unlit, additive celestial quads behind the world, without depth writes.
+    Celestial,
+    /// Untextured additive stars, clipped by the normal camera projection.
+    Stars,
     /// A camera overlay sampled as an independent atlas sprite.
     Screen {
         blur: bool,
@@ -789,7 +797,10 @@ impl Renderer {
                     };
                     (gl.uniform_1f)(
                         self.entity_mode,
-                        if matches!(draw.pass, Pass::Entity { .. }) {
+                        if matches!(
+                            draw.pass,
+                            Pass::Entity { .. } | Pass::EntityUnlit { .. } | Pass::Celestial
+                        ) {
                             1.0
                         } else {
                             0.0
@@ -799,6 +810,7 @@ impl Renderer {
                         self.screen_uv_mode,
                         match draw.pass {
                             Pass::Sky => 3.0,
+                            Pass::Stars => 4.0,
                             Pass::Screen { clamp: true, .. } => 2.0,
                             Pass::Screen { clamp: false, .. } => 1.0,
                             _ => 0.0,
@@ -886,8 +898,12 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
         let cutoff = match pass {
             Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
             Pass::HudInvert => 0.0001,
-            Pass::Entity { .. } => 0.1,
-            Pass::Sky | Pass::HudVignette | Pass::Screen { vignette: true, .. } => 0.0,
+            Pass::Entity { .. } | Pass::EntityUnlit { .. } => 0.1,
+            Pass::Celestial
+            | Pass::Stars
+            | Pass::Sky
+            | Pass::HudVignette
+            | Pass::Screen { vignette: true, .. } => 0.0,
             Pass::HudAlpha | Pass::HudAdditive | Pass::HudDepth { .. } => 0.004,
             Pass::Screen {
                 vignette: false, ..
@@ -904,7 +920,14 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
                 (gl.disable)(0x0be2);
                 (gl.depth_mask)(0);
             }
-            Pass::Entity { faces, .. } => {
+            Pass::Celestial | Pass::Stars => {
+                (gl.disable)(0x0b71);
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(0x0302, 1, 0, 1);
+                (gl.depth_mask)(0);
+            }
+            Pass::Entity { faces, .. } | Pass::EntityUnlit { faces } => {
                 (gl.depth_func)(0x0203); // LEQUAL in the conventional GL depth range
                 (gl.enable)(0x0b71);
                 (gl.enable)(0x0be2);

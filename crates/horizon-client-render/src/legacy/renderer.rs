@@ -27,6 +27,9 @@ pub struct FrameReport {
     pub presented: bool,
     pub terrain_draws: usize,
     pub sky_vertices: usize,
+    pub celestial_vertices: usize,
+    pub star_vertices: usize,
+    pub omitted_celestial_overlays: Vec<(u32, usize)>,
     pub entity_vertices: usize,
     pub static_entity_draws: usize,
     pub hand_vertices: usize,
@@ -46,6 +49,7 @@ pub struct Renderer {
     world: World,
     gui: hud::PatchAtlas,
     animator: SpriteAnimator,
+    stars: Option<Vec<horizon_legacy_gl::Vertex>>,
 }
 
 impl Renderer {
@@ -105,6 +109,7 @@ impl Renderer {
             world: World::new(terrain, [255; 1024]),
             gui: hud::PatchAtlas::new(gui),
             animator,
+            stars: None,
         })
     }
     pub fn upload(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
@@ -219,11 +224,72 @@ impl Renderer {
             self.surface
                 .draw_ordered(
                     &sky.vertices,
-                    &sky.draws,
+                    &sky.draws[..1],
                     &plan.view_projection,
                     Some(sky.fog),
                 )
                 .map_err(|e| format!("sky: {e}"))?;
+        }
+        self.surface
+            .select_atlas(self.gui_atlas)
+            .map_err(|e| e.to_string())?;
+        self.surface
+            .draw_ordered(
+                &plan.celestial.vertices,
+                &plan.celestial.draws,
+                &plan.view_projection,
+                None,
+            )
+            .map_err(|e| format!("celestial: {e}"))?;
+        self.surface
+            .select_atlas(self.terrain_atlas)
+            .map_err(|e| e.to_string())?;
+        let mut star_vertices = 0;
+        if let Some((transform, brightness)) = plan.stars {
+            if brightness > 0.0 {
+                if self.stars.is_none() {
+                    let triangles = crate::gfx::stars::star_triangles();
+                    let mut vertices = Vec::new();
+                    vertices
+                        .try_reserve_exact(triangles.len())
+                        .map_err(|_| "star allocation failed")?;
+                    vertices.extend(triangles.into_iter().map(|position| {
+                        horizon_legacy_gl::Vertex {
+                            position,
+                            sprite_uv: [0.; 2],
+                            atlas_rect: [0.; 4],
+                            color: [1.; 4],
+                        }
+                    }));
+                    self.stars = Some(vertices);
+                }
+                let vertices = self.stars.as_mut().expect("star geometry was just created");
+                for vertex in vertices.iter_mut() {
+                    vertex.color = [brightness; 4];
+                }
+                star_vertices = vertices.len();
+                let draw = horizon_legacy_gl::Draw {
+                    batch: horizon_legacy_gl::Batch {
+                        page: 0,
+                        first: 0,
+                        count: vertices.len(),
+                    },
+                    pass: horizon_legacy_gl::Pass::Stars,
+                };
+                self.surface
+                    .draw_ordered(vertices, &[draw], &transform, None)
+                    .map_err(|e| format!("stars: {e}"))?;
+            }
+        }
+        if let Some(sky) = &plan.sky {
+            self.surface
+                .draw_ordered(
+                    &sky.vertices,
+                    &sky.draws[1..],
+                    &plan.view_projection,
+                    Some(sky.fog),
+                )
+                .map_err(|e| format!("void disc: {e}"))?;
         }
         for draw in solid {
             self.surface
@@ -298,6 +364,9 @@ impl Renderer {
             presented: true,
             terrain_draws: plan.terrain.len(),
             sky_vertices: plan.sky.as_ref().map_or(0, |sky| sky.vertices.len()),
+            celestial_vertices: plan.celestial.vertices.len(),
+            star_vertices,
+            omitted_celestial_overlays: plan.omitted_celestial_overlays,
             entity_vertices: plan.entities.vertices.len(),
             static_entity_draws: plan.static_entities.len(),
             hand_vertices: plan.hand.vertices.len(),
@@ -384,7 +453,13 @@ mod tests {
             let mut frame = test_frame(&hud);
             frame.skybox = true;
             frame.dark_disc = true;
+            frame.stars = Some((glam::Mat4::IDENTITY, 0.5));
             frame.hand = &hand;
+            let celestial = hand.map(|mut v| {
+                v.layer = 2;
+                v
+            });
+            frame.celestial = &celestial;
             let snapshots = [crate::block_entity_render::StaticSectionSnapshot {
                 section: [0, 0, 0],
                 origin: [0, 0, 0],
@@ -415,6 +490,9 @@ mod tests {
             assert!(report.presented);
             assert_eq!(report.terrain_draws, 2);
             assert_eq!(report.sky_vertices, 48);
+            assert_eq!(report.celestial_vertices, 6);
+            assert_ne!(report.star_vertices, 0);
+            assert!(report.omitted_celestial_overlays.is_empty());
             assert_ne!(report.hand_vertices, 0);
             assert_eq!(report.static_entity_draws, 1);
             assert_eq!(report.screen_vertices, 6);

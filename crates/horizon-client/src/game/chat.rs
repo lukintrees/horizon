@@ -685,10 +685,7 @@ impl Game<'_> {
         }
         self.ui.chat_draft_shown = false;
         self.refresh_dynamic_registries();
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+        let size = self.renderer.as_ref().map_or([1280, 720], |r| r.viewport());
         let b = HudBatch::new(size);
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
@@ -1001,9 +998,10 @@ impl Game<'_> {
     }
     pub(super) fn chat_scroll(&mut self, amount: f32) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
-            HudBatch::new([r.config.width, r.config.height]).height
-        });
+        let height = self
+            .renderer
+            .as_ref()
+            .map_or(720.0, |r| HudBatch::new(r.viewport()).height);
         let _ = height;
         let mouse = (cursor.0.floor() as i32, cursor.1.floor() as i32);
         if let Some(screen) = self.ui.chat_screen.as_mut()
@@ -1018,18 +1016,20 @@ impl Game<'_> {
     }
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
-            HudBatch::new([r.config.width, r.config.height]).height
-        });
+        let height = self
+            .renderer
+            .as_ref()
+            .map_or(720.0, |r| HudBatch::new(r.viewport()).height);
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
             dispatcher: chat_tree(&self.remote),
             registries: &self.ui.registries,
         };
         if self.ui.in_bed_chat && self.sleeping.is_some() {
-            let width = self.renderer.as_ref().map_or(1280.0, |r| {
-                HudBatch::new([r.config.width, r.config.height]).width
-            });
+            let width = self
+                .renderer
+                .as_ref()
+                .map_or(1280.0, |r| HudBatch::new(r.viewport()).width);
             let (x, y, w, h) = Self::leave_bed_button(width, height);
             if horizon_client::screen_draw::inside((cursor.0 as i32, cursor.1 as i32), x, y, w, h) {
                 self.wake_up();

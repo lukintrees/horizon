@@ -134,9 +134,7 @@ impl Game<'_> {
     }
 
     pub(super) fn gui_scale(&self) -> Option<HudBatch> {
-        self.renderer
-            .as_ref()
-            .map(|r| HudBatch::new([r.config.width, r.config.height]))
+        self.renderer.as_ref().map(|r| HudBatch::new(r.viewport()))
     }
 
     /// Focus mode is on for the open screen (the keyboard always focuses).

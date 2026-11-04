@@ -8053,10 +8053,10 @@ impl Game<'_> {
             self.restore_held_keys();
         }
         let Some(window) = &self.window else { return };
-        let size = self.renderer.as_ref().map_or_else(
-            || window.inner_size().into(),
-            |r| [r.config.width, r.config.height],
-        );
+        let size = self
+            .renderer
+            .as_ref()
+            .map_or_else(|| window.inner_size().into(), |r| r.viewport());
         let [vx, vy] = self.view_at.map(f64::from);
         let centre = winit::dpi::PhysicalPosition::new(
             vx + f64::from(size[0]) / 2.0,
@@ -10083,11 +10083,7 @@ impl Game<'_> {
         let Some(key) = self.settings.keys.container_hotbar_key(code) else {
             return false;
         };
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return false;
         };
         let batch = HudBatch::new(size);
@@ -10110,11 +10106,7 @@ impl Game<'_> {
     /// slot or the off hand, THROW one or the whole stack.
     fn inventory_hotkey(&mut self, key: KeyCode) -> bool {
         use horizon_client::menu::Input;
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return false;
         };
         let batch = HudBatch::new(size);
@@ -10143,11 +10135,7 @@ impl Game<'_> {
         let menu = (self.screen == Screen::Inventory
             || (self.screen == Screen::Creative && !self.creative_screen.tab().search))
             && !self.dialog_open();
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return;
         };
         let batch = HudBatch::new(size);
@@ -10326,7 +10314,7 @@ impl Game<'_> {
         let Some(r) = self.renderer.as_ref() else {
             return;
         };
-        let batch = HudBatch::new([r.config.width, r.config.height]);
+        let batch = HudBatch::new(r.viewport());
         if let Some(slot) = self.slot_at(&batch, self.cursor.0, self.cursor.1)
             && slot != 200
             && slot < Creative::DISPLAY
@@ -10342,7 +10330,7 @@ impl Game<'_> {
         let Some(r) = self.renderer.as_ref() else {
             return (None, false);
         };
-        let batch = HudBatch::new([r.config.width, r.config.height]);
+        let batch = HudBatch::new(r.viewport());
         (
             self.slot_at(&batch, self.cursor.0, self.cursor.1),
             self.clicked_outside(&batch),
@@ -10587,11 +10575,7 @@ impl Game<'_> {
         if self.remote.is_some() {
             return self.remote_click(right);
         }
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return;
         };
         let batch = HudBatch::new(size);
@@ -15020,11 +15004,7 @@ impl Game<'_> {
         );
     }
     fn click_creative(&mut self, right: bool) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return;
         };
         let batch = HudBatch::new(size);
@@ -15430,7 +15410,7 @@ impl Game<'_> {
                     )
                 });
                 if let Some(renderer) = &mut self.renderer {
-                    let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                    let mut hud = HudBatch::new(renderer.viewport());
                     horizon_client::level_loading::draw_file_fixer(
                         &mut hud,
                         &self.gui.atlas,
@@ -15449,7 +15429,7 @@ impl Game<'_> {
                 screen_info::level_loading(progress, &screen_info::tr)
             });
             if let Some(renderer) = &mut self.renderer {
-                let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                let mut hud = HudBatch::new(renderer.viewport());
                 let (w, h) = (hud.width, hud.height);
                 horizon_client::ui::menu_background(
                     &mut hud,
@@ -15485,7 +15465,7 @@ impl Game<'_> {
                 horizon_client::widgets::begin_screen(|| {
                     screen_info::level_loading(Some(loader.progress.fraction()), &screen_info::tr)
                 });
-                let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                let mut hud = HudBatch::new(renderer.viewport());
                 horizon_client::level_loading::draw_progress(
                     &mut hud,
                     &self.gui.atlas,
@@ -15500,7 +15480,7 @@ impl Game<'_> {
         // (`LoadingOverlay`) until `drive_pack_reload` applies it.
         if let Some(reload) = &self.pack_reload {
             if let Some(renderer) = &mut self.renderer {
-                let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+                let mut hud = HudBatch::new(renderer.viewport());
                 horizon_client::level_loading::draw_loading_overlay(
                     &mut hud,
                     &self.gui.atlas,
@@ -15512,11 +15492,7 @@ impl Game<'_> {
             }
             return Ok(false);
         }
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return Ok(false);
         };
         let alpha = self.clock.fraction();
@@ -17224,7 +17200,7 @@ impl Game<'_> {
             match &event {
                 WindowEvent::CursorMoved { position, .. } => {
                     if let Some(r) = &self.renderer {
-                        let b = HudBatch::new([r.config.width, r.config.height]);
+                        let b = HudBatch::new(r.viewport());
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                     }
                 }
@@ -17504,7 +17480,7 @@ impl Game<'_> {
                 }
                 WindowEvent::CursorMoved { position, .. } => {
                     if let Some(r) = &self.renderer {
-                        let b = HudBatch::new([r.config.width, r.config.height]);
+                        let b = HudBatch::new(r.viewport());
                         let previous = self.cursor;
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                         if self.screen_mouse_dragged(previous) {
@@ -17758,7 +17734,7 @@ impl Game<'_> {
                     let size = self
                         .renderer
                         .as_ref()
-                        .map(|r| [r.config.width, r.config.height])
+                        .map(|r| r.viewport())
                         .unwrap_or([1, 1]);
                     let b = HudBatch::new(size);
                     let atlas = &self.gui.atlas;
@@ -17788,7 +17764,7 @@ impl Game<'_> {
                     let size = self
                         .renderer
                         .as_ref()
-                        .map(|r| [r.config.width, r.config.height])
+                        .map(|r| r.viewport())
                         .unwrap_or([1, 1]);
                     let b = HudBatch::new(size);
                     if let Some(title) = self.title.as_mut() {
@@ -17801,7 +17777,7 @@ impl Game<'_> {
                         let size = self
                             .renderer
                             .as_ref()
-                            .map(|r| [r.config.width, r.config.height])
+                            .map(|r| r.viewport())
                             .unwrap_or([1, 1]);
                         self.book_click(size);
                     }
@@ -17811,7 +17787,7 @@ impl Game<'_> {
                         let size = self
                             .renderer
                             .as_ref()
-                            .map(|r| [r.config.width, r.config.height])
+                            .map(|r| r.viewport())
                             .unwrap_or([1, 1]);
                         self.sign_edit_click(size);
                     }
@@ -17944,17 +17920,11 @@ impl Game<'_> {
                             self.death_click()?
                         }
                         Screen::Advancements if button == MouseButton::Left => {
-                            let size = self
-                                .renderer
-                                .as_ref()
-                                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+                            let size = self.renderer.as_ref().map_or([1, 1], |r| r.viewport());
                             self.advancements_mouse(pressed, size);
                         }
                         Screen::Stats if pressed && button == MouseButton::Left => {
-                            let size = self
-                                .renderer
-                                .as_ref()
-                                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+                            let size = self.renderer.as_ref().map_or([1, 1], |r| r.viewport());
                             self.stats_click(size);
                         }
                         Screen::Stats if button == MouseButton::Left => self.stats_release(),
@@ -20424,19 +20394,8 @@ fn build_renderer(
         translucent_batching,
         shader_pack,
     ))?;
-    renderer.hud.sprite_animations = atlas
-        .sprite_animations
-        .iter()
-        .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
-        .collect();
-    renderer
-        .hud
-        .set_text_shader(&renderer.device, atlas.text_shader.as_deref());
-    renderer.set_lines_shader(atlas.lines_shader.as_deref());
     let cit_glints = pack.item_renderer.cit.as_ref().map(|c| &c.glint_textures);
-    renderer
-        .hud
-        .set_cit_glints(&renderer.device, &renderer.queue, cit_glints);
+    renderer.configure_hud(atlas, cit_glints);
     Ok(renderer)
 }
 
@@ -20492,11 +20451,7 @@ fn loading_renderer(
         false,
     ))?;
     if let Some(atlas) = atlas {
-        renderer.hud.sprite_animations = atlas
-            .sprite_animations
-            .iter()
-            .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
-            .collect();
+        renderer.set_hud_animations(atlas);
     }
     Ok(renderer)
 }
@@ -21012,11 +20967,7 @@ impl Loading {
         event_loop.set_control_flow(ControlFlow::Poll);
     }
     fn draw(&mut self) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.viewport()) else {
             return;
         };
         let mut batch = HudBatch::new(size);

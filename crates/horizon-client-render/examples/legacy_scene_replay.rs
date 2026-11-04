@@ -54,6 +54,9 @@ mod app {
             || report.hand_vertices != 0
             || report.static_entity_draws != 0
             || report.screen_vertices != 0
+            || report.celestial_vertices != 0
+            || report.star_vertices != 0
+            || !report.omitted_celestial_overlays.is_empty()
             || report.omitted_screen_quads != 0
             || report.hud_vertices != 0
             || !report.omitted_entity_overlays.is_empty()

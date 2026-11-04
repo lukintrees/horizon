@@ -186,7 +186,7 @@ pub mod panorama;
 mod readback;
 mod resident;
 mod reuse;
-mod stars;
+pub(crate) mod stars;
 pub mod submit;
 mod sunrise_fan;
 mod timing;
@@ -4557,6 +4557,33 @@ impl Renderer {
         }
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
     }
+    /// Current framebuffer dimensions in pixels, independent of backend configuration.
+    pub fn viewport(&self) -> [u32; 2] {
+        [self.config.width, self.config.height]
+    }
+
+    /// Initialize CPU animation metadata when a GUI atlas is installed.
+    pub fn set_hud_animations(&mut self, atlas: &crate::hud::HudAtlas) {
+        self.hud.sprite_animations = atlas
+            .sprite_animations
+            .iter()
+            .map(|(rect, animation)| (*rect, animation.clone(), (usize::MAX, 0, 0)))
+            .collect();
+    }
+
+    /// Install GUI pack programs and textures without exposing GPU objects to gameplay.
+    pub fn configure_hud(
+        &mut self,
+        atlas: &crate::hud::HudAtlas,
+        glints: Option<&crate::hud::cit_glint::GlintTextures>,
+    ) {
+        self.set_hud_animations(atlas);
+        self.hud
+            .set_text_shader(&self.device, atlas.text_shader.as_deref());
+        self.set_lines_shader(atlas.lines_shader.as_deref());
+        self.hud.set_cit_glints(&self.device, &self.queue, glints);
+    }
+
     /// The resource packs' `core/rendertype_lines` (`HudAtlas::lines_shader`) for the block
     /// outline, or the built-in one.
     pub fn set_lines_shader(&mut self, program: Option<&horizon_shaders::CoreProgram>) {
@@ -6507,14 +6534,16 @@ impl Renderer {
                     Ok(report) => {
                         if !self.legacy_live_omissions_reported
                             && (!report.omitted_entity_overlays.is_empty()
+                                || !report.omitted_celestial_overlays.is_empty()
                                 || !report.omitted_static_overlays.is_empty()
                                 || !report.omitted_hand_overlays.is_empty()
                                 || report.omitted_screen_quads != 0
                                 || !report.omitted_hud_blends.is_empty())
                         {
                             log::warn!(
-                                "Experimental GL preview omitted entity overlays {:?}, static overlays {:?}, hand overlays {:?}, {} screen quads, and HUD blends {:?}",
+                                "Experimental GL preview omitted entity overlays {:?}, celestial overlays {:?}, static overlays {:?}, hand overlays {:?}, {} screen quads, and HUD blends {:?}",
                                 report.omitted_entity_overlays,
+                                report.omitted_celestial_overlays,
                                 report.omitted_static_overlays,
                                 report.omitted_hand_overlays,
                                 report.omitted_screen_quads,

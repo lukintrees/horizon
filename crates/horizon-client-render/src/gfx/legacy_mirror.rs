@@ -14,6 +14,7 @@ pub(super) struct Mirror {
     reported_frame: bool,
     reported_error: bool,
     reported_omissions: bool,
+    reported_celestial_omissions: bool,
     reported_hand_omissions: bool,
     reported_static_omissions: bool,
     reported_screen_omissions: bool,
@@ -40,6 +41,7 @@ impl Mirror {
             reported_frame: false,
             reported_error: false,
             reported_omissions: false,
+            reported_celestial_omissions: false,
             reported_hand_omissions: false,
             reported_static_omissions: false,
             reported_screen_omissions: false,
@@ -94,6 +96,7 @@ impl Mirror {
                 plan.entities.vertices.len(),
                 plan.hud.vertices.len(),
                 plan.omitted_entity_overlays,
+                plan.omitted_celestial_overlays,
                 plan.omitted_static_overlays,
                 plan.omitted_hand_overlays,
                 plan.screen.omitted,
@@ -106,6 +109,7 @@ impl Mirror {
                 entities,
                 hud,
                 omitted,
+                celestial_omitted,
                 static_omitted,
                 hand_omitted,
                 screen_omitted,
@@ -116,6 +120,12 @@ impl Mirror {
                         "Legacy CPU mirror skipped unsupported entity overlay quads: {omitted:?}"
                     );
                     self.reported_omissions = true;
+                }
+                if !celestial_omitted.is_empty() && !self.reported_celestial_omissions {
+                    log::warn!(
+                        "Legacy CPU mirror skipped celestial material quads: {celestial_omitted:?}"
+                    );
+                    self.reported_celestial_omissions = true;
                 }
                 if !static_omitted.is_empty() && !self.reported_static_omissions {
                     log::warn!(

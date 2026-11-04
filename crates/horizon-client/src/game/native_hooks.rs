@@ -990,7 +990,7 @@ impl Game<'_> {
             return self.screen_view_now();
         };
         let renderer = self.renderer.as_ref()?;
-        let batch = HudBatch::new([renderer.config.width, renderer.config.height]);
+        let batch = HudBatch::new(renderer.viewport());
         Some(NativeScreenView {
             id,
             menu: None,
@@ -3492,7 +3492,7 @@ impl Game<'_> {
             return None;
         }
         let renderer = self.renderer.as_ref()?;
-        let batch = HudBatch::new([renderer.config.width, renderer.config.height]);
+        let batch = HudBatch::new(renderer.viewport());
         if self.screen != Screen::Playing {
             return Some(self.screen_view(&batch, self.screen));
         }
@@ -9679,7 +9679,7 @@ impl Game<'_> {
     fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
         let s = self.shown_native_screen()?;
         let r = self.renderer.as_ref()?;
-        let batch = HudBatch::new([r.config.width, r.config.height]);
+        let batch = HudBatch::new(r.viewport());
         let (ox, oy) = self.inventory_origin(&batch);
         let at = [self.cursor.0 - ox, self.cursor.1 - oy];
         Some((s.block.clone(), s.data.clone(), at))

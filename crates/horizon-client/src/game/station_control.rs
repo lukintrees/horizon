@@ -68,7 +68,7 @@ impl Game<'_> {
         let size = self
             .renderer
             .as_ref()
-            .map(|r| [r.config.width, r.config.height])
+            .map(|r| r.viewport())
             .ok_or("no renderer yet")?;
         Ok(self.inventory_origin(&horizon_client::hud::HudBatch::new(size)))
     }
