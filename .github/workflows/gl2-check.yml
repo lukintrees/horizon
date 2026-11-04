@@ -57,7 +57,7 @@ jobs:
           if [ "$fmt_code" != "0" ]; then
             cargo +stable fmt --all
             git diff --stat | tail -1
-            git diff | gzip -9 | base64 -w0 | fold -w 3800 > fmt.b64
+            git diff | gzip -9 | base64 -w0 | fold -w 3800 | sed -e '$a\' > fmt.b64
             n=$(wc -l < fmt.b64)
             echo "::error title=fmt-chunks::chunks=${n}"
             i=0
