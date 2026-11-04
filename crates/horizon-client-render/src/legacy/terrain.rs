@@ -151,19 +151,11 @@ fn build_inner(
         }
         for index in [0, 1, 2, 0, 2, 3] {
             let vertex = quad[index];
-            // The terrain alpha contains HDR metadata, not opacity.
-            let [r, g, b, _metadata] = vertex.color.to_le_bytes();
-            let light = lightmap.map_or([1.0; 3], |pixels| lightmap_rgb(vertex.light, pixels));
             mesh.vertices.push(Vertex {
                 position: vertex.pos,
                 sprite_uv: vertex.uv().map(|uv| uv * uv_scale),
                 atlas_rect: location.rect,
-                color: [
-                    f32::from(r) / 255.0 * light[0],
-                    f32::from(g) / 255.0 * light[1],
-                    f32::from(b) / 255.0 * light[2],
-                    1.0,
-                ],
+                color: baked_color(vertex, lightmap),
             });
         }
         mesh.batches
@@ -172,6 +164,39 @@ fn build_inner(
             .count += 6;
     }
     Ok(mesh)
+}
+
+/// In-place lighting update for meshes made by this module. The optional order
+/// maps each output quad to its original source quad after translucency sorting.
+pub(super) fn rebake(
+    mesh: &mut Mesh,
+    source: &[TerrainVertex],
+    lightmap: &[u8; 1024],
+    order: Option<&[usize]>,
+) {
+    debug_assert_eq!(mesh.vertices.len() / 6, source.len() / 4);
+    if let Some(order) = order {
+        debug_assert_eq!(order.len(), source.len() / 4);
+    }
+    for (index, quad) in mesh.vertices.chunks_exact_mut(6).enumerate() {
+        let source_index = order.map_or(index, |ids| ids[index]);
+        let input = &source[source_index * 4..source_index * 4 + 4];
+        for (vertex, i) in quad.iter_mut().zip([0, 1, 2, 0, 2, 3]) {
+            vertex.color = baked_color(input[i], Some(lightmap));
+        }
+    }
+}
+
+fn baked_color(vertex: TerrainVertex, lightmap: Option<&[u8; 1024]>) -> [f32; 4] {
+    // The terrain alpha contains HDR metadata, not opacity.
+    let [r, g, b, _metadata] = vertex.color.to_le_bytes();
+    let light = lightmap.map_or([1.0; 3], |pixels| lightmap_rgb(vertex.light, pixels));
+    [
+        f32::from(r) / 255.0 * light[0],
+        f32::from(g) / 255.0 * light[1],
+        f32::from(b) / 255.0 * light[2],
+        1.0,
+    ]
 }
 
 #[cfg(test)]

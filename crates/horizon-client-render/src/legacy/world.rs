@@ -16,6 +16,9 @@ struct Section {
     translucent_source: Vec<TerrainVertex>,
     solid: terrain::Mesh,
     translucent: terrain::Mesh,
+    /// Original input quad indices, in the current mesh order, for stable ties.
+    translucent_ids: Vec<usize>,
+    sorted_camera: Option<([i64; 3], i32)>,
 }
 
 /// Converted sections and their sprite atlas. Each upload replaces one section;
@@ -75,52 +78,42 @@ impl World {
                 solid_source: mesh.solid.clone(),
                 translucent_source: mesh.translucent.clone(),
                 solid,
+                translucent_ids: (0..translucent.vertices.len() / 6).collect(),
                 translucent,
+                sorted_camera: None,
             },
         );
         Ok(())
     }
 
-    /// Rebake when the game's lightmap changes. Do not install a partial update
-    /// if allocation or conversion fails. This costs CPU and memory and will
-    /// eventually need a more incremental path for large worlds on 32-bit PCs.
-    pub fn set_lightmap(
-        &mut self,
-        lightmap: [u8; 16 * 16 * 4],
-    ) -> Result<bool, terrain::MeshError> {
+    /// Rebake vertex colors in place when the game's lightmap changes. This
+    /// keeps sorted order and avoids allocating a second full copy of every
+    /// section at once, though it still touches all resident vertices.
+    pub fn set_lightmap(&mut self, lightmap: [u8; 16 * 16 * 4]) -> bool {
         if self.lightmap == lightmap {
-            return Ok(false);
+            return false;
         }
-        let mut replacement = Vec::new();
-        replacement
-            .try_reserve_exact(self.sections.len())
-            .map_err(|_| terrain::MeshError::AllocationFailed)?;
-        for (&key, section) in &self.sections {
-            replacement.push((
-                key,
-                terrain::build_with_lightmap(&self.atlas, &section.solid_source, &lightmap)?,
-                terrain::build_with_lightmap(&self.atlas, &section.translucent_source, &lightmap)?,
-            ));
-        }
-        for (key, solid, translucent) in replacement {
-            let section = self
-                .sections
-                .get_mut(&key)
-                .expect("keys came from this map");
-            section.solid = solid;
-            section.translucent = translucent;
+        for section in self.sections.values_mut() {
+            terrain::rebake(&mut section.solid, &section.solid_source, &lightmap, None);
+            terrain::rebake(
+                &mut section.translucent,
+                &section.translucent_source,
+                &lightmap,
+                Some(&section.translucent_ids),
+            );
         }
         self.lightmap = lightmap;
-        Ok(true)
+        true
     }
 
     /// Prepare a depth-correct pass list for already-visible sections. `view_projection`
     /// is column-major OpenGL clip space for camera-relative world positions. A
-    /// section is sorted as a unit; individual translucent quads are not yet
-    /// sorted within it. Visibility, sky, entities, distant tiles and the HUD
+    /// section is sorted as a unit; translucent quads within each section are
+    /// sorted back-to-front, using the same opposite-corner centres as the game.
+    /// Visibility, sky, entities, distant tiles and the HUD
     /// are deliberately outside this partial bridge.
     pub fn plan<'a>(
-        &'a self,
+        &'a mut self,
         visible: &[SectionKey],
         camera: [f64; 3],
         min_y: i32,
@@ -133,6 +126,11 @@ impl World {
         let mut keys = visible.to_vec();
         keys.sort_unstable();
         keys.dedup();
+        for &key in &keys {
+            if let Some(section) = self.sections.get_mut(&key) {
+                sort_translucent(section, key, camera, min_y)?;
+            }
+        }
         let mut items = Vec::new();
         for key in keys {
             if let Some(section) = self.sections.get(&key) {
@@ -195,6 +193,98 @@ impl World {
 #[derive(Debug, PartialEq, Eq)]
 pub enum PlanError {
     InvalidTransform,
+    AllocationFailed,
+}
+
+// Reorder expanded quads while retaining atlas page runs and original mesh
+// indices for stable ties. Only visible sections are sorted, and a repeated
+// camera block does no work (as in the existing renderer). A failed allocation leaves this section unchanged.
+fn sort_translucent(
+    section: &mut Section,
+    key: SectionKey,
+    camera: [f64; 3],
+    min_y: i32,
+) -> Result<(), PlanError> {
+    let camera_block = camera.map(|x| x.floor() as i64);
+    if section.sorted_camera == Some((camera_block, min_y)) {
+        return Ok(());
+    }
+    let mesh = &section.translucent;
+    let origin = [
+        f64::from(key.0) * 16.0,
+        f64::from(min_y) + f64::from(key.1) * 16.0,
+        f64::from(key.2) * 16.0,
+    ];
+    let mut order = Vec::new();
+    order
+        .try_reserve_exact(mesh.vertices.len() / 6)
+        .map_err(|_| PlanError::AllocationFailed)?;
+    let mut n = 0;
+    for (batch, &opaque) in mesh.batches.iter().zip(&mesh.opaque) {
+        for first in (batch.first..batch.first + batch.count).step_by(6) {
+            let a = mesh.vertices[first].position;
+            let b = mesh.vertices[first + 2].position;
+            let distance = (0..3)
+                .map(|i| {
+                    let center = f64::from((a[i] + b[i]) * 0.5);
+                    let delta = origin[i] - camera[i] + center;
+                    delta * delta
+                })
+                .sum::<f64>();
+            order.push((
+                first,
+                batch.page,
+                opaque,
+                distance,
+                section.translucent_ids[n],
+            ));
+            n += 1;
+        }
+    }
+    order.sort_by(|a, b| b.3.total_cmp(&a.3).then_with(|| a.4.cmp(&b.4)));
+    let mut sorted = terrain::Mesh::default();
+    sorted
+        .vertices
+        .try_reserve_exact(mesh.vertices.len())
+        .map_err(|_| PlanError::AllocationFailed)?;
+    sorted
+        .batches
+        .try_reserve_exact(order.len())
+        .map_err(|_| PlanError::AllocationFailed)?;
+    sorted
+        .opaque
+        .try_reserve_exact(order.len())
+        .map_err(|_| PlanError::AllocationFailed)?;
+    let mut ids = Vec::new();
+    ids.try_reserve_exact(order.len())
+        .map_err(|_| PlanError::AllocationFailed)?;
+    for (first, page, opaque, _, id) in order {
+        if sorted
+            .batches
+            .last()
+            .is_none_or(|b| b.page != page || sorted.opaque.last() != Some(&opaque))
+        {
+            sorted.batches.push(horizon_legacy_gl::Batch {
+                page,
+                first: sorted.vertices.len(),
+                count: 0,
+            });
+            sorted.opaque.push(opaque);
+        }
+        sorted
+            .vertices
+            .extend_from_slice(&mesh.vertices[first..first + 6]);
+        sorted
+            .batches
+            .last_mut()
+            .expect("a batch was just added")
+            .count += 6;
+        ids.push(id);
+    }
+    section.translucent = sorted;
+    section.translucent_ids = ids;
+    section.sorted_camera = Some((camera_block, min_y));
+    Ok(())
 }
 
 /// One VBO upload for a section's solid or translucent geometry. Execute with
@@ -308,12 +398,102 @@ mod tests {
             Err(terrain::MeshError::IncompleteQuad)
         );
         assert!(w.contains((0, 0, 0)));
-        assert!(w.set_lightmap([0; 1024]).unwrap());
-        assert!(!w.set_lightmap([0; 1024]).unwrap());
+        assert!(w.set_lightmap([0; 1024]));
+        assert!(!w.set_lightmap([0; 1024]));
         let plan = w.plan(&[(0, 0, 0)], [0.; 3], 0, IDENTITY, None).unwrap();
         assert_eq!(plan[0].vertices[0].color, [0., 0., 0., 1.]);
         w.remove((0, 0, 0));
         assert!(w.is_empty());
+    }
+    #[test]
+    fn translucent_quads_resort_by_camera_and_keep_pages() {
+        let atlas = Atlas::new(1, 2, 4, &[255; 8]).unwrap();
+        let mut w = World::new(atlas, [255; 1024]);
+        let mut s = SectionMesh::default();
+        s.translucent.extend(quad(0, 2.));
+        s.translucent.extend(quad(1, 10.));
+        s.translucent.extend(quad(0, 6.));
+        for v in &mut s.translucent[0..4] {
+            v.color = 0xff00_00ff;
+        }
+        for v in &mut s.translucent[4..8] {
+            v.color = 0xff00_ff00;
+        }
+        for v in &mut s.translucent[8..12] {
+            v.color = 0xffff_0000;
+        }
+        w.upload((0, 0, 0), &s).unwrap();
+        let plan = w.plan(&[(0, 0, 0)], [0.; 3], 0, IDENTITY, None).unwrap();
+        assert_eq!(
+            plan[0]
+                .vertices
+                .chunks_exact(6)
+                .map(|q| q[0].position[2])
+                .collect::<Vec<_>>(),
+            [10., 6., 2.]
+        );
+        assert_eq!(
+            plan[0]
+                .draws
+                .iter()
+                .map(|d| d.batch.page)
+                .collect::<Vec<_>>(),
+            [1, 0]
+        );
+        let plan = w
+            .plan(&[(0, 0, 0)], [0., 0., 20.], 0, IDENTITY, None)
+            .unwrap();
+        assert_eq!(
+            plan[0]
+                .vertices
+                .chunks_exact(6)
+                .map(|q| q[0].position[2])
+                .collect::<Vec<_>>(),
+            [2., 6., 10.]
+        );
+        assert_eq!(
+            plan[0]
+                .draws
+                .iter()
+                .map(|d| d.batch.page)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        // Equal-distance ties return to the source order, not the previous sort.
+        let plan = w
+            .plan(&[(0, 0, 0)], [0.5, 0.5, 6.], 0, IDENTITY, None)
+            .unwrap();
+        assert_eq!(
+            plan[0]
+                .vertices
+                .chunks_exact(6)
+                .map(|q| q[0].position[2])
+                .collect::<Vec<_>>(),
+            [2., 10., 6.]
+        );
+        // Relighting preserves each quad and its current ordering.
+        w.set_lightmap([128; 1024]);
+        let plan = w
+            .plan(&[(0, 0, 0)], [0., 0., 20.], 0, IDENTITY, None)
+            .unwrap();
+        let colors = plan[0]
+            .vertices
+            .chunks_exact(6)
+            .map(|q| q[0].color)
+            .collect::<Vec<_>>();
+        let half = 128.0 / 255.0;
+        assert_eq!(
+            colors,
+            [[half, 0., 0., 1.], [0., 0., half, 1.], [0., half, 0., 1.]]
+        );
+        assert_eq!(
+            plan[0]
+                .vertices
+                .chunks_exact(6)
+                .map(|q| q[0].position[2])
+                .collect::<Vec<_>>(),
+            [2., 6., 10.]
+        );
     }
     #[test]
     fn camera_relative_offsets_keep_precision_and_fog_origin() {

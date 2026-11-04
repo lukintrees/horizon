@@ -77,7 +77,7 @@ fn frame_fog(frame: &Frame<'_>) -> Fog {
 /// This is flat-screen only, uses externally supplied visibility, and leaves
 /// entities, hand, sky, far terrain and HUD to subsequent passes.
 pub fn plan<'a>(
-    world: &'a World,
+    world: &'a mut World,
     frame: &Frame<'_>,
     viewport: [u32; 2],
     min_y: i32,
