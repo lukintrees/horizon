@@ -220,6 +220,29 @@ impl Surface {
         }
         Ok(true)
     }
+    /// Clear the whole depth buffer before a separate first-person pass.
+    /// This intentionally destroys world depth and must run after world draws.
+    pub fn clear_depth(&mut self) -> Result<(), Error> {
+        self.current()?;
+        // SAFETY: these pointers were loaded for the owned current context.
+        unsafe {
+            let f = &self.frame;
+            let previous = (f.get_error)();
+            if previous != 0 {
+                return Err(Error::Gl(previous));
+            }
+            (f.disable)(0x0c11); // GL_SCISSOR_TEST
+            (f.depth_mask)(1);
+            (f.clear_depth)(1.0);
+            (f.clear)(0x0100); // GL_DEPTH_BUFFER_BIT
+            let error = (f.get_error)();
+            if error != 0 {
+                return Err(Error::Gl(error));
+            }
+        }
+        Ok(())
+    }
+
     pub fn draw(
         &mut self,
         vertices: &[Vertex],

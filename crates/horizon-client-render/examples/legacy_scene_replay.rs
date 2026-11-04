@@ -51,8 +51,12 @@ mod app {
             true,
         )?;
         if report.entity_vertices != 0
+            || report.hand_vertices != 0
+            || report.static_entity_draws != 0
             || report.hud_vertices != 0
             || !report.omitted_entity_overlays.is_empty()
+            || !report.omitted_static_overlays.is_empty()
+            || !report.omitted_hand_overlays.is_empty()
             || !report.omitted_hud_blends.is_empty()
         {
             return Err("capture unexpectedly contains entity or HUD geometry".into());

@@ -27,8 +27,12 @@ pub struct FrameReport {
     pub presented: bool,
     pub terrain_draws: usize,
     pub entity_vertices: usize,
+    pub static_entity_draws: usize,
+    pub hand_vertices: usize,
     pub hud_vertices: usize,
     pub omitted_entity_overlays: Vec<(u32, usize)>,
+    pub omitted_static_overlays: Vec<(u32, usize)>,
+    pub omitted_hand_overlays: Vec<(u32, usize)>,
     pub omitted_hud_blends: Vec<(crate::hud::Blend, usize)>,
 }
 
@@ -115,12 +119,12 @@ impl Renderer {
         self.world.section_keys()
     }
 
-    /// Draws the supported subset in solid/entity/translucent/HUD order.
+    /// Draws the supported subset in solid/entity/translucent/hand/HUD order.
     /// The caller must supply visible resident sections, current world min_y,
     /// gamma/fullbright and animation settings. Dirty uploads are acknowledged
     /// only after success and survive an error for the next call. Unsupported
     /// HUD blends and entity overlays are reported rather than silently drawn.
-    /// Sky, LOD, hand, particles and other passes are not implemented.
+    /// Sky, LOD, particles and other passes are not implemented.
     pub fn render(
         &mut self,
         frame: &Frame<'_>,
@@ -212,6 +216,16 @@ impl Renderer {
         self.surface
             .select_atlas(self.gui_atlas)
             .map_err(|e| e.to_string())?;
+        for draw in &plan.static_entities {
+            self.surface
+                .draw_ordered(
+                    &draw.mesh.vertices,
+                    &draw.mesh.draws,
+                    &draw.transform,
+                    Some(draw.fog),
+                )
+                .map_err(|e| format!("static block entity: {e}"))?;
+        }
         self.surface
             .draw_ordered(
                 &plan.entities.vertices,
@@ -231,6 +245,19 @@ impl Renderer {
         self.surface
             .select_atlas(self.gui_atlas)
             .map_err(|e| e.to_string())?;
+        if let Some(transform) = plan.hand_view_projection {
+            self.surface
+                .clear_depth()
+                .map_err(|e| format!("hand depth clear: {e}"))?;
+            self.surface
+                .draw_ordered(
+                    &plan.hand.vertices,
+                    &plan.hand.draws,
+                    &transform,
+                    Some(plan.fog),
+                )
+                .map_err(|e| format!("hand: {e}"))?;
+        }
         self.surface
             .draw_ordered(
                 &plan.hud.vertices,
@@ -246,8 +273,12 @@ impl Renderer {
             presented: true,
             terrain_draws: plan.terrain.len(),
             entity_vertices: plan.entities.vertices.len(),
+            static_entity_draws: plan.static_entities.len(),
+            hand_vertices: plan.hand.vertices.len(),
             hud_vertices: plan.hud.vertices.len(),
             omitted_entity_overlays: plan.omitted_entity_overlays,
+            omitted_static_overlays: plan.omitted_static_overlays,
+            omitted_hand_overlays: plan.omitted_hand_overlays,
             omitted_hud_blends: plan.omitted_hud_blends,
         })
     }
@@ -313,12 +344,24 @@ mod tests {
                 height: 1,
                 rgba: vec![255, 0, 0, 255],
             });
-            let frame = test_frame(&hud);
+            let hand = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]].map(|uv| crate::mesher::Vertex {
+                pos: [uv[0], uv[1], -1.],
+                uv,
+                layer: 0,
+                color: u32::MAX,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            });
+            let mut frame = test_frame(&hud);
+            frame.hand = &hand;
             let report = renderer
                 .render(&frame, &[(0, 0, 0)], 0, 0.5, false, true)
                 .unwrap();
             assert!(report.presented);
             assert_eq!(report.terrain_draws, 2);
+            assert_ne!(report.hand_vertices, 0);
+            assert!(report.omitted_hand_overlays.is_empty());
             assert_eq!(report.hud_vertices, 6);
             assert!(report.omitted_hud_blends.is_empty());
             assert!(report.omitted_entity_overlays.is_empty());

@@ -14,6 +14,8 @@ pub(super) struct Mirror {
     reported_frame: bool,
     reported_error: bool,
     reported_omissions: bool,
+    reported_hand_omissions: bool,
+    reported_static_omissions: bool,
     reported_hud_omissions: bool,
 }
 impl Mirror {
@@ -37,6 +39,8 @@ impl Mirror {
             reported_frame: false,
             reported_error: false,
             reported_omissions: false,
+            reported_hand_omissions: false,
+            reported_static_omissions: false,
             reported_hud_omissions: false,
         })
     }
@@ -88,16 +92,30 @@ impl Mirror {
                 plan.entities.vertices.len(),
                 plan.hud.vertices.len(),
                 plan.omitted_entity_overlays,
+                plan.omitted_static_overlays,
+                plan.omitted_hand_overlays,
                 plan.omitted_hud_blends,
             ))
         })();
         match result {
-            Ok((terrain, entities, hud, omitted, hud_omitted)) => {
+            Ok((terrain, entities, hud, omitted, static_omitted, hand_omitted, hud_omitted)) => {
                 if !omitted.is_empty() && !self.reported_omissions {
                     log::warn!(
                         "Legacy CPU mirror skipped unsupported entity overlay quads: {omitted:?}"
                     );
                     self.reported_omissions = true;
+                }
+                if !static_omitted.is_empty() && !self.reported_static_omissions {
+                    log::warn!(
+                        "Legacy CPU mirror skipped unsupported static entity overlay quads: {static_omitted:?}"
+                    );
+                    self.reported_static_omissions = true;
+                }
+                if !hand_omitted.is_empty() && !self.reported_hand_omissions {
+                    log::warn!(
+                        "Legacy CPU mirror skipped unsupported hand overlay quads: {hand_omitted:?}"
+                    );
+                    self.reported_hand_omissions = true;
                 }
                 if !hud_omitted.is_empty() && !self.reported_hud_omissions {
                     log::warn!(

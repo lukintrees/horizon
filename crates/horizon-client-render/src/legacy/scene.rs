@@ -26,14 +26,45 @@ pub fn lightmap(frame: &Frame<'_>, gamma: f32, fullbright: bool) -> [u8; 16 * 16
 /// Convert reversed-Z wgpu clip depth (near=1, far=0) to conventional OpenGL
 /// clip depth (near=-1, far=1). This operates on homogeneous clip coordinates,
 /// not on a perspective-divided depth value.
-pub fn gl_view_projection(view: View, pose: Mat4) -> Mat4 {
+fn gl_clip_from_wgpu(matrix: Mat4) -> Mat4 {
     let depth = Mat4::from_cols(
         Vec4::X,
         Vec4::Y,
         Vec4::new(0.0, 0.0, -2.0, 0.0),
         Vec4::new(0.0, 0.0, 1.0, 1.0),
     );
-    depth * view.view_proj(pose)
+    depth * matrix
+}
+
+pub fn gl_view_projection(view: View, pose: Mat4) -> Mat4 {
+    gl_clip_from_wgpu(view.view_proj(pose))
+}
+
+/// Projection for the camera-relative first-person hand, excluding world spin.
+pub fn hand_view_projection(frame: &Frame<'_>, viewport: [u32; 2]) -> Result<[f32; 16], PlanError> {
+    if viewport.contains(&0)
+        || !frame.hand_fov_degrees.is_finite()
+        || !(0.0..180.0).contains(&frame.hand_fov_degrees)
+        || frame.hand_fov_degrees == 0.0
+        || !frame.depth_far.is_finite()
+        || frame.depth_far <= 0.05
+        || !frame.yaw.is_finite()
+        || !frame.pitch.is_finite()
+    {
+        return Err(PlanError::InvalidTransform);
+    }
+    let projection = Mat4::from_cols_array(&crate::camera::hand_projection(
+        frame.hand_fov_degrees,
+        viewport[0] as f32,
+        viewport[1] as f32,
+        frame.depth_far,
+    ));
+    let view = crate::camera::view_matrix(frame.yaw, frame.pitch);
+    let matrix = gl_clip_from_wgpu(projection * frame.bob * view).to_cols_array();
+    if matrix.iter().any(|value| !value.is_finite()) {
+        return Err(PlanError::InvalidTransform);
+    }
+    Ok(matrix)
 }
 
 /// Fog for camera-relative entities, or the base fog that the world planner
@@ -150,17 +181,27 @@ pub enum FrameError {
     Hud(hud::Error),
 }
 
-/// CPU data for a partial frame: solid terrain, ordinary entities, translucent
-/// terrain, then HUD. The caller selects the corresponding resident terrain or
-/// GUI atlas before each pass and uploads any pending GUI patches. This leaves
-/// sky, hand, particles, special materials, LOD, dynamic lights and other
-/// `Frame` fields unrendered; it is not a complete game renderer.
+/// One visible static block-entity section, using section-local vertices.
+pub struct StaticEntityDraw {
+    pub mesh: entity::Mesh,
+    pub transform: [f32; 16],
+    pub fog: Fog,
+}
+
+/// CPU data for a partial frame: solid terrain, static and ordinary entities,
+/// translucent terrain, hand, then HUD. Many other game passes are missing.
 pub struct FramePlan<'a> {
     pub terrain: Vec<SectionDraw<'a>>,
     pub solid_count: usize,
     pub entities: entity::Mesh,
+    pub static_entities: Vec<StaticEntityDraw>,
+    pub omitted_static_overlays: Vec<(u32, usize)>,
     /// Nonempty only for `prepare_supported_frame`; these quads are not drawn.
     pub omitted_entity_overlays: Vec<(u32, usize)>,
+    /// Camera-relative hand geometry, drawn after clearing the world's depth.
+    pub hand: entity::Mesh,
+    pub omitted_hand_overlays: Vec<(u32, usize)>,
+    pub hand_view_projection: Option<[f32; 16]>,
     pub hud: hud::Mesh,
     /// Unsupported GUI blends and omitted triangle counts in partial mode.
     pub omitted_hud_blends: Vec<(crate::hud::Blend, usize)>,
@@ -231,6 +272,91 @@ fn prepare_frame_inner<'a>(
             omitted: Vec::new(),
         }
     };
+    let mut static_entities = Vec::new();
+    let mut omitted_static_overlays: Vec<(u32, usize)> = Vec::new();
+    if !frame.title {
+        static_entities
+            .try_reserve(frame.visible_static_block_entity_sections.len())
+            .map_err(|_| FrameError::Entity(entity::Error::AllocationFailed))?;
+        for section in frame.visible_static_block_entity_sections {
+            // Like the wgpu path, snapshots are sorted by section key; missing
+            // sections are skipped and each visible snapshot is drawn in order.
+            let Ok(index) = frame
+                .static_block_entities
+                .binary_search_by_key(section, |s| s.section)
+            else {
+                continue;
+            };
+            let snapshot = &frame.static_block_entities[index];
+            let report = if skip_unsupported {
+                entity::build_supported(
+                    gui.atlas(),
+                    &snapshot.vertices,
+                    &lights,
+                    frame.nether_lighting,
+                )
+                .map_err(FrameError::Entity)?
+            } else {
+                entity::BuildReport {
+                    mesh: entity::build(
+                        gui.atlas(),
+                        &snapshot.vertices,
+                        &lights,
+                        frame.nether_lighting,
+                    )
+                    .map_err(FrameError::Entity)?,
+                    omitted: Vec::new(),
+                }
+            };
+            for (overlay, count) in report.omitted {
+                if let Some((_, total)) = omitted_static_overlays
+                    .iter_mut()
+                    .find(|(code, _)| *code == overlay)
+                {
+                    *total = total.saturating_add(count);
+                } else {
+                    omitted_static_overlays
+                        .try_reserve(1)
+                        .map_err(|_| FrameError::Entity(entity::Error::AllocationFailed))?;
+                    omitted_static_overlays.push((overlay, count));
+                }
+            }
+            if report.mesh.vertices.is_empty() {
+                continue;
+            }
+            let offset =
+                (glam::DVec3::from_array(snapshot.origin.map(f64::from)) - frame.camera).as_vec3();
+            if !offset.is_finite() {
+                return Err(FrameError::World(PlanError::InvalidTransform));
+            }
+            let transform =
+                Mat4::from_cols_array(&view_projection) * Mat4::from_translation(offset);
+            let mut fog = frame_fog(frame);
+            fog.section_offset = offset.to_array();
+            static_entities.push(StaticEntityDraw {
+                mesh: report.mesh,
+                transform: transform.to_cols_array(),
+                fog,
+            });
+        }
+    }
+    let hand = if frame.title || frame.hand.is_empty() {
+        entity::BuildReport::default()
+    } else if skip_unsupported {
+        entity::build_supported(gui.atlas(), frame.hand, &lights, frame.nether_lighting)
+            .map_err(FrameError::Entity)?
+    } else {
+        entity::BuildReport {
+            mesh: entity::build(gui.atlas(), frame.hand, &lights, frame.nether_lighting)
+                .map_err(FrameError::Entity)?,
+            omitted: Vec::new(),
+        }
+    };
+    let hand_view_projection = if hand.mesh.vertices.is_empty() {
+        None
+    } else {
+        Some(hand_view_projection(frame, viewport).map_err(FrameError::World)?)
+    };
     let hud = if skip_unsupported {
         hud::build_supported(gui.atlas(), frame.hud, viewport).map_err(FrameError::Hud)?
     } else {
@@ -261,7 +387,12 @@ fn prepare_frame_inner<'a>(
         terrain,
         solid_count,
         entities: entities.mesh,
+        static_entities,
+        omitted_static_overlays,
         omitted_entity_overlays: entities.omitted,
+        hand: hand.mesh,
+        omitted_hand_overlays: hand.omitted,
+        hand_view_projection,
         hud: hud.mesh,
         omitted_hud_blends: hud.omitted,
         view_projection,
@@ -387,7 +518,18 @@ pub(crate) mod tests {
             glint_uv: [0.; 2],
         });
         let mut frame = test_frame(&hud_batch);
+        let snapshots = [crate::block_entity_render::StaticSectionSnapshot {
+            section: [1, 0, 0],
+            origin: [16, 0, 0],
+            revision: 1,
+            entities: 1,
+            vertices: entities.to_vec().into(),
+        }];
+        let visible_static = [[1, 0, 0]];
+        frame.static_block_entities = &snapshots;
+        frame.visible_static_block_entity_sections = &visible_static;
         frame.entities = &entities;
+        frame.hand = &entities;
         let plan = prepare_frame(
             &mut world,
             &mut gui,
@@ -404,6 +546,14 @@ pub(crate) mod tests {
         assert!(!plan.terrain[0].translucent);
         assert!(plan.terrain[1].translucent);
         assert!(!plan.entities.vertices.is_empty());
+        assert_eq!(plan.static_entities.len(), 1);
+        assert_eq!(
+            plan.static_entities[0].fog.section_offset,
+            [15.5, -100., -0.5]
+        );
+        assert!(!plan.static_entities[0].mesh.vertices.is_empty());
+        assert!(!plan.hand.vertices.is_empty());
+        assert_ne!(plan.hand_view_projection.unwrap(), plan.view_projection);
         assert!(!plan.hud.vertices.is_empty());
         assert_eq!(gui.dirty().count(), 1);
         drop(plan);
@@ -419,6 +569,7 @@ pub(crate) mod tests {
         }
         let mixed = [entities, unsupported, entities].concat();
         frame.entities = &mixed;
+        frame.hand = &unsupported;
         assert!(matches!(
             prepare_frame(
                 &mut world,
@@ -444,6 +595,8 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(partial.omitted_entity_overlays, [(7, 1)]);
+        assert_eq!(partial.omitted_hand_overlays, [(7, 1)]);
+        assert!(partial.hand_view_projection.is_none());
         assert_eq!(partial.terrain.len(), 2);
         assert!(!partial.entities.vertices.is_empty());
         drop(partial);
@@ -461,6 +614,8 @@ pub(crate) mod tests {
         .unwrap();
         assert!(title.terrain.is_empty());
         assert!(title.entities.vertices.is_empty());
+        assert!(title.static_entities.is_empty());
+        assert!(title.hand.vertices.is_empty());
         assert!(!title.hud.vertices.is_empty());
     }
 
