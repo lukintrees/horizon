@@ -1471,6 +1471,7 @@ dependencies = [
  "horizon-cosmetics",
  "horizon-hdr",
  "horizon-items",
+ "horizon-legacy-gl",
  "horizon-mod-api-gen",
  "horizon-narrator",
  "horizon-optifine",
@@ -1578,6 +1579,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "horizon-legacy-gl"
+version = "0.1.0"
 
 [[package]]
 name = "horizon-mcp"

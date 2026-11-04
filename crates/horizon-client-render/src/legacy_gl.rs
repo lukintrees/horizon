@@ -56,6 +56,7 @@ pub enum AtlasError {
     TooManyPages,
     InvalidPixels { index: usize },
     InvalidSpriteArray,
+    StaleAssets,
     InvalidPage,
     InvalidSpriteIndex,
     SizeOverflow,
@@ -186,8 +187,65 @@ pub fn build_page(
     Ok(output)
 }
 
+fn layout_for_layers(
+    size: u32,
+    count: usize,
+    pixels: &[u8],
+    page_size: u32,
+    padding: u32,
+    max_pages: usize,
+) -> Result<AtlasLayout, AtlasError> {
+    let side = usize::try_from(size).map_err(|_| AtlasError::SizeOverflow)?;
+    let layer_bytes = side
+        .checked_mul(side)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    if layer_bytes == 0
+        || pixels.len()
+            != layer_bytes
+                .checked_mul(count)
+                .ok_or(AtlasError::SizeOverflow)?
+    {
+        return Err(AtlasError::InvalidSpriteArray);
+    }
+    let sizes = vec![
+        SpriteSize {
+            width: size,
+            height: size
+        };
+        count
+    ];
+    pack_atlas(&sizes, page_size, padding, max_pages)
+}
+
+fn build_layer_page(
+    layout: &AtlasLayout,
+    page: usize,
+    size: u32,
+    pixels: &[u8],
+) -> Result<Vec<u8>, AtlasError> {
+    let side = usize::try_from(size).map_err(|_| AtlasError::SizeOverflow)?;
+    let layer_bytes = side
+        .checked_mul(side)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    if layer_bytes == 0
+        || pixels.len()
+            != layer_bytes
+                .checked_mul(layout.sprites.len())
+                .ok_or(AtlasError::SizeOverflow)?
+        || layout
+            .sprites
+            .iter()
+            .any(|p| p.width != size || p.height != size)
+    {
+        return Err(AtlasError::InvalidSpriteArray);
+    }
+    let layers: Vec<&[u8]> = pixels.chunks_exact(layer_bytes).collect();
+    build_page(layout, page, &layers)
+}
+
 /// Build a layout from the actual terrain sprite array after `Sprites::finish`.
-/// The initial pixels have one square RGBA8 image per layer in layer order.
 /// `finish_without_pixels` is unsuitable because no images are available there.
 pub fn layout_for_sprites(
     sprites: &crate::sprites::Sprites,
@@ -195,55 +253,67 @@ pub fn layout_for_sprites(
     padding: u32,
     max_pages: usize,
 ) -> Result<AtlasLayout, AtlasError> {
-    let side = usize::try_from(sprites.size).map_err(|_| AtlasError::SizeOverflow)?;
-    let layer_bytes = side
-        .checked_mul(side)
-        .and_then(|n| n.checked_mul(4))
-        .ok_or(AtlasError::SizeOverflow)?;
-    if layer_bytes == 0
-        || sprites.pixels.len()
-            != layer_bytes
-                .checked_mul(sprites.opaque.len())
-                .ok_or(AtlasError::SizeOverflow)?
-    {
-        return Err(AtlasError::InvalidSpriteArray);
-    }
-    let sizes = vec![
-        SpriteSize {
-            width: sprites.size,
-            height: sprites.size
-        };
-        sprites.opaque.len()
-    ];
-    pack_atlas(&sizes, page_size, padding, max_pages)
+    layout_for_layers(
+        sprites.size,
+        sprites.opaque.len(),
+        &sprites.pixels,
+        page_size,
+        padding,
+        max_pages,
+    )
 }
 
 /// Produces a level-zero page from the same `Sprites` instance as the layout.
-/// No copies of the individual source layers are needed.
 pub fn build_sprites_page(
     layout: &AtlasLayout,
     page: usize,
     sprites: &crate::sprites::Sprites,
 ) -> Result<Vec<u8>, AtlasError> {
-    let side = usize::try_from(sprites.size).map_err(|_| AtlasError::SizeOverflow)?;
-    let layer_bytes = side
-        .checked_mul(side)
-        .and_then(|n| n.checked_mul(4))
-        .ok_or(AtlasError::SizeOverflow)?;
-    if layer_bytes == 0
-        || sprites.pixels.len()
-            != layer_bytes
-                .checked_mul(layout.sprites.len())
-                .ok_or(AtlasError::SizeOverflow)?
-        || layout
-            .sprites
-            .iter()
-            .any(|p| p.width != sprites.size || p.height != sprites.size)
-    {
-        return Err(AtlasError::InvalidSpriteArray);
+    build_layer_page(layout, page, sprites.size, &sprites.pixels)
+}
+
+/// A layout derived from the render assets the game actually hands to `Renderer`.
+/// Its generation prevents mixing UVs/pages with a resource pack reloaded later.
+pub struct RenderAssetAtlas {
+    generation: u64,
+    layout: AtlasLayout,
+}
+impl RenderAssetAtlas {
+    pub fn prepare(
+        assets: &crate::assets::RenderAssets,
+        page_size: u32,
+        padding: u32,
+        max_pages: usize,
+    ) -> Result<Self, AtlasError> {
+        let count = usize::try_from(assets.texture_layers).map_err(|_| AtlasError::SizeOverflow)?;
+        let layout = layout_for_layers(
+            assets.sprite_size,
+            count,
+            &assets.pixels,
+            page_size,
+            padding,
+            max_pages,
+        )?;
+        Ok(Self {
+            generation: assets.generation,
+            layout,
+        })
     }
-    let layers: Vec<&[u8]> = sprites.pixels.chunks_exact(layer_bytes).collect();
-    build_page(layout, page, &layers)
+    pub fn layout(&self) -> &AtlasLayout {
+        &self.layout
+    }
+    /// Build one page only from the same resource generation. This allows the
+    /// caller to upload and release each CPU page rather than holding all pages.
+    pub fn build_page(
+        &self,
+        assets: &crate::assets::RenderAssets,
+        page: usize,
+    ) -> Result<Vec<u8>, AtlasError> {
+        if assets.generation != self.generation {
+            return Err(AtlasError::StaleAssets);
+        }
+        build_layer_page(&self.layout, page, assets.sprite_size, &assets.pixels)
+    }
 }
 
 /// A tightly packed, padded region suitable for `glTexSubImage2D` at level zero.
@@ -345,16 +415,9 @@ pub fn animation_update(
     sprite_update(layout, index, &current)
 }
 
-/// Vertex format for the experimental GLSL 1.10 terrain shader. The color alpha
-/// in `TerrainVertex` encodes emission, not transparency, so it is not used here.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LegacyTerrainVertex {
-    pub pos: [f32; 3],
-    pub uv: [f32; 2],
-    pub light_uv: [f32; 2],
-    pub color: [f32; 4],
-}
+/// The backend's GL vertex type; terrain conversion produces upload-ready vertices.
+/// `TerrainVertex` alpha encodes emission, not transparency, so conversion uses 1.0.
+pub use horizon_legacy_gl::Vertex as LegacyTerrainVertex;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TerrainConversionError {

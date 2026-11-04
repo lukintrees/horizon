@@ -9,6 +9,10 @@
 #[path = "legacy_gl_geometry.rs"]
 mod geometry;
 
+#[cfg(windows)]
+#[path = "../crates/horizon-legacy-gl/src/lib.rs"]
+mod legacy_renderer;
+
 #[cfg(not(windows))]
 fn main() {
     eprintln!("This WGL prototype runs on Windows only; it is not the game.");
@@ -25,14 +29,12 @@ fn main() {
 #[cfg(windows)]
 mod windows {
     use std::{
-        ffi::{CStr, CString, c_char, c_void},
+        ffi::{CStr, c_char, c_void},
         mem, ptr,
         sync::atomic::{AtomicBool, Ordering},
     };
 
     type Handle = isize;
-    type GlUint = u32;
-    type GlInt = i32;
     static CLOSE: AtomicBool = AtomicBool::new(false);
 
     #[repr(C)]
@@ -137,6 +139,7 @@ mod windows {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetModuleHandleW(name: *const u16) -> Handle;
+        fn GetProcAddress(module: Handle, name: *const c_char) -> *const c_void;
         fn Sleep(milliseconds: u32);
     }
     #[link(name = "gdi32")]
@@ -154,27 +157,6 @@ mod windows {
         fn wglGetProcAddress(name: *const c_char) -> *const c_void;
         fn glGetString(name: u32) -> *const u8;
         fn glGetError() -> u32;
-        fn glViewport(x: i32, y: i32, width: i32, height: i32);
-        fn glClearColor(r: f32, g: f32, b: f32, a: f32);
-        fn glClear(mask: u32);
-        fn glEnable(capability: u32);
-        fn glDepthFunc(function: u32);
-        fn glGenTextures(count: i32, textures: *mut u32);
-        fn glBindTexture(target: u32, texture: u32);
-        fn glTexParameteri(target: u32, name: u32, value: i32);
-        fn glTexImage2D(
-            target: u32,
-            level: i32,
-            internal: i32,
-            width: i32,
-            height: i32,
-            border: i32,
-            format: u32,
-            kind: u32,
-            pixels: *const c_void,
-        );
-        fn glDrawArrays(mode: u32, first: i32, count: i32);
-        fn glGetIntegerv(name: u32, value: *mut i32);
         fn glReadPixels(
             x: i32,
             y: i32,
@@ -301,46 +283,6 @@ mod windows {
         Ok(result)
     }
 
-    unsafe fn proc(name: &str) -> Result<*const c_void, String> {
-        let name = CString::new(name).map_err(|_| "invalid GL function name")?;
-        let value = wglGetProcAddress(name.as_ptr());
-        if value.is_null() || (value as usize) <= 3 || value as isize == -1 {
-            return Err(format!(
-                "missing OpenGL function {}",
-                name.to_string_lossy()
-            ));
-        }
-        Ok(value)
-    }
-    macro_rules! load {
-        ($name:expr, $ty:ty) => {
-            mem::transmute::<*const c_void, $ty>(proc($name)?)
-        };
-    }
-    type CreateShader = unsafe extern "system" fn(u32) -> GlUint;
-    type ShaderSource =
-        unsafe extern "system" fn(GlUint, GlInt, *const *const c_char, *const GlInt);
-    type CompileShader = unsafe extern "system" fn(GlUint);
-    type GetShaderiv = unsafe extern "system" fn(GlUint, u32, *mut GlInt);
-    type GetShaderLog = unsafe extern "system" fn(GlUint, GlInt, *mut GlInt, *mut c_char);
-    type CreateProgram = unsafe extern "system" fn() -> GlUint;
-    type AttachShader = unsafe extern "system" fn(GlUint, GlUint);
-    type LinkProgram = unsafe extern "system" fn(GlUint);
-    type GetProgramiv = unsafe extern "system" fn(GlUint, u32, *mut GlInt);
-    type GetProgramLog = unsafe extern "system" fn(GlUint, GlInt, *mut GlInt, *mut c_char);
-    type UseProgram = unsafe extern "system" fn(GlUint);
-    type GetLocation = unsafe extern "system" fn(GlUint, *const c_char) -> GlInt;
-    type Uniform1i = unsafe extern "system" fn(GlInt, GlInt);
-    type Uniform1f = unsafe extern "system" fn(GlInt, f32);
-    type Uniform3f = unsafe extern "system" fn(GlInt, f32, f32, f32);
-    type UniformMatrix4fv = unsafe extern "system" fn(GlInt, GlInt, u8, *const f32);
-    type GenBuffers = unsafe extern "system" fn(GlInt, *mut GlUint);
-    type BindBuffer = unsafe extern "system" fn(u32, GlUint);
-    type BufferData = unsafe extern "system" fn(u32, isize, *const c_void, u32);
-    type EnableAttrib = unsafe extern "system" fn(GlUint);
-    type AttribPointer = unsafe extern "system" fn(GlUint, GlInt, u32, u8, GlInt, *const c_void);
-    type ActiveTexture = unsafe extern "system" fn(u32);
-
     unsafe fn gl_string(token: u32) -> String {
         let value = glGetString(token);
         if value.is_null() {
@@ -348,83 +290,31 @@ mod windows {
         }
         CStr::from_ptr(value.cast()).to_string_lossy().into_owned()
     }
-    unsafe fn shader(kind: u32, source: &str) -> Result<u32, String> {
-        let create: CreateShader = load!("glCreateShader", CreateShader);
-        let source_fn: ShaderSource = load!("glShaderSource", ShaderSource);
-        let compile: CompileShader = load!("glCompileShader", CompileShader);
-        let get: GetShaderiv = load!("glGetShaderiv", GetShaderiv);
-        let log: GetShaderLog = load!("glGetShaderInfoLog", GetShaderLog);
-        let id = create(kind);
-        if id == 0 {
-            return Err("glCreateShader failed".into());
+
+    // WGL returns only extension entry points. Core 1.1 entry points are
+    // exported from opengl32.dll instead; do not call WGL sentinel values.
+    unsafe fn lookup(name: &CStr) -> *const c_void {
+        let p = wglGetProcAddress(name.as_ptr());
+        if p.is_null() || p as usize <= 3 || p as isize == -1 {
+            let module = GetModuleHandleW(wide("opengl32.dll").as_ptr());
+            if module == 0 {
+                return ptr::null();
+            }
+            return GetProcAddress(module, name.as_ptr());
         }
-        let text = CString::new(source).map_err(|_| "shader contains NUL")?;
-        source_fn(id, 1, &text.as_ptr(), ptr::null());
-        compile(id);
-        let mut ok = 0;
-        get(id, 0x8b81, &mut ok); // COMPILE_STATUS
-        if ok == 0 {
-            let mut message = vec![0u8; 4096];
-            let mut len = 0;
-            log(
-                id,
-                message.len() as i32,
-                &mut len,
-                message.as_mut_ptr().cast(),
-            );
-            return Err(format!(
-                "shader compilation: {}",
-                String::from_utf8_lossy(&message[..(len as usize).min(message.len())])
-            ));
-        }
-        Ok(id)
+        p
     }
-    unsafe fn program() -> Result<u32, String> {
-        let vs = shader(
-            0x8b31,
-            include_str!("../crates/horizon-client-render/src/legacy_gl_terrain.vert"),
-        )?;
-        let fs = shader(
-            0x8b30,
-            include_str!("../crates/horizon-client-render/src/legacy_gl_terrain.frag"),
-        )?;
-        let create: CreateProgram = load!("glCreateProgram", CreateProgram);
-        let attach: AttachShader = load!("glAttachShader", AttachShader);
-        let link: LinkProgram = load!("glLinkProgram", LinkProgram);
-        let get: GetProgramiv = load!("glGetProgramiv", GetProgramiv);
-        let log: GetProgramLog = load!("glGetProgramInfoLog", GetProgramLog);
-        let id = create();
-        if id == 0 {
-            return Err("glCreateProgram failed".into());
+
+    // Context was created before this guard, and therefore outlives its Drop.
+    struct RendererGuard(Option<crate::legacy_renderer::Renderer>);
+    impl Drop for RendererGuard {
+        fn drop(&mut self) {
+            if let Some(renderer) = self.0.take() {
+                unsafe {
+                    renderer.destroy();
+                }
+            }
         }
-        attach(id, vs);
-        attach(id, fs);
-        link(id);
-        let mut ok = 0;
-        get(id, 0x8b82, &mut ok); // LINK_STATUS
-        if ok == 0 {
-            let mut message = vec![0u8; 4096];
-            let mut len = 0;
-            log(
-                id,
-                message.len() as i32,
-                &mut len,
-                message.as_mut_ptr().cast(),
-            );
-            return Err(format!(
-                "program link: {}",
-                String::from_utf8_lossy(&message[..(len as usize).min(message.len())])
-            ));
-        }
-        Ok(id)
-    }
-    unsafe fn location(program: u32, name: &str, get: GetLocation) -> Result<i32, String> {
-        let text = CString::new(name).map_err(|_| "invalid variable name")?;
-        let value = get(program, text.as_ptr());
-        if value < 0 {
-            return Err(format!("missing shader variable {name}"));
-        }
-        Ok(value)
     }
 
     /// Checks that the first rendered back buffer contains both atlas colors.
@@ -483,92 +373,46 @@ mod windows {
                 "desktop OpenGL 2.0 or newer is required, got {version}"
             ));
         }
-        let mut texture_units = 0;
-        glGetIntegerv(0x8872, &mut texture_units); // MAX_TEXTURE_IMAGE_UNITS
-        if texture_units < 2 {
-            return Err(format!(
-                "at least two texture units required, got {texture_units}"
-            ));
-        }
         let check_pixels = std::env::args().skip(1).any(|arg| arg == "--check");
-        let program = program()?;
-        let use_program: UseProgram = load!("glUseProgram", UseProgram);
-        let get_uniform: GetLocation = load!("glGetUniformLocation", GetLocation);
-        let get_attrib: GetLocation = load!("glGetAttribLocation", GetLocation);
-        let uniform1i: Uniform1i = load!("glUniform1i", Uniform1i);
-        let uniform1f: Uniform1f = load!("glUniform1f", Uniform1f);
-        let uniform3f: Uniform3f = load!("glUniform3f", Uniform3f);
-        let uniform_matrix: UniformMatrix4fv = load!("glUniformMatrix4fv", UniformMatrix4fv);
-        let generate_buffers: GenBuffers = load!("glGenBuffers", GenBuffers);
-        let bind_buffer: BindBuffer = load!("glBindBuffer", BindBuffer);
-        let buffer_data: BufferData = load!("glBufferData", BufferData);
-        let enable_attrib: EnableAttrib = load!("glEnableVertexAttribArray", EnableAttrib);
-        let attrib_pointer: AttribPointer = load!("glVertexAttribPointer", AttribPointer);
-        let active_texture: ActiveTexture = load!("glActiveTexture", ActiveTexture);
-        use_program(program);
-        let vertices = crate::geometry::demo_mesh();
-        let mut buffer = 0;
-        generate_buffers(1, &mut buffer);
-        bind_buffer(0x8892, buffer); // ARRAY_BUFFER
-        buffer_data(
-            0x8892,
-            (vertices.len() * mem::size_of::<f32>()) as isize,
-            vertices.as_ptr().cast(),
-            0x88e4,
-        );
-        for (name, size, offset) in [
-            ("a_position", 3, 0),
-            ("a_uv", 2, 3),
-            ("a_light_uv", 2, 5),
-            ("a_color", 4, 7),
-        ] {
-            let index = location(program, name, get_attrib)? as u32;
-            enable_attrib(index);
-            attrib_pointer(index, size, 0x1406, 0, 44, (offset * 4) as *const c_void);
-        }
+        let mut guard = RendererGuard(Some(
+            crate::legacy_renderer::Renderer::new(|name| lookup(name))
+                .map_err(|e| format!("renderer init: {e:?}"))?,
+        ));
+        let renderer = guard.0.as_mut().expect("renderer guard owns renderer");
+        let atlas = renderer
+            .create_texture(
+                2,
+                1,
+                &[70, 170, 60, 255, 135, 85, 45, 255],
+                crate::legacy_renderer::TextureFilter::Nearest,
+            )
+            .map_err(|e| format!("atlas upload: {e:?}"))?;
+        let lightmap = renderer
+            .create_texture(
+                1,
+                1,
+                &[255; 4],
+                crate::legacy_renderer::TextureFilter::Linear,
+            )
+            .map_err(|e| format!("lightmap upload: {e:?}"))?;
+        let values = crate::geometry::demo_mesh();
+        let vertices: Vec<crate::legacy_renderer::Vertex> = values
+            .chunks_exact(11)
+            .map(|v| crate::legacy_renderer::Vertex {
+                pos: [v[0], v[1], v[2]],
+                uv: [v[3], v[4]],
+                light_uv: [v[5], v[6]],
+                color: [v[7], v[8], v[9], v[10]],
+            })
+            .collect();
+        let indices: Vec<u16> = (0..vertices.len()).map(|n| n as u16).collect();
+        let mesh = renderer
+            .create_mesh(&vertices, &indices)
+            .map_err(|e| format!("mesh upload: {e:?}"))?;
         let matrix: [f32; 16] = [
             0.12, -0.05, 0.02, 0.0, 0.0, 0.14, -0.02, 0.0, 0.05, 0.04, 0.02, 0.0, 0.0, -0.25, 0.0,
             1.0,
         ];
-        uniform_matrix(
-            location(program, "u_view_projection", get_uniform)?,
-            1,
-            0,
-            matrix.as_ptr(),
-        );
-        let origin = location(program, "u_section_origin", get_uniform)?;
-        uniform1f(location(program, "u_alpha_cutoff", get_uniform)?, 0.5);
-        let mut textures = [0u32; 2];
-        glGenTextures(2, textures.as_mut_ptr());
-        let atlas = [70u8, 170, 60, 255, 135, 85, 45, 255];
-        let white = [255u8; 4];
-        for (unit, name, width, pixels) in [
-            (0, "u_atlas", 2, atlas.as_ptr()),
-            (1, "u_lightmap", 1, white.as_ptr()),
-        ] {
-            active_texture(0x84c0 + unit);
-            glBindTexture(0x0de1, textures[unit as usize]);
-            glTexParameteri(0x0de1, 0x2801, 0x2600); // MIN_FILTER = NEAREST, no mipmaps
-            glTexParameteri(0x0de1, 0x2800, 0x2600);
-            glTexImage2D(
-                0x0de1,
-                0,
-                0x1908,
-                width,
-                1,
-                0,
-                0x1908,
-                0x1401,
-                pixels.cast(),
-            );
-            uniform1i(location(program, name, get_uniform)?, unit as i32);
-        }
-        glEnable(0x0b71); // DEPTH_TEST
-        glDepthFunc(0x0203); // LEQUAL
-        let error = glGetError();
-        if error != 0 {
-            return Err(format!("OpenGL initialization error 0x{error:04x}"));
-        }
         println!("Rendering synthetic terrain; arrows move the camera. Close the window to exit.");
         let mut camera = [0.0f32, 0.0f32];
         while !CLOSE.load(Ordering::Relaxed) {
@@ -598,11 +442,22 @@ mod windows {
             }
             let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
             if width > 0 && height > 0 {
-                glViewport(0, 0, width, height);
-                glClearColor(0.45, 0.67, 0.9, 1.0);
-                glClear(0x00004000 | 0x00000100);
-                uniform3f(origin, camera[0], 0.0, camera[1]);
-                glDrawArrays(0x0004, 0, (vertices.len() / 11) as i32);
+                renderer
+                    .begin_frame(width as u32, height as u32, [0.45, 0.67, 0.9, 1.0])
+                    .map_err(|e| format!("begin frame: {e:?}"))?;
+                renderer
+                    .draw_mesh(
+                        mesh,
+                        &crate::legacy_renderer::DrawState {
+                            atlas,
+                            lightmap,
+                            view_projection: matrix,
+                            section_origin: [camera[0], 0.0, camera[1]],
+                            pass: crate::legacy_renderer::Pass::Opaque,
+                            alpha_cutoff: 0.5,
+                        },
+                    )
+                    .map_err(|e| format!("draw: {e:?}"))?;
                 if check_pixels {
                     verify_pixels(width, height)?;
                     return Ok(());
