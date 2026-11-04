@@ -467,6 +467,68 @@ pub fn apply_patch_regions(
     atlas.update_rect_regions(patch.x, patch.y, patch.width, patch.height, &patch.rgba)
 }
 
+/// CPU atlas and retryable GPU dirty regions for dynamic glyphs and skins.
+/// Initially the caller must upload all pages. Afterwards apply each frame's
+/// patches, upload `dirty()` regions and acknowledge each successful upload.
+/// A failed upload remains dirty even if the frame is skipped.
+pub struct PatchAtlas {
+    atlas: Atlas,
+    dirty: Vec<Option<Region>>,
+}
+
+impl PatchAtlas {
+    pub fn new(atlas: Atlas) -> Self {
+        let dirty = vec![None; atlas.pages().len()];
+        Self { atlas, dirty }
+    }
+
+    pub fn atlas(&self) -> &Atlas {
+        &self.atlas
+    }
+
+    /// Patches are applied in order. If a later patch is invalid, earlier
+    /// changes remain pending; the invalid patch itself changes nothing.
+    pub fn apply(&mut self, patches: &[crate::font::Patch]) -> Result<(), Error> {
+        for patch in patches {
+            for changed in apply_patch_regions(&mut self.atlas, patch)? {
+                let slot = &mut self.dirty[changed.page];
+                *slot = Some(match *slot {
+                    None => changed.rect,
+                    Some(old) => {
+                        let x = old.x.min(changed.rect.x);
+                        let y = old.y.min(changed.rect.y);
+                        let right = (old.x + old.width).max(changed.rect.x + changed.rect.width);
+                        let bottom = (old.y + old.height).max(changed.rect.y + changed.rect.height);
+                        Region {
+                            x,
+                            y,
+                            width: right - x,
+                            height: bottom - y,
+                        }
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn dirty(&self) -> impl Iterator<Item = PageRegion> + '_ {
+        self.dirty
+            .iter()
+            .enumerate()
+            .filter_map(|(page, rect)| rect.map(|rect| PageRegion { page, rect }))
+    }
+
+    /// Mark a page clean only after its latest dirty region was uploaded. Do not
+    /// apply more patches to this page between obtaining `dirty()` and calling
+    /// this method; if upload fails, leave it pending for the next frame.
+    pub fn uploaded(&mut self, page: usize) -> Result<(), Error> {
+        let slot = self.dirty.get_mut(page).ok_or(Error::InvalidPatch)?;
+        *slot = None;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,6 +630,57 @@ mod tests {
                 .map(|p| p.pixels.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn patch_atlas_tracks_and_retries_coalesced_updates() {
+        let atlas = Atlas::new(8, 4, &[0; 8 * 4 * 4], 4).unwrap();
+        let mut state = PatchAtlas::new(atlas);
+        let patch = |x, y, width, height| crate::font::Patch {
+            x,
+            y,
+            width,
+            height,
+            rgba: vec![5; (width * height * 4) as usize],
+        };
+        state
+            .apply(&[patch(3, 1, 2, 1), patch(0, 0, 1, 1)])
+            .unwrap();
+        let pending: Vec<_> = state.dirty().collect();
+        assert_eq!(
+            pending,
+            vec![
+                PageRegion {
+                    page: 0,
+                    rect: Region {
+                        x: 0,
+                        y: 0,
+                        width: 4,
+                        height: 2
+                    }
+                },
+                PageRegion {
+                    page: 1,
+                    rect: Region {
+                        x: 0,
+                        y: 1,
+                        width: 1,
+                        height: 1
+                    }
+                },
+            ]
+        );
+        state.uploaded(0).unwrap();
+        assert_eq!(state.dirty().collect::<Vec<_>>(), pending[1..]);
+        assert_eq!(state.uploaded(2), Err(Error::InvalidPatch));
+        assert_eq!(
+            state.apply(&[patch(1, 2, 1, 1), patch(8, 0, 1, 1)]),
+            Err(Error::InvalidPatch)
+        );
+        assert_eq!(state.dirty().count(), 2); // prior valid patch and failed upload survive
+        state.uploaded(0).unwrap();
+        state.uploaded(1).unwrap();
+        assert_eq!(state.dirty().count(), 0);
     }
 
     #[test]
