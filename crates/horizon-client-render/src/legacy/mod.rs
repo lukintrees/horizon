@@ -3,6 +3,7 @@
 //! This module is not connected to the game loop yet. The current wgpu renderer
 //! remains the only selectable renderer. Keep these CPU structures independent
 //! of either graphics API so they can also be tested without a GPU.
+pub mod animation;
 pub mod atlas;
 pub mod entity;
 pub mod hud;

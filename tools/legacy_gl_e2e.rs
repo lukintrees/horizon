@@ -74,6 +74,34 @@ mod mesher {
 #[path = "../crates/horizon-client-render/src/overlay.rs"]
 mod overlay;
 mod sprites {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct FrameBlend {
+        pub frame: usize,
+        pub next: usize,
+        pub millis: u32,
+    }
+    #[derive(Clone)]
+    pub struct SpriteAnimation {
+        pub layer: u32,
+        frames: Vec<Vec<u8>>,
+    }
+    impl SpriteAnimation {
+        pub fn blend(&self, tick: u64) -> FrameBlend {
+            let frame = (tick as usize / 2) % 2;
+            let millis = if tick.is_multiple_of(2) { 0 } else { 500 };
+            FrameBlend {
+                frame,
+                next: if millis == 0 { frame } else { 1 - frame },
+                millis,
+            }
+        }
+        pub fn pixels(&self, frame: usize) -> &[u8] {
+            &self.frames[frame]
+        }
+    }
+    pub fn test_frames(layer: u32, frames: Vec<Vec<u8>>, _: &str) -> SpriteAnimation {
+        SpriteAnimation { layer, frames }
+    }
     pub struct Sprites {
         pub size: u32,
         pub pixels: Vec<u8>,
