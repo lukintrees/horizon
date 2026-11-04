@@ -40,6 +40,7 @@ pub mod caps;
 pub mod draw;
 pub mod error;
 pub mod exec;
+pub mod first_frame;
 pub mod gl;
 pub mod loader;
 pub mod mesh;
