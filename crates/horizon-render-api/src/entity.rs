@@ -8,6 +8,50 @@ pub enum Overlay {
     Hurt,
     White(u8),
 }
+/// Validated, exact f32 accessibility strength. Bits keep material equality
+/// deterministic without quantising the player's setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Strength(u32);
+impl Strength {
+    pub const ONE: Self = Self(1f32.to_bits());
+    pub fn new(value: f32) -> Result<Self, Error> {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(Error::InvalidGlint);
+        }
+        Ok(Self(if value == 0. { 0 } else { value.to_bits() }))
+    }
+    pub fn value(self) -> f32 {
+        f32::from_bits(self.0)
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Glint {
+    pub texture: crate::TextureId,
+    pub strength: Strength,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct GlintState {
+    pub item: crate::TextureId,
+    pub armor: crate::TextureId,
+    pub strength: Strength,
+    pub ticks: f32,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Options {
+    pub nether: bool,
+    pub glint: Option<GlintState>,
+}
+/// ARMOR_ENTITY_GLINT_TEXTURING is affine; transform before clipping so its UV
+/// can be interpolated normally. Never fract per vertex: repetition is sampled.
+pub fn armor_uv(model: [f32; 2], ticks: f32) -> [f32; 2] {
+    let ticks = ticks.rem_euclid(330000.);
+    let (s, c) = 0.17453292f32.sin_cos();
+    let [x, y] = model.map(|v| v * 0.16);
+    [
+        x * c - y * s - (ticks % 110000.) / 110000.,
+        x * s + y * c + (ticks % 30000.) / 30000.,
+    ]
+}
 /// Classic submission order before translucent terrain; particles follow it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
@@ -24,6 +68,7 @@ pub struct Material {
     pub overlay: Overlay,
     pub cull: bool,
     pub kind: Kind,
+    pub glint: Option<Glint>,
 }
 impl Material {
     pub fn overlay_color(self) -> Option<[f32; 4]> {
@@ -44,6 +89,7 @@ pub struct LitVertex {
     pub base: Vertex,
     pub back_color: [f32; 4],
     pub light_color: [f32; 4],
+    pub glint_uv: [f32; 2],
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Input {
@@ -53,10 +99,12 @@ pub struct Input {
     pub color: u32,
     pub light: u32,
     pub normal: [i8; 4],
+    pub glint_uv: [f32; 2],
 }
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidLightmap,
+    InvalidGlint,
     IncompleteQuad,
     MixedMaterial,
     UnsupportedMaterial(u32),
@@ -93,6 +141,26 @@ pub fn runs(
     nether: bool,
     max_vertices: usize,
 ) -> Result<Vec<gui::Run<LitVertex>>, Error> {
+    runs_with(
+        input,
+        lightmap,
+        Options {
+            nether,
+            glint: None,
+        },
+        max_vertices,
+    )
+}
+pub fn runs_with(
+    input: impl IntoIterator<Item = Input>,
+    lightmap: &[u8],
+    options: Options,
+    max_vertices: usize,
+) -> Result<Vec<gui::Run<LitVertex>>, Error> {
+    if options.glint.is_some_and(|g| !g.ticks.is_finite()) {
+        return Err(Error::InvalidGlint);
+    }
+    let nether = options.nether;
     if lightmap.len() != 16 * 16 * 4 {
         return Err(Error::InvalidLightmap);
     }
@@ -122,11 +190,20 @@ pub fn runs(
         }
         let code = first.layer & 0xffff;
         let overlay = match code {
-            0 | 13 | 14 | 15 | 32 | 35 => Overlay::None,
-            1 => Overlay::Hurt,
+            0 | 7 | 13 | 14 | 15 | 32 | 33 | 35 | 36 => Overlay::None,
+            1 | 8 => Overlay::Hurt,
             5 => Overlay::White(15),
             16..=31 => Overlay::White((code - 16) as u8),
             _ => return Err(Error::UnsupportedMaterial(code)),
+        };
+        let glint = if matches!(code, 7 | 8 | 33 | 36) {
+            let state = options.glint.ok_or(Error::UnsupportedMaterial(code))?;
+            Some(Glint {
+                texture: if code == 36 { state.armor } else { state.item },
+                strength: state.strength,
+            })
+        } else {
+            None
         };
         let w = (f32::from(first.normal[3]) / 127.).max(-1.);
         let material = Material {
@@ -137,13 +214,15 @@ pub fn runs(
                 13 => Kind::WaterMask,
                 14 => Kind::Shadow,
                 15 => Kind::Particle,
-                32 => Kind::Item,
+                32 | 33 => Kind::Item,
                 35 => Kind::Text,
                 _ => Kind::Body,
             },
+            glint,
         };
         if quad.iter().any(|v| {
             v.pos.iter().any(|f| !f.is_finite())
+                || (glint.is_some() && v.glint_uv.iter().any(|f| !f.is_finite()))
                 || (code != 13
                     && v.uv
                         .iter()
@@ -182,6 +261,13 @@ pub fn runs(
                 },
                 back_color: tint(back),
                 light_color: sample(lightmap, v.light),
+                glint_uv: if glint.is_none() {
+                    [0.; 2]
+                } else if code == 36 {
+                    armor_uv(v.glint_uv, options.glint.unwrap().ticks)
+                } else {
+                    v.glint_uv
+                },
             }
         });
         let pass = Pass::Entity(material);
@@ -238,6 +324,7 @@ mod tests {
             color: u32::MAX,
             light: 0xf0f0,
             normal: [0, 127, 0, -127],
+            glint_uv: [0.; 2],
         }
     }
     #[test]
@@ -271,7 +358,8 @@ mod tests {
             Pass::Entity(Material {
                 overlay: Overlay::Hurt,
                 cull: false,
-                kind: Kind::Body
+                kind: Kind::Body,
+                glint: None
             })
         );
     }
@@ -364,5 +452,96 @@ mod tests {
                 Some(Error::InvalidViewMaterial)
             );
         }
+    }
+    #[test]
+    fn glint_variants_preserve_overlay_item_depth_kind_and_independent_armor_clock() {
+        let state = GlintState {
+            item: crate::TextureId(11),
+            armor: crate::TextureId(12),
+            strength: Strength::new(0.37).unwrap(),
+            ticks: 27500.,
+        };
+        let options = Options {
+            nether: false,
+            glint: Some(state),
+        };
+        for code in [7, 8, 33, 36] {
+            let output = runs_with(
+                [Input {
+                    layer: code,
+                    glint_uv: [0.; 2],
+                    ..input()
+                }; 4],
+                &[255; 1024],
+                options,
+                4,
+            )
+            .unwrap();
+            let Pass::Entity(material) = output[0].pass else {
+                panic!("entity material")
+            };
+            let glint = material.glint.unwrap();
+            assert_eq!(
+                glint.texture,
+                crate::TextureId(if code == 36 { 12 } else { 11 })
+            );
+            assert_eq!(glint.strength.value(), 0.37);
+            assert_eq!(
+                material.overlay,
+                if code == 8 {
+                    Overlay::Hurt
+                } else {
+                    Overlay::None
+                }
+            );
+            assert_eq!(
+                material.kind,
+                if code == 33 { Kind::Item } else { Kind::Body }
+            );
+            let uv = output[0].vertices[0].glint_uv;
+            if code == 36 {
+                assert!((uv[0] + 0.25).abs() < 1e-6);
+                assert!((uv[1] - 11. / 12.).abs() < 1e-6);
+            } else {
+                assert_eq!(uv, [0.; 2]);
+            }
+        }
+        for ticks in [0., 27500., 165000.] {
+            assert_eq!(
+                armor_uv([0.3, 0.7], ticks),
+                armor_uv([0.3, 0.7], ticks + 330000.)
+            );
+        }
+        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+            assert!(Strength::new(value).is_err());
+        }
+        assert_eq!(Strength::new(-0.).unwrap(), Strength::new(0.).unwrap());
+        let bad = Input {
+            layer: 7,
+            glint_uv: [f32::NAN; 2],
+            ..input()
+        };
+        assert_eq!(
+            runs_with([bad; 4], &[255; 1024], options, 4).err(),
+            Some(Error::InvalidVertex)
+        );
+        let ignored = runs_with([Input { layer: 0, ..bad }; 4], &[255; 1024], options, 4).unwrap();
+        assert_eq!(ignored[0].vertices[0].glint_uv, [0.; 2]);
+        assert_eq!(
+            runs_with(
+                [],
+                &[255; 1024],
+                Options {
+                    glint: Some(GlintState {
+                        ticks: f32::NAN,
+                        ..state
+                    }),
+                    ..options
+                },
+                0
+            )
+            .err(),
+            Some(Error::InvalidGlint)
+        );
     }
 }

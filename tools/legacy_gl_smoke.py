@@ -26,7 +26,7 @@ REQUIRED_BACKEND_CHECKS = {
     "backend_ordered_blend_no_depth_write", "backend_overlay_scissor_reset",
     "backend_lightmap", "backend_fog", "backend_large_coordinates", "backend_validation_budget",
     "backend_context_isolation", "backend_resource_reclamation", "backend_terrain_atlas_contract",
-    "backend_resident_sections", "backend_gui_compositor", "backend_paged_gui", "backend_paged_entities", "backend_entity_layers",
+    "backend_resident_sections", "backend_gui_compositor", "backend_paged_gui", "backend_paged_entities", "backend_entity_layers", "backend_entity_glint",
 }
 MODES = (("gl20", "2.0", "110"), ("gl21", "2.1", "120"), ("native", None, "110"))
 

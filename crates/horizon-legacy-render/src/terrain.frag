@@ -1,6 +1,9 @@
 #version 110
 uniform sampler2D image;
 uniform sampler2D lightmap;
+uniform sampler2D foil;
+uniform float glint_strength;
+varying vec2 foil_uv;
 uniform float entity_mode;
 uniform float mask_only;
 uniform vec4 overlay;
@@ -24,6 +27,11 @@ void main() {
     if (entity_mode > 0.5) {
         pixel.rgb = mix(overlay.rgb, pixel.rgb, overlay.a);
         pixel *= vertex_light;
+        if (glint_strength > 0.0) {
+            vec3 g = glint_strength * texture2D(foil, foil_uv).rgb;
+            pixel.rgb += g * g;
+            pixel.a = max(pixel.a, glint_strength);
+        }
     } else pixel.rgb *= texture2D(lightmap, light_uv).rgb;
     float amount = clamp((distance_to_eye - fog.a) / (fog_end - fog.a), 0.0, 1.0);
     gl_FragColor = vec4(mix(pixel.rgb, fog.rgb, amount), pixel.a);

@@ -13,7 +13,7 @@ use horizon_legacy_render::{Budget, Context, Renderer};
 use horizon_render_api::{
     Image, RenderBackend, TextureId,
     atlas::AtlasLayout,
-    entity::Kind,
+    entity::{self, Kind},
     paged_gui::{self, Cache, Layout},
     scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
@@ -48,6 +48,25 @@ impl Default for Limits {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct GlintParameters {
+    pub strength: f32,
+    pub ticks: f32,
+}
+impl Default for GlintParameters {
+    fn default() -> Self {
+        Self {
+            strength: 1.,
+            ticks: 0.,
+        }
+    }
+}
+struct GlintTextures {
+    item: TextureId,
+    armor: TextureId,
+    bytes: usize,
+}
+
 /// Classic CPU geometry already posed relative to the camera. Projection uses
 /// conventional desktop GL depth, not the modern renderer's reversed Z.
 pub struct Geometry<'a> {
@@ -57,6 +76,7 @@ pub struct Geometry<'a> {
     pub see_through: &'a [crate::mesher::Vertex],
     pub hand_view_projection: [f32; 16],
     pub nether_lighting: bool,
+    pub glint: GlintParameters,
 }
 
 /// Movable, thread-confined owner: scene -> backend -> native context. No leaked
@@ -69,6 +89,8 @@ pub struct TerrainHudRenderer {
     white: TextureId,
     lightmap: Vec<u8>,
     retired_hud: Vec<Cache>,
+    glint_textures: Option<GlintTextures>,
+    retired_glint: Vec<TextureId>,
     limits: Limits,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
@@ -113,8 +135,62 @@ impl TerrainHudRenderer {
             white,
             lightmap: lightmap.to_vec(),
             retired_hud: Vec::new(),
+            glint_textures: None,
+            retired_glint: Vec::new(),
             limits,
         })
+    }
+
+    /// Stage dedicated repeating glint images without changing atlas pixels.
+    /// Existing glint remains selected on validation/allocation failure. The
+    /// bounded page cache is emptied (framebuffer colour is not cleared).
+    pub fn set_glint_textures(&mut self, item: Image<'_>, armor: Image<'_>) -> Result<(), String> {
+        self.collect_glint()?;
+        self.collect_hud()?;
+        self.cache.release(self.world.backend_mut())?;
+        let staged = (|| -> Result<_, String> {
+            let bytes = item
+                .rgba
+                .len()
+                .checked_add(armor.rgba.len())
+                .ok_or("glint size overflow")?;
+            let item = self.world.backend_mut().create_texture(item)?;
+            self.retired_glint.push(item);
+            let armor = self.world.backend_mut().create_texture(armor)?;
+            self.retired_glint.push(armor);
+            let remaining = self.world.backend_mut().remaining();
+            let old_bytes = self.glint_textures.as_ref().map_or(0, |t| t.bytes);
+            let old_count = if self.glint_textures.is_some() { 2 } else { 0 };
+            let capacity = self
+                .limits
+                .hud_resident_pages
+                .min(remaining.textures + old_count)
+                .min((remaining.texture_bytes + old_bytes) / self.hud.layout().page_bytes());
+            let cache = Cache::new(self.hud.layout(), capacity).map_err(diagnostic)?;
+            Ok((GlintTextures { item, armor, bytes }, cache, capacity))
+        })();
+        let (textures, cache, capacity) = match staged {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = self.collect_glint();
+                return Err(error);
+            }
+        };
+        // Both staged handles now belong to the new active owner.
+        self.retired_glint.clear();
+        if let Some(old) = self.glint_textures.replace(textures) {
+            self.retired_glint.extend([old.item, old.armor]);
+        }
+        self.cache = cache;
+        self.hud_capacity = capacity;
+        Ok(())
+    }
+    fn collect_glint(&mut self) -> Result<(), String> {
+        while let Some(&id) = self.retired_glint.last() {
+            self.world.backend_mut().remove_texture(id)?;
+            self.retired_glint.pop();
+        }
+        Ok(())
     }
 
     pub fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
@@ -160,6 +236,7 @@ impl TerrainHudRenderer {
                 see_through: &[],
                 hand_view_projection: world.view_projection,
                 nether_lighting: nether,
+                glint: GlintParameters::default(),
             },
         )
     }
@@ -169,6 +246,19 @@ impl TerrainHudRenderer {
         hud: &HudBatch,
         geometry: &Geometry<'_>,
     ) -> Result<(), String> {
+        let strength = entity::Strength::new(geometry.glint.strength).map_err(diagnostic)?;
+        if !geometry.glint.ticks.is_finite() {
+            return Err("invalid glint clock".into());
+        }
+        let options = entity::Options {
+            nether: geometry.nether_lighting,
+            glint: self.glint_textures.as_ref().map(|t| entity::GlintState {
+                item: t.item,
+                armor: t.armor,
+                strength,
+                ticks: geometry.glint.ticks,
+            }),
+        };
         if geometry
             .entities
             .len()
@@ -182,10 +272,10 @@ impl TerrainHudRenderer {
         {
             return Err("invalid hand projection".into());
         }
-        let mut hand = entity_bridge::prepare(
+        let mut hand = entity_bridge::prepare_with(
             geometry.hand,
             &self.lightmap,
-            geometry.nether_lighting,
+            options,
             self.hud.layout(),
             self.limits.entity_vertices,
             entity_bridge::View::World,
@@ -209,10 +299,10 @@ impl TerrainHudRenderer {
                 .iter()
                 .map(|r| r.geometry.vertices.len())
                 .sum::<usize>();
-        let see_through = entity_bridge::prepare(
+        let see_through = entity_bridge::prepare_with(
             geometry.see_through,
             &self.lightmap,
-            geometry.nether_lighting,
+            options,
             self.hud.layout(),
             remaining,
             entity_bridge::View::SeeThrough,
@@ -223,10 +313,10 @@ impl TerrainHudRenderer {
                 .iter()
                 .map(|r| r.geometry.vertices.len())
                 .sum::<usize>();
-        let entity = entity_bridge::prepare(
+        let entity = entity_bridge::prepare_with(
             geometry.entities,
             &self.lightmap,
-            geometry.nether_lighting,
+            options,
             self.hud.layout(),
             remaining,
             entity_bridge::View::World,
@@ -257,6 +347,7 @@ impl TerrainHudRenderer {
         self.collect_hud()?;
         self.world.collect_garbage().map_err(diagnostic)?;
         self.cache.collect_garbage(self.world.backend_mut())?;
+        self.collect_glint()?;
         let remaining = self.world.backend_mut().remaining();
         if runs.iter().any(|run| {
             std::mem::size_of_val(run.geometry.vertices.as_slice())
@@ -369,6 +460,10 @@ impl TerrainHudRenderer {
 }
 impl Drop for TerrainHudRenderer {
     fn drop(&mut self) {
+        if let Some(textures) = self.glint_textures.take() {
+            self.retired_glint.extend([textures.item, textures.armor]);
+        }
+        let _ = self.collect_glint();
         let _ = self.cache.release(self.world.backend_mut());
         let _ = self.world.backend_mut().remove_texture(self.white);
         for mut cache in self.retired_hud.drain(..) {
@@ -723,6 +818,7 @@ mod tests {
                     see_through: &[],
                     hand_view_projection: IDENTITY,
                     nether_lighting: false,
+                    glint: GlintParameters::default(),
                 },
             )
             .unwrap();
@@ -747,7 +843,8 @@ mod tests {
                         hand: &hand,
                         see_through: &[],
                         hand_view_projection: invalid,
-                        nether_lighting: false
+                        nether_lighting: false,
+                        glint: GlintParameters::default(),
                     }
                 )
                 .is_err()
@@ -877,6 +974,7 @@ mod tests {
                     see_through: &names,
                     hand_view_projection: IDENTITY,
                     nether_lighting: false,
+                    glint: GlintParameters::default(),
                 },
             )
             .unwrap();
@@ -892,6 +990,7 @@ mod tests {
                     see_through: &names,
                     hand_view_projection: IDENTITY,
                     nether_lighting: false,
+                    glint: GlintParameters::default(),
                 },
             )
             .unwrap();
@@ -908,7 +1007,8 @@ mod tests {
                         hand: &held,
                         see_through: &names,
                         hand_view_projection: IDENTITY,
-                        nether_lighting: false
+                        nether_lighting: false,
+                        glint: GlintParameters::default(),
                     }
                 )
                 .is_err()
@@ -925,6 +1025,7 @@ mod tests {
                     see_through: &names,
                     hand_view_projection: IDENTITY,
                     nether_lighting: false,
+                    glint: GlintParameters::default(),
                 },
             )
             .unwrap();
@@ -941,11 +1042,194 @@ mod tests {
                         hand: &mask,
                         see_through: &[],
                         hand_view_projection: IDENTITY,
-                        nether_lighting: false
+                        nether_lighting: false,
+                        glint: GlintParameters::default(),
                     }
                 )
                 .is_err()
         );
         assert_eq!(renderer.read_rgba([48, 32, 1, 1]).unwrap(), before);
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_glint_hand_reload_rollback_and_exact_page_budget() {
+        use crate::mesher::Vertex;
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 3;
+        atlas.height = 1;
+        atlas.pixels = [64, 128, 192, 255].repeat(3);
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[128, 255, 64, 255].repeat(256),
+            &atlas,
+            Limits {
+                gpu: Budget {
+                    texture_bytes: 1164,
+                    mesh_bytes: 516,
+                },
+                hud_page_size: 4,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: None,
+            solid: &[],
+            translucent: &[],
+        };
+        let hud = HudBatch::new([64; 2]);
+        let quad = |layer| {
+            [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]].map(|pos| Vertex {
+                pos,
+                uv: [0.5 / 3., 0.5],
+                layer,
+                color: u32::MAX,
+                light: 0xf0f0,
+                normal: [0; 4],
+                glint_uv: [-0.25, 1.25],
+            })
+        };
+        let sample = |r: &mut TerrainHudRenderer, expected: [u8; 3]| {
+            let actual = r.read_rgba([32, 32, 1, 1]).unwrap();
+            for i in 0..3 {
+                assert!(
+                    (i16::from(actual[i]) - i16::from(expected[i])).abs() <= 2,
+                    "{actual:?} != {expected:?}"
+                );
+            }
+        };
+        renderer
+            .render_with_entities(&frame, &hud, &quad(0), false)
+            .unwrap();
+        sample(&mut renderer, [32, 128, 48]);
+        let before = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        assert!(
+            renderer
+                .render_with_entities(&frame, &hud, &quad(7), false)
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), before);
+        let image = |rgba| Image {
+            width: 1,
+            height: 1,
+            rgba,
+        };
+        renderer
+            .set_glint_textures(image(&[128, 64, 0, 0]), image(&[0, 128, 128, 0]))
+            .unwrap();
+        let draw = |renderer: &mut TerrainHudRenderer, layer, hand, strength| {
+            let vertices = quad(layer);
+            renderer.render_geometry(
+                &frame,
+                &hud,
+                &Geometry {
+                    entities: if hand { &[] } else { &vertices },
+                    hand: if hand { &vertices } else { &[] },
+                    see_through: &[],
+                    hand_view_projection: IDENTITY,
+                    nether_lighting: false,
+                    glint: GlintParameters {
+                        strength,
+                        ticks: 27500.,
+                    },
+                },
+            )
+        };
+        for hand in [false, true] {
+            for (layer, color) in [
+                (7, [48, 132, 48]),
+                (8, [77, 93, 34]),
+                (33, [48, 132, 48]),
+                (36, [32, 144, 64]),
+            ] {
+                draw(&mut renderer, layer, hand, 0.5).unwrap();
+                sample(&mut renderer, color);
+            }
+        }
+        draw(&mut renderer, 7, false, 0.).unwrap();
+        sample(&mut renderer, [32, 128, 48]);
+        let stable = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        for strength in [f32::NAN, -0.1, 1.1] {
+            assert!(draw(&mut renderer, 7, false, strength).is_err());
+            assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), stable);
+        }
+        // A half-transparent base becomes opaque with full glint strength.
+        let mut patched = HudBatch::new([64; 2]);
+        patched.patches.push(crate::font::Patch {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![64, 128, 192, 128],
+        });
+        renderer
+            .render_with_entities(&frame, &patched, &quad(33), false)
+            .unwrap();
+        sample(&mut renderer, [96, 144, 48]);
+        let stable = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        // Stage first image, reject malformed second; active images/frame survive.
+        assert!(
+            renderer
+                .set_glint_textures(
+                    image(&[255; 4]),
+                    Image {
+                        width: 2,
+                        height: 2,
+                        rgba: &[255; 4]
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), stable);
+        draw(&mut renderer, 33, true, 1.).unwrap();
+        sample(&mut renderer, [96, 144, 48]);
+        // Both images fit, but leave no room for even one atlas page. Roll back
+        // BOTH staged handles, retaining the old assets and original cache quota.
+        assert!(
+            renderer
+                .set_glint_textures(
+                    Image {
+                        width: 2,
+                        height: 2,
+                        rgba: &[255; 16]
+                    },
+                    image(&[255; 4])
+                )
+                .is_err()
+        );
+        draw(&mut renderer, 7, false, 1.).unwrap();
+        sample(&mut renderer, [96, 144, 48]);
+        for _ in 0..4 {
+            renderer
+                .set_glint_textures(image(&[0, 128, 0, 0]), image(&[0, 0, 128, 0]))
+                .unwrap();
+        }
+        // Retired assets must be collected BEFORE the next page preflight/upload:
+        // only 64 bytes remain in this deliberately exact texture budget.
+        draw(&mut renderer, 33, true, 1.).unwrap();
+        sample(&mut renderer, [32, 192, 48]);
+        draw(&mut renderer, 36, false, 1.).unwrap();
+        sample(&mut renderer, [32, 128, 112]);
+        let stats = renderer.world.backend_mut().stats();
+        assert_eq!(stats.texture_bytes, 1164);
+        assert_eq!(stats.textures, 6);
+        assert_eq!(stats.mesh_bytes, 0);
+        assert_eq!(stats.meshes, 0);
     }
 }

@@ -54,6 +54,7 @@ struct Uniforms {
     entity: i32,
     overlay: i32,
     mask: i32,
+    glint: i32,
 }
 
 pub struct Renderer<'a> {
@@ -135,7 +136,7 @@ impl<'a> Renderer<'a> {
             (gl.get_integer)(0x8872, &mut u);
             (t, a, u)
         };
-        if max_texture < 1 || attributes < 6 || units < 2 {
+        if max_texture < 1 || attributes < 7 || units < 3 {
             return Err("insufficient GL2 texture/attribute limits".into());
         }
         let program = program(&gl)?;
@@ -152,6 +153,7 @@ impl<'a> Renderer<'a> {
                 entity: -1,
                 overlay: -1,
                 mask: -1,
+                glint: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -179,10 +181,12 @@ impl<'a> Renderer<'a> {
                 entity: location(c"entity_mode")?,
                 overlay: location(c"overlay")?,
                 mask: location(c"mask_only")?,
+                glint: location(c"glint_strength")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
             (this.gl.uniform1i)(location(c"lightmap")?, 1);
+            (this.gl.uniform1i)(location(c"foil")?, 2);
         }
         this.check()?;
         Ok(this)
@@ -304,6 +308,20 @@ impl<'a> Renderer<'a> {
             return Err("entity mesh/pass mismatch".into());
         }
         if let Pass::Entity(material) = draw.pass {
+            if let Some(glint) = material.glint {
+                let foil = self
+                    .textures
+                    .get(&glint.texture)
+                    .ok_or("unknown glint texture")?;
+                if !matches!(material.kind, Kind::Body | Kind::Item) {
+                    return Err("glint on unsupported material".into());
+                }
+                if (glint.texture == draw.texture || glint.texture == draw.lightmap)
+                    && foil.size != [1, 1]
+                {
+                    return Err("glint requires an independent repeating texture".into());
+                }
+            }
             if material.overlay_color().is_none() {
                 return Err("invalid entity overlay".into());
             }
@@ -445,6 +463,7 @@ impl RenderBackend for Renderer<'_> {
             v.back_color
                 .iter()
                 .chain(&v.light_color)
+                .chain(&v.glint_uv)
                 .any(|f| !f.is_finite())
         }) {
             return Err("invalid entity lighting".into());
@@ -523,6 +542,23 @@ impl RenderBackend for Renderer<'_> {
                     _ => None,
                 };
                 (self.gl.uniform1f)(self.uniforms.entity, if entity.is_some() { 1. } else { 0. });
+                let glint = entity.and_then(|m| m.glint);
+                (self.gl.uniform1f)(
+                    self.uniforms.glint,
+                    glint.map_or(0., |g| g.strength.value()),
+                );
+                (self.gl.active_texture)(0x84C2);
+                // A complete sampler binding is required even when strength is 0.
+                let foil = glint.map_or(draw.lightmap, |g| g.texture);
+                (self.gl.bind_texture)(0x0DE1, self.textures[&foil].name);
+                if glint.is_some() {
+                    for parameter in [0x2802, 0x2803] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, 0x2901);
+                    }
+                    for parameter in [0x2800, 0x2801] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, 0x2601);
+                    }
+                }
                 let mask = entity.is_some_and(|m| m.kind == Kind::WaterMask);
                 (self.gl.uniform1f)(self.uniforms.mask, if mask { 1. } else { 0. });
                 let write = u8::from(!mask);
@@ -610,6 +646,9 @@ impl RenderBackend for Renderer<'_> {
                 for (unit, id) in [(0x84C0, draw.texture), (0x84C1, draw.lightmap)] {
                     (self.gl.active_texture)(unit);
                     (self.gl.bind_texture)(0x0DE1, self.textures[&id].name);
+                    for parameter in [0x2802, 0x2803] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, 0x812F);
+                    }
                     // The credits vignette uses a linear atlas sampler. Restore
                     // nearest on every other draw, including the lightmap.
                     let filter = if unit == 0x84C0 && draw.pass == Pass::OverlayVignette {
@@ -628,19 +667,19 @@ impl RenderBackend for Renderer<'_> {
                         count,
                         0x1406,
                         0,
-                        if mesh.entity { 76 } else { 44 },
+                        if mesh.entity { 84 } else { 44 },
                         offset as *const c_void,
                     );
                     (self.gl.enable_attribute)(index);
                 }
-                for (index, offset) in [(4, 44), (5, 60)] {
+                for (index, count, offset) in [(4, 4, 44), (5, 4, 60), (6, 2, 76)] {
                     if mesh.entity {
                         (self.gl.attribute_pointer)(
                             index,
-                            4,
+                            count,
                             0x1406,
                             0,
-                            76,
+                            84,
                             offset as *const c_void,
                         );
                         (self.gl.enable_attribute)(index);
@@ -738,6 +777,7 @@ fn program(gl: &Gl<'_>) -> Result<u32, String> {
             c"color",
             c"back_color",
             c"light_color",
+            c"foilcoord",
         ]
         .iter()
         .enumerate()

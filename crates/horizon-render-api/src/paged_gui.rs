@@ -128,7 +128,7 @@ struct ClipVertex {
     uv: [f64; 2],
     light: [f64; 2],
     color: [f64; 4],
-    extra: [f64; 8],
+    extra: [f64; 10],
 }
 impl ClipVertex {
     fn new<V: AtlasVertex>(vertex: &V, size: [u32; 2]) -> Self {
@@ -192,18 +192,18 @@ fn clip(poly: Vec<ClipVertex>, axis: usize, edge: f64, below: bool) -> Vec<ClipV
 trait AtlasVertex: Copy {
     const ENTITY: bool;
     fn base(&self) -> &Vertex;
-    fn extra(&self) -> [f32; 8];
-    fn from_parts(base: Vertex, extra: [f32; 8]) -> Self;
+    fn extra(&self) -> [f32; 10];
+    fn from_parts(base: Vertex, extra: [f32; 10]) -> Self;
 }
 impl AtlasVertex for Vertex {
     const ENTITY: bool = false;
     fn base(&self) -> &Vertex {
         self
     }
-    fn extra(&self) -> [f32; 8] {
-        [0.; 8]
+    fn extra(&self) -> [f32; 10] {
+        [0.; 10]
     }
-    fn from_parts(base: Vertex, _: [f32; 8]) -> Self {
+    fn from_parts(base: Vertex, _: [f32; 10]) -> Self {
         base
     }
 }
@@ -212,20 +212,23 @@ impl AtlasVertex for crate::entity::LitVertex {
     fn base(&self) -> &Vertex {
         &self.base
     }
-    fn extra(&self) -> [f32; 8] {
+    fn extra(&self) -> [f32; 10] {
         std::array::from_fn(|i| {
             if i < 4 {
                 self.back_color[i]
-            } else {
+            } else if i < 8 {
                 self.light_color[i - 4]
+            } else {
+                self.glint_uv[i - 8]
             }
         })
     }
-    fn from_parts(base: Vertex, extra: [f32; 8]) -> Self {
+    fn from_parts(base: Vertex, extra: [f32; 10]) -> Self {
         Self {
             base,
             back_color: std::array::from_fn(|i| extra[i]),
             light_color: std::array::from_fn(|i| extra[i + 4]),
+            glint_uv: std::array::from_fn(|i| extra[i + 8]),
         }
     }
 }

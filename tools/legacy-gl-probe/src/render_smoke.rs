@@ -381,6 +381,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_paged_entities");
     entity_layers(context)?;
     checks.push("backend_entity_layers");
+    entity_glint(context)?;
+    checks.push("backend_entity_glint");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -954,6 +956,7 @@ fn paged_entities(context: &Context) -> Result<(), String> {
         color: u32::MAX,
         light: 0xf0f0,
         normal: [0, 127, 0, -127],
+        glint_uv: [0.; 2],
     });
     let mut view = WorldView {
         view_projection: IDENTITY,
@@ -1097,6 +1100,7 @@ fn paged_entities(context: &Context) -> Result<(), String> {
         overlay: entity::Overlay::None,
         cull: false,
         kind: entity::Kind::Body,
+        glint: None,
     };
     let mut bad = frame(&[]);
     bad.clear = Clear::ColorDepth([1., 1., 0., 1.]);
@@ -1119,6 +1123,7 @@ fn paged_entities(context: &Context) -> Result<(), String> {
         base,
         back_color: [1.; 4],
         light_color: [1.; 4],
+        glint_uv: [0.; 2],
     };
     vertex.light_color[0] = f32::NAN;
     require(
@@ -1192,6 +1197,7 @@ fn entity_layers(context: &Context) -> Result<(), String> {
             color,
             light: 0xf0f0,
             normal: [0; 4],
+            glint_uv: [0.; 2],
         })
     };
     let prepare = |vertices: [Input; 4]| -> Result<_, String> {
@@ -1361,5 +1367,282 @@ fn entity_layers(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "special entity layers retained resources",
+    )
+}
+
+fn entity_glint(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        entity::{self, GlintState, Input, Options, Strength},
+        paged_gui::{self, Cache, Layout, WorldView},
+    };
+    fn error(e: impl std::fmt::Debug) -> String {
+        format!("entity glint: {e:?}")
+    }
+    let mut renderer = Renderer::new(
+        context,
+        Budget {
+            texture_bytes: 100,
+            mesh_bytes: 516,
+        },
+    )?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let item_pixels = [255, 0, 0, 0, 0, 0, 255, 0].repeat(2);
+    let armor_pixels = [0, 255, 0, 0, 255, 255, 255, 0].repeat(2);
+    let item = renderer.create_texture(Image {
+        width: 2,
+        height: 2,
+        rgba: &item_pixels,
+    })?;
+    let armor = renderer.create_texture(Image {
+        width: 2,
+        height: 2,
+        rgba: &armor_pixels,
+    })?;
+    let layout = Layout::new([6, 2], 4, 3).map_err(error)?;
+    let mut cache = Cache::new(layout, 1).map_err(error)?;
+    let view = WorldView {
+        view_projection: IDENTITY,
+        camera: [30_000_000.; 3],
+        fog: None,
+        lightmap: white,
+    };
+    let options = Options {
+        nether: false,
+        glint: Some(GlintState {
+            item,
+            armor,
+            strength: Strength::ONE,
+            ticks: 0.,
+        }),
+    };
+    let p = [
+        [-0.9375, -0.9375, 0.],
+        [0.9375, -0.9375, 0.],
+        [0.9375, 0.9375, 0.],
+        [-0.9375, 0.9375, 0.],
+    ];
+    let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
+    let input_quad = std::array::from_fn::<_, 4, _>(|i| Input {
+        pos: p[i],
+        uv: uv[i],
+        layer: 7,
+        color: u32::MAX,
+        light: 0xf0f0,
+        normal: [0; 4],
+        glint_uv: [0.; 2],
+    });
+    let prepare = |quad: [Input; 4], options, light: &[u8]| -> Result<_, String> {
+        let runs = entity::runs_with(quad, light, options, 4).map_err(error)?;
+        paged_gui::split_entities(layout, &runs, 128).map_err(error)
+    };
+    let mut pixels = [0, 0, 0, 255].repeat(12);
+    for (u, expected) in [
+        (-0.25, [0, 0, 255]),
+        (0., [64, 0, 64]),
+        (0.25, [255, 0, 0]),
+        (0.75, [0, 0, 255]),
+        (1.25, [255, 0, 0]),
+    ] {
+        let runs = prepare(
+            input_quad.map(|v| Input {
+                glint_uv: [u, 0.5],
+                ..v
+            }),
+            options,
+            &[255; 1024],
+        )?;
+        renderer.render(&frame(&[]))?;
+        cache
+            .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+            .map_err(error)?;
+        pixel(&mut renderer, [32, 32], expected)?;
+    }
+    // Continuous repeating coordinates, not page-local/reset/fracted endpoints.
+    let gradient = std::array::from_fn::<_, 4, _>(|i| Input {
+        glint_uv: [if i == 0 || i == 3 { -0.25 } else { 1.25 }, 0.5],
+        ..input_quad[i]
+    });
+    let runs = prepare(gradient, options, &[255; 1024])?;
+    renderer.render(&frame(&[]))?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    for x in 2..62 {
+        let u = -0.25 + (x as f32 + 0.5 - 2.) / 60. * 1.5;
+        let t = u * 2. - 0.5;
+        let cell = t.floor() as i32;
+        let weight = t - t.floor();
+        let red = if cell.rem_euclid(2) == 0 {
+            1. - weight
+        } else {
+            weight
+        };
+        pixel(
+            &mut renderer,
+            [x, 32],
+            [
+                (255. * red * red).round() as u8,
+                0,
+                (255. * (1. - red) * (1. - red)).round() as u8,
+            ],
+        )?;
+    }
+    // Armour uses a different image and model-UV transform/clock.
+    for (ticks, expected) in [
+        (0., [64, 255, 64]),
+        (27500., [255; 3]),
+        (82500., [0, 255, 0]),
+        (357500., [255; 3]),
+    ] {
+        let opt = Options {
+            glint: Some(GlintState {
+                ticks,
+                ..options.glint.unwrap()
+            }),
+            ..options
+        };
+        let runs = prepare(
+            input_quad.map(|v| Input {
+                layer: 36,
+                glint_uv: [0.; 2],
+                ..v
+            }),
+            opt,
+            &[255; 1024],
+        )?;
+        renderer.render(&frame(&[]))?;
+        cache
+            .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+            .map_err(error)?;
+        pixel(&mut renderer, [32, 32], expected)?;
+    }
+    // Squared strength and post-lighting contribution, then hurt before lighting.
+    renderer.update_texture(
+        item,
+        [0, 0],
+        Image {
+            width: 2,
+            height: 2,
+            rgba: &[128, 64, 0, 0].repeat(4),
+        },
+    )?;
+    pixels = [64, 128, 192, 255].repeat(12);
+    cache.invalidate(&[0, 1, 2]);
+    let half = Options {
+        glint: Some(GlintState {
+            strength: Strength::new(0.5).map_err(error)?,
+            ..options.glint.unwrap()
+        }),
+        ..options
+    };
+    let light = [128, 255, 64, 255].repeat(256);
+    for (layer, expected) in [(7, [48, 132, 48]), (8, [77, 93, 34])] {
+        let runs = prepare(input_quad.map(|v| Input { layer, ..v }), half, &light)?;
+        renderer.render(&frame(&[]))?;
+        cache
+            .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+            .map_err(error)?;
+        pixel(&mut renderer, [32, 32], expected)?;
+    }
+    let zero = Options {
+        glint: Some(GlintState {
+            strength: Strength::new(0.).map_err(error)?,
+            ..options.glint.unwrap()
+        }),
+        ..options
+    };
+    let runs = prepare(input_quad, zero, &light)?;
+    renderer.render(&frame(&[]))?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [32, 128, 48])?;
+    // Fog must cover the added glint too, in camera-relative coordinates.
+    let fogged = WorldView {
+        camera: [0.; 3],
+        fog: Some(Fog {
+            color: [0., 0., 1.],
+            start: 0.,
+            end: 0.0001,
+        }),
+        ..view
+    };
+    let runs = prepare(input_quad, options, &light)?;
+    renderer.render(&frame(&[]))?;
+    cache
+        .render_world(&mut renderer, &runs, &fogged, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 0, 255])?;
+    // Glint restores alpha even in darkness, but only after base alpha cutout.
+    pixels = [0, 0, 0, 128].repeat(12);
+    cache.invalidate(&[0, 1, 2]);
+    let runs = prepare(
+        input_quad.map(|v| Input { layer: 33, ..v }),
+        options,
+        &[0; 1024],
+    )?;
+    renderer.render(&frame(&[]))?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [64, 16, 0])?;
+    pixels = [0, 0, 0, 0].repeat(12);
+    cache.invalidate(&[0, 1, 2]);
+    renderer.render(&frame(&[]))?;
+    cache
+        .render_world(&mut renderer, &runs, &view, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0; 3])?;
+    // Reject sampler aliases before clear, and restore normal clamp/nearest when
+    // a previously repeating/linear foil becomes an ordinary image.
+    let mesh = renderer.create_entity_mesh(&runs[0].geometry.vertices[..3], &[0, 1, 2])?;
+    let bad = Draw {
+        mesh,
+        texture: item,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: runs[0].geometry.pass,
+        scissor: None,
+    };
+    require(
+        renderer.render(&frame(&[bad])).is_err(),
+        "glint sampler alias accepted",
+    )?;
+    renderer.remove_mesh(mesh)?;
+    cache.release(&mut renderer)?;
+    renderer.update_texture(
+        item,
+        [0, 0],
+        Image {
+            width: 2,
+            height: 2,
+            rgba: &[255, 0, 0, 255, 0, 0, 255, 255].repeat(2),
+        },
+    )?;
+    for (u, expected) in [(-0.25, [255, 0, 0]), (0.5, [0, 0, 255])] {
+        let vertices = quad([1.; 4], 0., 0.9).map(|v| Vertex { uv: [u, 0.5], ..v });
+        let mesh = renderer.create_mesh(&vertices, &[0, 1, 2, 0, 2, 3])?;
+        let draw = Draw {
+            mesh,
+            texture: item,
+            lightmap: white,
+            origin: [0.; 3],
+            pass: Pass::Opaque,
+            scissor: None,
+        };
+        renderer.render(&frame(&[draw]))?;
+        pixel(&mut renderer, [32, 32], expected)?;
+        renderer.remove_mesh(mesh)?;
+    }
+    renderer.remove_texture(item)?;
+    renderer.remove_texture(armor)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "glint resources not reclaimed",
     )
 }

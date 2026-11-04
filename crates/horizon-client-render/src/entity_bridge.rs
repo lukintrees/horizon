@@ -20,6 +20,7 @@ fn input(v: &Vertex) -> entity::Input {
         color: v.color,
         light: v.light,
         normal: v.normal,
+        glint_uv: v.glint_uv,
     }
 }
 #[derive(Clone, Copy)]
@@ -42,11 +43,36 @@ pub fn prepare(
     max_vertices: usize,
     view: View,
 ) -> Result<Vec<horizon_render_api::paged_gui::Run<LitVertex>>, PrepareError> {
+    prepare_with(
+        vertices,
+        lightmap,
+        entity::Options {
+            nether,
+            glint: None,
+        },
+        layout,
+        max_vertices,
+        view,
+    )
+}
+pub fn prepare_with(
+    vertices: &[Vertex],
+    lightmap: &[u8],
+    options: entity::Options,
+    layout: horizon_render_api::paged_gui::Layout,
+    max_vertices: usize,
+    view: View,
+) -> Result<Vec<horizon_render_api::paged_gui::Run<LitVertex>>, PrepareError> {
     let source = match view {
-        View::World => runs(vertices, lightmap, nether, max_vertices),
-        View::SeeThrough => {
-            entity::see_through_runs(vertices.iter().map(input), lightmap, nether, max_vertices)
+        View::World => {
+            entity::runs_with(vertices.iter().map(input), lightmap, options, max_vertices)
         }
+        View::SeeThrough => entity::see_through_runs(
+            vertices.iter().map(input),
+            lightmap,
+            options.nether,
+            max_vertices,
+        ),
     }
     .map_err(PrepareError::Entity)?;
     horizon_render_api::paged_gui::split_entities(layout, &source, max_vertices)
