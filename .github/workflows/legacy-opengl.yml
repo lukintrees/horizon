@@ -31,7 +31,7 @@ jobs:
       - name: Install Mesa and client build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libosmesa6 libasound2-dev libudev-dev libgl-dev libx11-dev xvfb xauth
+          sudo apt-get install -y --no-install-recommends libosmesa6 libasound2-dev libudev-dev libgl-dev libx11-dev libxkbcommon-x11-0 xvfb xauth
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-opengl
