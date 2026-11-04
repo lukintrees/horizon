@@ -249,9 +249,6 @@ pub fn open(
     extensions: &[&str],
 ) -> Result<Vec<String>, String> {
     let capabilities = capabilities(reported, extensions)?;
-    if !request.accepts(capabilities.gl) {
-        return Err(request.refusal(capabilities.gl));
-    }
     let missing = capabilities.missing();
     if !missing.is_empty() {
         let mut message =
@@ -264,6 +261,11 @@ pub fn open(
              needs nothing a 2007 driver does not have.",
         );
         return Err(message);
+    }
+    // A driver below the floor gets the list above; one that has everything but is not the version
+    // the profile asked for gets this sentence.
+    if !request.accepts(capabilities.gl) {
+        return Err(request.refusal(capabilities.gl));
     }
     let mut log = vec![format!(
         "Horizon: OpenGL {}.{}, GLSL {} (asked for {}.{}), {} texels, {} vertex attributes, {} \
@@ -418,7 +420,7 @@ mod tests {
 
     #[test]
     fn the_loader_says_where_a_missing_pointer_comes_from() {
-        let loader = Known(vec!["glTexImage2D", "glDrawArrays", "glGenVertexArrays"]);
+        let loader = Known(vec!["glDrawArrays", "glGenVertexArrays"]);
         // A 1.1 entry point the driver's getProcAddress does not answer for: load it from libGL.
         let error = require(&loader, "glTexImage2D").unwrap_err();
         assert!(error.contains("OpenGL 1.1"), "{error}");
