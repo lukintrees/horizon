@@ -55,7 +55,11 @@ pub enum AtlasError {
     SpriteTooLarge { index: usize },
     TooManyPages,
     InvalidPixels { index: usize },
+    InvalidSpriteArray,
+    InvalidPage,
+    InvalidSpriteIndex,
     SizeOverflow,
+    OutOfMemory,
 }
 
 /// Packs sprites onto fixed-size power-of-two pages using shelves.
@@ -137,15 +141,22 @@ pub fn build_page(
     page: usize,
     pixels: &[&[u8]],
 ) -> Result<Vec<u8>, AtlasError> {
-    if page >= layout.pages || pixels.len() != layout.sprites.len() {
-        return Err(AtlasError::SizeOverflow);
+    if page >= layout.pages {
+        return Err(AtlasError::InvalidPage);
+    }
+    if pixels.len() != layout.sprites.len() {
+        return Err(AtlasError::InvalidSpriteArray);
     }
     let side = usize::try_from(layout.page_size).map_err(|_| AtlasError::SizeOverflow)?;
     let bytes = side
         .checked_mul(side)
         .and_then(|n| n.checked_mul(4))
         .ok_or(AtlasError::SizeOverflow)?;
-    let mut output = vec![0; bytes];
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(bytes)
+        .map_err(|_| AtlasError::OutOfMemory)?;
+    output.resize(bytes, 0);
     for (index, (place, source)) in layout.sprites.iter().zip(pixels).enumerate() {
         let w = usize::try_from(place.width).map_err(|_| AtlasError::SizeOverflow)?;
         let h = usize::try_from(place.height).map_err(|_| AtlasError::SizeOverflow)?;
@@ -175,8 +186,168 @@ pub fn build_page(
     Ok(output)
 }
 
+/// Build a layout from the actual terrain sprite array after `Sprites::finish`.
+/// The initial pixels have one square RGBA8 image per layer in layer order.
+/// `finish_without_pixels` is unsuitable because no images are available there.
+pub fn layout_for_sprites(
+    sprites: &crate::sprites::Sprites,
+    page_size: u32,
+    padding: u32,
+    max_pages: usize,
+) -> Result<AtlasLayout, AtlasError> {
+    let side = usize::try_from(sprites.size).map_err(|_| AtlasError::SizeOverflow)?;
+    let layer_bytes = side
+        .checked_mul(side)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    if layer_bytes == 0
+        || sprites.pixels.len()
+            != layer_bytes
+                .checked_mul(sprites.opaque.len())
+                .ok_or(AtlasError::SizeOverflow)?
+    {
+        return Err(AtlasError::InvalidSpriteArray);
+    }
+    let sizes = vec![
+        SpriteSize {
+            width: sprites.size,
+            height: sprites.size
+        };
+        sprites.opaque.len()
+    ];
+    pack_atlas(&sizes, page_size, padding, max_pages)
+}
+
+/// Produces a level-zero page from the same `Sprites` instance as the layout.
+/// No copies of the individual source layers are needed.
+pub fn build_sprites_page(
+    layout: &AtlasLayout,
+    page: usize,
+    sprites: &crate::sprites::Sprites,
+) -> Result<Vec<u8>, AtlasError> {
+    let side = usize::try_from(sprites.size).map_err(|_| AtlasError::SizeOverflow)?;
+    let layer_bytes = side
+        .checked_mul(side)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    if layer_bytes == 0
+        || sprites.pixels.len()
+            != layer_bytes
+                .checked_mul(layout.sprites.len())
+                .ok_or(AtlasError::SizeOverflow)?
+        || layout
+            .sprites
+            .iter()
+            .any(|p| p.width != sprites.size || p.height != sprites.size)
+    {
+        return Err(AtlasError::InvalidSpriteArray);
+    }
+    let layers: Vec<&[u8]> = sprites.pixels.chunks_exact(layer_bytes).collect();
+    build_page(layout, page, &layers)
+}
+
+/// A tightly packed, padded region suitable for `glTexSubImage2D` at level zero.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SpriteUpdate {
+    pub page: usize,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+/// Prepare one animation frame and update its padding together with its contents.
+/// The frame must already have been resized to the dimensions used by the atlas.
+pub fn sprite_update(
+    layout: &AtlasLayout,
+    index: usize,
+    pixels: &[u8],
+) -> Result<SpriteUpdate, AtlasError> {
+    let place = layout
+        .sprites
+        .get(index)
+        .ok_or(AtlasError::InvalidSpriteIndex)?;
+    let border = layout
+        .padding
+        .checked_mul(2)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let width = place
+        .width
+        .checked_add(border)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let height = place
+        .height
+        .checked_add(border)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let w = usize::try_from(place.width).map_err(|_| AtlasError::SizeOverflow)?;
+    let h = usize::try_from(place.height).map_err(|_| AtlasError::SizeOverflow)?;
+    let padded_w = usize::try_from(width).map_err(|_| AtlasError::SizeOverflow)?;
+    let padded_h = usize::try_from(height).map_err(|_| AtlasError::SizeOverflow)?;
+    let expected = w
+        .checked_mul(h)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    if pixels.len() != expected {
+        return Err(AtlasError::InvalidPixels { index });
+    }
+    let bytes = padded_w
+        .checked_mul(padded_h)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(bytes)
+        .map_err(|_| AtlasError::OutOfMemory)?;
+    output.resize(bytes, 0);
+    let pad = usize::try_from(layout.padding).map_err(|_| AtlasError::SizeOverflow)?;
+    for dy in 0..padded_h {
+        for dx in 0..padded_w {
+            let sx = dx.saturating_sub(pad).min(w - 1);
+            let sy = dy.saturating_sub(pad).min(h - 1);
+            let from = (sy * w + sx) * 4;
+            let to = (dy * padded_w + dx) * 4;
+            output[to..to + 4].copy_from_slice(&pixels[from..from + 4]);
+        }
+    }
+    Ok(SpriteUpdate {
+        page: place.page,
+        x: place.x - layout.padding,
+        y: place.y - layout.padding,
+        width,
+        height,
+        pixels: output,
+    })
+}
+
+/// Samples an existing animation on the CPU and prepares its padded atlas update.
+/// Interpolated frames use the same integer rounding as the modern CPU fallback.
+/// Callers should cache `animation.blend(tick)` and upload only when it changes.
+pub fn animation_update(
+    layout: &AtlasLayout,
+    animation: &crate::sprites::SpriteAnimation,
+    tick: u64,
+) -> Result<SpriteUpdate, AtlasError> {
+    let index = usize::try_from(animation.layer).map_err(|_| AtlasError::InvalidSpriteIndex)?;
+    let place = layout
+        .sprites
+        .get(index)
+        .ok_or(AtlasError::InvalidSpriteIndex)?;
+    let blend = animation.blend(tick);
+    let mut current = animation.resized_pixels(blend.frame, place.width, place.height);
+    if blend.millis != 0 {
+        let next = animation.resized_pixels(blend.next, place.width, place.height);
+        for (a, b) in current.iter_mut().zip(next) {
+            *a = ((u32::from(*a) * (1000 - blend.millis) + u32::from(b) * blend.millis + 500)
+                / 1000) as u8;
+        }
+    }
+    sprite_update(layout, index, &current)
+}
+
 /// Vertex format for the experimental GLSL 1.10 terrain shader. The color alpha
 /// in `TerrainVertex` encodes emission, not transparency, so it is not used here.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LegacyTerrainVertex {
     pub pos: [f32; 3],
@@ -236,6 +407,75 @@ pub fn convert_terrain_quad(
         }
     });
     Ok((sprite.page, vertices))
+}
+
+/// Calculate the section origin relative to the camera in double precision
+/// before converting it to the float uniform used by the GL 2 terrain shader.
+/// This prevents large world coordinates from quantizing nearby geometry.
+pub fn camera_relative_origin(section_origin: [i32; 3], camera: [f64; 3]) -> Option<[f32; 3]> {
+    let mut origin = [0.0; 3];
+    for axis in 0..3 {
+        let relative = f64::from(section_origin[axis]) - camera[axis];
+        if !relative.is_finite() {
+            return None;
+        }
+        origin[axis] = relative as f32;
+        if !origin[axis].is_finite() {
+            return None;
+        }
+    }
+    Some(origin)
+}
+
+/// One contiguous draw run. Keeping page changes in input order preserves
+/// a caller's back-to-front translucent ordering. A run uses 16-bit indices.
+#[derive(Debug, PartialEq)]
+pub struct TerrainRun {
+    pub page: usize,
+    pub vertices: Vec<LegacyTerrainVertex>,
+    pub indices: Vec<u16>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TerrainBatchError {
+    IncompleteQuad,
+    Quad {
+        index: usize,
+        error: TerrainConversionError,
+    },
+}
+
+/// Converts section quad vertices into ordered page runs, splitting before
+/// 16-bit vertex indices would overflow. Errors identify the failing quad.
+pub fn convert_terrain_runs(
+    layout: &AtlasLayout,
+    vertices: &[crate::mesher::TerrainVertex],
+) -> Result<Vec<TerrainRun>, TerrainBatchError> {
+    if vertices.len() % 4 != 0 {
+        return Err(TerrainBatchError::IncompleteQuad);
+    }
+    let mut runs: Vec<TerrainRun> = Vec::new();
+    for (index, chunk) in vertices.chunks_exact(4).enumerate() {
+        let quad: &[crate::mesher::TerrainVertex; 4] = chunk.try_into().expect("chunks_exact(4)");
+        let (page, converted) = convert_terrain_quad(layout, quad)
+            .map_err(|error| TerrainBatchError::Quad { index, error })?;
+        if runs
+            .last()
+            .is_none_or(|run| run.page != page || run.vertices.len() > usize::from(u16::MAX) - 3)
+        {
+            runs.push(TerrainRun {
+                page,
+                vertices: Vec::new(),
+                indices: Vec::new(),
+            });
+        }
+        let run = runs.last_mut().expect("run was created");
+        let base = run.vertices.len() as u16;
+        run.vertices.extend_from_slice(&converted);
+        run.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    Ok(runs)
 }
 
 #[cfg(test)]
@@ -371,5 +611,138 @@ mod tests {
             convert_terrain_quad(&layout, &[other; 4]),
             Err(TerrainConversionError::MissingSprite { layer: 1 })
         );
+    }
+    #[test]
+    fn animated_update_matches_page_padding() {
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 2,
+                height: 1,
+            }],
+            8,
+            1,
+            1,
+        )
+        .unwrap();
+        let frame = [1, 2, 3, 255, 4, 5, 6, 255];
+        let update = sprite_update(&layout, 0, &frame).unwrap();
+        assert_eq!(
+            (update.x, update.y, update.width, update.height),
+            (0, 0, 4, 3)
+        );
+        let page = build_page(&layout, 0, &[&frame]).unwrap();
+        for y in 0..3 {
+            assert_eq!(
+                &page[y * 8 * 4..y * 8 * 4 + 4 * 4],
+                &update.pixels[y * 4 * 4..(y + 1) * 4 * 4]
+            );
+        }
+        assert_eq!(
+            sprite_update(&layout, 1, &frame),
+            Err(AtlasError::InvalidSpriteIndex)
+        );
+        assert_eq!(
+            sprite_update(&layout, 0, &frame[..4]),
+            Err(AtlasError::InvalidPixels { index: 0 })
+        );
+    }
+
+    #[test]
+    fn builds_atlas_from_sprite_array_and_validates_source() {
+        let mut sprites = crate::sprites::Sprites::default();
+        sprites.size = 2;
+        sprites.opaque = vec![true, false];
+        sprites.pixels = vec![1; 16];
+        sprites.pixels.extend_from_slice(&[2; 16]);
+        let layout = layout_for_sprites(&sprites, 4, 0, 2).unwrap();
+        let page = build_sprites_page(&layout, 0, &sprites).unwrap();
+        assert_eq!((page[0], page[8]), (1, 2));
+        sprites.pixels.pop();
+        assert_eq!(
+            layout_for_sprites(&sprites, 4, 0, 2),
+            Err(AtlasError::InvalidSpriteArray)
+        );
+        assert_eq!(
+            build_sprites_page(&layout, 0, &sprites),
+            Err(AtlasError::InvalidSpriteArray)
+        );
+    }
+
+    #[test]
+    fn terrain_runs_preserve_order_and_split_u16_indices() {
+        use crate::mesher::TerrainVertex;
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 2,
+                height: 2,
+            }; 2],
+            2,
+            0,
+            2,
+        )
+        .unwrap();
+        let vertex = |layer| TerrainVertex::new([0.0; 3], [0.0; 2], layer, 0, 0);
+        let mut input = Vec::new();
+        for layer in [0, 1, 0] {
+            input.extend_from_slice(&[vertex(layer); 4]);
+        }
+        let runs = convert_terrain_runs(&layout, &input).unwrap();
+        assert_eq!(
+            runs.iter().map(|r| r.page).collect::<Vec<_>>(),
+            vec![0, 1, 0]
+        );
+        assert_eq!(runs[0].indices, [0, 1, 2, 0, 2, 3]);
+        let many = vec![vertex(0); 4 * (16384 + 1)];
+        let runs = convert_terrain_runs(&layout, &many).unwrap();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].vertices.len(), 65536);
+        assert_eq!(runs[0].indices.last(), Some(&65535));
+        assert_eq!(runs[1].vertices.len(), 4);
+        assert_eq!(
+            convert_terrain_runs(&layout, &input[..3]),
+            Err(TerrainBatchError::IncompleteQuad)
+        );
+    }
+    #[test]
+    fn samples_interpolated_animation_into_padded_atlas_region() {
+        let animation = crate::sprites::test_frames(
+            0,
+            vec![vec![0, 10, 100, 255], vec![200, 30, 200, 127]],
+            r#"{"frametime":2,"interpolate":true}"#,
+        );
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 2,
+                height: 2,
+            }],
+            8,
+            1,
+            1,
+        )
+        .unwrap();
+        let update = animation_update(&layout, &animation, 1).unwrap();
+        assert_eq!((update.width, update.height), (4, 4));
+        assert!(
+            update
+                .pixels
+                .chunks_exact(4)
+                .all(|pixel| pixel == [100, 20, 150, 191])
+        );
+        assert_eq!(
+            animation_update(&pack_atlas(&[], 8, 1, 1).unwrap(), &animation, 0),
+            Err(AtlasError::InvalidSpriteIndex)
+        );
+    }
+    #[test]
+    fn camera_origin_subtracts_before_converting_to_float() {
+        assert_eq!(
+            camera_relative_origin(
+                [30_000_000, -64, -30_000_000],
+                [30_000_000.25, -63.5, -29_999_999.875]
+            ),
+            Some([-0.25, -0.5, -0.125])
+        );
+        assert_eq!(camera_relative_origin([0; 3], [f64::NAN, 0.0, 0.0]), None);
+        assert_eq!(camera_relative_origin([0; 3], [f64::MAX, 0.0, 0.0]), None);
     }
 }
