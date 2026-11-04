@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-21 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+22 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
-overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
+overlay/scissor reset, lightmap, spherical/dual-distance fog, reversed game depth, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 21 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 22 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -60,9 +60,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 34 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 35 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 21 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 22 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -466,3 +466,78 @@ the redirected Actions log blobs.
 EGL resize compiles but has not been runtime-qualified here. Relative/raw mouse,
 fullscreen/DPI policy, gameplay bindings/timing, normal Game backend selection,
 remaining sky/material passes and Win7 toolchain/PE/CRT/ISA/ICD remain incomplete.
+
+
+## Actual game frame preparation (not default Game startup)
+
+`legacy_gfx::frame::Prepared::new` now consumes the real `gfx::Frame`, drawable
+size, explicit visible solid/translucent section lists, `Limits`, and brightness/
+fullbright options. `TerrainHudRenderer::render_game_frame` prepares these inputs,
+updates the lightmap only when its pixels change, and calls the existing typed
+geometry/HUD coordinator. Visibility, uploads and section-internal translucent
+sorting are still the caller's job. No alternate game/mesher types or assets are
+introduced. This is a flat-screen classic-SDR subset, **not a playable backend**.
+
+* World lens/rotation use `gfx::View::screen`; bob and spin retain the exact game
+  multiplication order. The hand uses `camera::hand_projection`, bob and view,
+  without world spin or world FOV. `gl_reversed_projection` maps near=w/far=0 to
+  near=-w/far=w, so the existing GL LESS/depth-clear-1 contract is correct. The
+  older `gl_projection` is ONLY for non-reversed source depth; they are not
+  interchangeable.
+* Visible static block-entity snapshots are folded into the classic CPU stream
+  in visible-list order, before dynamic entities. Section-local position plus
+  `(origin - camera)` is evaluated in f64 before conversion. Invisible geometry
+  is not copied/charged; missing snapshots mean no static model, as in the game.
+  Duplicate visible keys/snapshots are errors. With no visible static geometry,
+  the dynamic stream is borrowed instead of cloned. Static + dynamic + hand +
+  see-through vertices share the same bounded entity budget; scratch allocation
+  is fallible. This does not yet add resident static-model GPU caching.
+* `lightmap::pixels` is the original CPU calculation extracted unchanged from
+  wgpu's `update_lightmap`. Both backends now call it, including night vision,
+  effective gamma, flicker, darkness, boss darkening and fullbright. The GL
+  texture and CPU entity-light sampling receive the same 1024 RGBA8 bytes.
+* `fog::world_parameters` also shares the existing game's override/water/default
+  selection. `Fog::game` adds cylindrical render-distance ranges and color alpha
+  to spherical environmental fog. GLSL uses
+  `max(linear(spherical), linear(max(length(xz),abs(y)))) * alpha`, with the same
+  vertex-distance interpolation and <=start / >=end branch order as WGSL.
+  Equal ranges support steps and the disabled `(MAX,MAX)` pair without 0/0.
+  `game: None` retains the original strictly-increasing spherical-only contract.
+  HUD/hand keep the coordinator's existing independent no-fog views.
+
+The actual-frame entry point checks camera/projection arithmetic, current HUD
+size (rebuild after resize), fog and classic lightmap parameters, glint, counts,
+visibility duplicates and explicitly requested missing passes before submission.
+Unsupported: panorama, visible sky/End sky, clouds/celestial/stars, weather,
+lightning/additive, lines/outlines, GPU skin frames (caller must request CPU
+poses), glowing silhouettes, dynamic/colored lights, emissive layers, screen
+overlays, border, post/menu blur, chunk fade and water mirrors. These are **errors,
+not automatically disabled options**. Consequently normal Overworld/title frames
+are not yet accepted; a no-sky classic frame without these passes is supported.
+Shadow/motion/pack-uniform metadata alone does not request an additional classic
+pass. Unsupported materials remain rejected by the typed bridges before clear.
+CPU rejection preserves the framebuffer; lightmap/resource state is not a
+transaction, and native submission failures still permit partial frames.
+
+The eleventh actual-type GPU fixture calls `render_game_frame` with perspective,
+a camera at x=30,000,000.25, resident terrain, visible static and dynamic entities,
+shared half-intensity lightmap, fog override with alpha/equal ranges, independently
+projected hand after a depth clear, and HUD. It also compares the entire previous
+framebuffer after unsupported-sky, malformed-quad and missing-section failures.
+Four CPU frame tests and one shared-lightmap test exercise matrices/near/far,
+pose order, f64 precision, borrowed geometry, combined limits, fallbacks,
+parameter rejection and resized/stale HUD. The independent mandatory outcome
+`backend_game_frame_inputs` covers both fog distances winning, alpha 0/.25/.5,
+equal/disabled ranges, invalid-input preservation, overlay isolation and real
+reversed-depth occlusion in all three Mesa profiles.
+
+Local: **37 standalone Rust tests**, host/i686 Clippy, **3x22 OSMesa outcomes**,
+**642 Python tests (1 skipped)**. Own branch run
+[41799081051](https://github.com/lukintrees/horizon/actions/runs/41799081051)
+at `e568d92` passed **all three jobs**: the four frame + one shared-lightmap CPU
+tests, **eleven actual-game GPU fixtures**, full-client check, game Clippy,
+independent runtime matrix, **36 executed x86 Windows workspace tests** and
+ordinary x86 probe linking. CPU/Clippy failure diagnostics are also surfaced as
+own check annotations instead of depending on redirected log-blob downloads.
+Win7/X1650, remaining passes, game startup/resource/input scheduling, PE/CRT/ISA
+and a complete playable executable remain unqualified.

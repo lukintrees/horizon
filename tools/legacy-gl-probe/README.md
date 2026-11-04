@@ -310,3 +310,30 @@ resize now scopes its WM_WINDOWPOSCHANGING bypass without weakening interactive
 tracking limits. The native test proves exact 1x1/96x48 and HWND teardown on Drop.
 None of this is Win7/X1650 runtime or complete gameplay qualification;
 relative/raw mouse, fullscreen/DPI policy and the normal game loop are still work.
+
+
+## Game-frame depth and dual-distance fog
+
+The validator now requires **22 backend outcomes** per GL2.0/GL2.1/unrestricted
+profile. `backend_game_frame_inputs` independently verifies conventional LESS
+occlusion after converting reversed source depth; spherical and cylindrical fog
+winning separately; fog color alpha; equal/disabled range branch order; rejected
+invalid ranges/alpha without clearing; and unfogged overlays. Shader source stays
+GLSL110/120 and uses no GL3 feature. Local **3x22** llvmpipe checks, **37 standalone
+Rust tests**, host/i686 Clippy and **642 Python tests (1 skipped)** pass.
+
+The game crate additionally has an actual `gfx::Frame` preparation/submit entry
+point, shared wgpu/GL2 CPU lightmap and fog-input selection, static snapshot
+translation/limits, and an eleventh real-type GPU fixture. See the
+[renderer contract](../../crates/horizon-legacy-render/README.md#actual-game-frame-preparation-not-default-game-startup).
+It rejects missing requested passes rather than pretending an incomplete frame
+is a working game. Title/normal sky, remaining effects and default Game
+startup/resource/input wiring are still unfinished. These checks do not certify
+Win7, the X1650 driver, a compatible full-game binary, or gameplay.
+
+Final own-branch verification:
+[41799081051](https://github.com/lukintrees/horizon/actions/runs/41799081051)
+at `e568d92`, **all three jobs passed**: four frame + one shared-lightmap CPU
+tests, eleven actual-game GPU fixtures, full-client check/game Clippy, runtime
+matrix, **36 executed x86 Windows workspace tests**, and ordinary probe linking.
+The subsequent documentation-only commit does not change this tested code.

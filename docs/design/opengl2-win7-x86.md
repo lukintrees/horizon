@@ -718,3 +718,58 @@ annotations: sandbox не может скачать redirected Actions log blobs
 EGL resize только compile-qualified здесь; настоящий WGL GPU, Win7/X1650,
 PE/CRT/ISA, startup/frame/input wiring и оставшиеся sky/material passes ещё
 не квалифицированы как полная playable игра.
+
+
+## 17. Подготовка настоящего gfx::Frame
+
+Добавлены `legacy_gfx::frame::Prepared::new` и
+`TerrainHudRenderer::render_game_frame`. Принимают настоящий игровой Frame,
+размер drawable, authoritative visible lists и brightness/fullbright options.
+World projection/view/bob/spin и отдельная hand projection сохраняют существующую
+арифметику игры. `gl_reversed_projection` делает z'=w−2z: reversed near=1/far=0
+переходят в обычные GL near=−1/far=+1 с LESS и clear-depth=1. Старый
+`gl_projection` для НЕ-reversed матриц здесь применять нельзя.
+
+CPU lightmap вынесена без изменения формулы в общий `lightmap::pixels`, выбор
+fog uniforms — в `fog::world_parameters`; их вызывают оба backend. GL2 fog теперь
+поддерживает max(environment spherical, render-distance cylindrical) × color
+alpha. Cylindrical distance = max(length(xz), abs(y)); расстояния интерполируются
+так же, как WGSL. Равные диапазоны являются step/disabled MAX-парой с тем же
+порядком ветвей, а не делением 0/0. Старый spherical-only контракт сохраняется
+через `Fog::game=None`. Не заявляется полная parity всех специальных материалов
+и hand/screen/sky fog.
+
+Видимые static block-entity snapshots переводятся из section-local в
+camera-relative с вычитанием в f64; порядок visible list сохраняется перед
+обычными entities. Невидимые модели не копируются; без static геометрии source
+заимствуется. Действует общий limit static+dynamic+hand+see-through, дубликаты
+visible keys/snapshots отвергаются, scratch allocation fallible. Resident static
+GPU cache, streaming visibility/upload scheduling здесь не добавлены.
+
+До submission проверяются камера/матрицы, HUD size после resize, fog/lightmap,
+glint, geometry counts/limits и неподдержанные requested passes. Panorama, sky,
+clouds/celestial/stars, weather, lightning/additive, lines/outlines, GPU skins,
+glowing, dynamic/colored lights, emissive layers, screen overlays, border,
+post/menu blur, chunk fade и water mirror возвращают явную ошибку — не тихо
+отключаются. Поэтому это пока subset без видимого sky и перечисленных эффектов,
+не готовый обычный Overworld/title frame. Стандартный Game всё ещё wgpu.
+Lightmap/resources не образуют транзакцию; CPU rejection сохраняет framebuffer,
+а GPU failure может оставить частичный кадр.
+
+Добавлены четыре CPU frame tests, один exact RGBA8 lightmap test и 11-й
+actual-game GPU fixture: настоящая perspective при camera x=30,000,000.25,
+resident terrain, static/dynamic occlusion, общий lightmap, fog override/alpha,
+hand после depth clear, HUD и полное сравнение framebuffer после invalid frames.
+Обязательный independent `backend_game_frame_inputs` проверяет dual fog и
+unreversed depth без игрового dependency graph. Локально **37 standalone Rust
+tests**, host/i686 Clippy, **3×22 OSMesa checks**, **642 Python, 1 skipped**.
+Win7/X1650, PE/CRT/ISA, startup/platform/game-loop/resource wiring и оставшиеся
+проходы ещё не дают основания называть порт playable.
+
+Финальное подтверждение своего branch-only CI:
+[41799081051](https://github.com/lukintrees/horizon/actions/runs/41799081051)
+на `e568d92`: **все три jobs SUCCESS**, четыре frame + один lightmap CPU tests,
+**11 actual-game GPU fixtures**, full-client check, game Clippy, independent
+runtime matrix, **36 выполненных x86 Windows workspace tests** и probe linking.
+Следующий docs-only commit не меняет проверенный код. Ошибки CPU/Clippy теперь
+также попадают в own check annotations без скачивания redirected log blobs.
