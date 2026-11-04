@@ -89,8 +89,20 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          cargo test --locked -p horizon-client-render --features legacy-gl --lib gui_bridge:: -- --ignored
-          cargo test --locked -p horizon-client-render --features legacy-gl --lib legacy_gfx::tests:: -- --ignored
+          for filter in gui_bridge:: legacy_gfx::tests::; do
+            if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
+              cat target/legacy-branch/gpu-tests.log
+            else
+              cat target/legacy-branch/gpu-tests.log
+              python3 - <<'PYFAIL'
+          from pathlib import Path
+          text = '\n'.join(Path('target/legacy-branch/gpu-tests.log').read_text().splitlines()[-85:])
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error title=Real game GL2 tests::' + text)
+          PYFAIL
+              exit 1
+            fi
+          done
       - name: Lint the game bridges and GL2 coordinator
         run: cargo clippy --locked -p horizon-client-render --features legacy-gl --lib --tests -- -D warnings
       - uses: actions/upload-artifact@v4
