@@ -173,3 +173,28 @@ jobs:
           name: experimental-win7-x86-client-imports
           path: win7-client-static-imports.txt
           retention-days: 7
+  win7-import-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch Windows-target dependency sources
+        run: cargo fetch --locked --target i686-win7-windows-msvc
+      - name: Find direct callers of the Windows 8 time API
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path.home() / '.cargo/registry/src'
+          hits = []
+          for path in root.glob('*/*/**/*.rs'):
+              crate = path.relative_to(root).parts[1]
+              # Generated Windows API declarations are not callers.
+              if crate.startswith(('windows-', 'windows_', 'windows-sys-', 'winapi-')):
+                  continue
+              if 'GetSystemTimePreciseAsFileTime' in path.read_text(errors='ignore'):
+                  hits.append(str(path.relative_to(root)))
+          for hit in sorted(hits):
+              print('::notice::Windows time API source: ' + hit)
+          print(f'{len(hits)} source file(s) mention the API; this is not a link attribution.')
+          PY
