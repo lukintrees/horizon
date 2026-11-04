@@ -17,7 +17,7 @@ class LegacyGlSmokeTests(unittest.TestCase):
             "gl_version": "2.0 Mesa 22.3.6", "shader_version": "110",
             "backend_checks": ["backend_rgba_texture", "backend_texture_update", "backend_depth",
                                "backend_cutout", "backend_ordered_blend_no_depth_write",
-                               "backend_overlay_scissor_reset", "backend_lightmap", "backend_fog", "backend_game_frame_inputs", "backend_screen_sampling", "backend_world_additive", "backend_world_weather",
+                               "backend_overlay_scissor_reset", "backend_lightmap", "backend_fog", "backend_game_frame_inputs", "backend_screen_sampling", "backend_world_additive", "backend_world_weather", "backend_sky_background",
                                "backend_large_coordinates", "backend_validation_budget",
                                "backend_context_isolation", "backend_resource_reclamation",
                                "backend_terrain_atlas_contract", "backend_resident_sections", "backend_gui_compositor", "backend_paged_gui", "backend_paged_entities", "backend_entity_layers", "backend_entity_glint", "backend_gui_glint", "backend_surface_lifecycle"],

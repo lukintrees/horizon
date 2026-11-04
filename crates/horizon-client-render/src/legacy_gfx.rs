@@ -20,6 +20,7 @@ use horizon_render_api::{
 
 pub mod frame;
 mod screen;
+mod sky;
 mod weather;
 
 #[derive(Clone, Copy, Debug)]
@@ -36,6 +37,7 @@ pub struct Limits {
     pub hud_page_count: usize,
     pub screen_quads: usize,
     pub lightning_bolts: usize,
+    pub sky_vertices: usize,
     pub weather_quads: usize,
     pub weather_bytes: usize,
     /// Extracted sprite bytes plus one decoded virtual-atlas page.
@@ -56,6 +58,7 @@ impl Default for Limits {
             hud_page_count: 4096,
             screen_quads: 256,
             lightning_bolts: 64,
+            sky_vertices: 32768,
             weather_quads: 4096,
             weather_bytes: 8 << 20,
             screen_bytes: 8 << 20,
@@ -279,6 +282,7 @@ impl TerrainHudRenderer {
             prepared.screen,
             &prepared.additive,
             (prepared.weather, prepared.weather_time),
+            Some(source),
         )
     }
 
@@ -295,6 +299,7 @@ impl TerrainHudRenderer {
             &[],
             &[],
             (&[], crate::weather::Time::new(0, 0.)),
+            None,
         )
     }
     fn render_geometry_with_effects(
@@ -305,7 +310,34 @@ impl TerrainHudRenderer {
         screen_quads: &[crate::screen_effects::ScreenQuad],
         additive_vertices: &[crate::mesher::Vertex],
         precipitation: (&[crate::weather::Vertex], crate::weather::Time),
+        sky_source: Option<&crate::gfx::Frame<'_>>,
     ) -> Result<(), String> {
+        let sky = sky_source
+            .map(|source| sky::Prepared::new(source, self.size(), self.limits))
+            .transpose()?;
+        let celestial = if let Some(sky) = &sky {
+            let mut runs = entity_bridge::prepare_with(
+                &sky.celestial,
+                &self.lightmap,
+                entity::Options {
+                    nether: geometry.nether_lighting,
+                    glint: None,
+                },
+                self.hud.layout(),
+                self.limits.sky_vertices - sky.basic_vertices,
+                entity_bridge::View::Additive,
+            )
+            .map_err(diagnostic)?;
+            for run in &mut runs {
+                if let horizon_render_api::Pass::Entity(ref mut m) = run.geometry.pass {
+                    m.kind = Kind::SkyCelestial;
+                    m.cull = false;
+                }
+            }
+            runs
+        } else {
+            Vec::new()
+        };
         let strength = entity::Strength::new(geometry.glint.strength).map_err(diagnostic)?;
         if !geometry.glint.ticks.is_finite() {
             return Err("invalid glint clock".into());
@@ -458,7 +490,8 @@ impl TerrainHudRenderer {
             || !particles.is_empty()
             || !hand.is_empty()
             || !see_through.is_empty()
-            || !additive.is_empty();
+            || !additive.is_empty()
+            || !celestial.is_empty();
         if !screens.is_empty()
             && (remaining.textures == 0
                 || remaining.meshes == 0
@@ -485,6 +518,12 @@ impl TerrainHudRenderer {
         {
             return Err("no transient weather texture/mesh capacity".into());
         }
+        if sky.as_ref().is_some_and(|s| {
+            s.largest_mesh() > remaining.mesh_bytes
+                || (s.basic_vertices > 0 && remaining.meshes == 0)
+        }) {
+            return Err("no transient sky mesh capacity".into());
+        }
         if runs.iter().any(|run| {
             std::mem::size_of_val(run.geometry.vertices.as_slice())
                 + std::mem::size_of_val(run.geometry.indices.as_slice())
@@ -495,6 +534,7 @@ impl TerrainHudRenderer {
             .chain(&hand)
             .chain(&see_through)
             .chain(&additive)
+            .chain(&celestial)
             .any(|run| {
                 std::mem::size_of_val(run.geometry.vertices.as_slice())
                     + std::mem::size_of_val(run.geometry.indices.as_slice())
@@ -505,20 +545,65 @@ impl TerrainHudRenderer {
                 || !particles.is_empty()
                 || !hand.is_empty()
                 || !see_through.is_empty()
-                || !additive.is_empty())
+                || !additive.is_empty()
+                || !celestial.is_empty())
                 && remaining.meshes == 0)
         {
             return Err("no transient mesh capacity for legacy frame".into());
         }
-        self.world
-            .render_phase(world, Phase::Solid)
-            .map_err(diagnostic)?;
         let view = paged_gui::WorldView {
             view_projection: world.view_projection,
             camera: world.camera,
             fog: world.fog,
             lightmap: self.world.lightmap(),
         };
+        self.world.validate_visible(world).map_err(diagnostic)?;
+        if let Some(sky) = sky.as_ref().filter(|s| !s.is_empty()) {
+            use horizon_render_api::{Clear, Frame};
+            self.world.backend_mut().render(&Frame {
+                view_projection: world.view_projection,
+                camera: world.camera,
+                clear: Clear::ColorDepth(world.clear),
+                fog: world.fog,
+                draws: &[],
+            })?;
+            self.screen.render_sky(
+                self.world.backend_mut(),
+                sky,
+                true,
+                self.white,
+                world.camera,
+            )?;
+            let celestial_view = paged_gui::WorldView {
+                view_projection: sky.matrix,
+                camera: world.camera,
+                fog: None,
+                lightmap: view.lightmap,
+            };
+            let backing = &self.hud;
+            self.cache
+                .render_world(
+                    self.world.backend_mut(),
+                    &celestial,
+                    &celestial_view,
+                    |page| backing.load(page),
+                )
+                .map_err(diagnostic)?;
+            self.screen.render_sky(
+                self.world.backend_mut(),
+                sky,
+                false,
+                self.white,
+                world.camera,
+            )?;
+            self.world
+                .render_phase(world, Phase::SolidLoad)
+                .map_err(diagnostic)?;
+        } else {
+            self.world
+                .render_phase(world, Phase::Solid)
+                .map_err(diagnostic)?;
+        }
         let backing = &self.hud;
         self.cache
             .render_world(self.world.backend_mut(), &body, &view, |page| {
@@ -651,6 +736,257 @@ mod tests {
         IDENTITY,
         atlas::{SpriteSize, build_page, pack_atlas},
     };
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_actual_sky_matches_disc_fog_then_sunrise_celestial_stars_end_and_world_depth() {
+        use crate::mesher::Vertex;
+        let atlas = HudAtlas::boot();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.fill(&atlas, 0., 0., 1., 1., u32::MAX);
+        let uv = hud.vertices[0].uv;
+        hud.vertices.clear();
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout.clone(),
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits::default(),
+        )
+        .unwrap();
+        let empty = frame::VisibleSections::default();
+        let options = frame::Options {
+            gamma: 0.,
+            fullbright: true,
+        };
+        let fog = |color, sky_end| crate::fog::FogData {
+            color,
+            sky_end,
+            environmental_start: 0.,
+            environmental_end: 0.,
+            render_distance_start: 0.,
+            render_distance_end: 0.,
+            cloud_end: 0.,
+        };
+        let mut f = frame::tests::source(&hud);
+        f.skybox = true;
+        f.yaw = 0.;
+        f.pitch = -45.;
+        f.fov_degrees = 90.;
+        f.camera = glam::DVec3::new(30_000_000.25, 100.125, -30_000_000.5);
+        f.sky.sky_color = [0.2, 0.4, 0.8];
+        f.fog = Some(fog([0.1, 0.2, 0.3, 0.5], 128.));
+        renderer.render_game_frame(&f, empty, options).unwrap();
+        let base = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        // Independent terrain.wgsl analytic octagon/ray reference, not the fan builder.
+        for y in [3, 17, 32, 48, 60] {
+            for x in [3, 17, 32, 48, 60] {
+                let (nx, ny) = (
+                    (f64::from(x) + 0.5) / 32. - 1.,
+                    (f64::from(y) + 0.5) / 32. - 1.,
+                );
+                let c = std::f64::consts::FRAC_1_SQRT_2;
+                let (dx, dy, dz) = (-nx, (ny + 1.) * c, (1. - ny) * c);
+                let (px, pz) = (dx * 16. / dy, dz * 16. / dy);
+                let h = px.hypot(pz);
+                let phi = pz.atan2(px);
+                let sector = std::f64::consts::FRAC_PI_4;
+                let edge = 512. * (sector * 0.5).cos()
+                    / (phi - ((phi / sector).floor() * sector + sector * 0.5)).cos();
+                let dist = 16. + h / edge * ((512_f64 * 512. + 256.).sqrt() - 16.);
+                let cylindrical = 16. + h / edge * (512. - 16.);
+                let amount =
+                    (dist / 128.)
+                        .clamp(0., 1.)
+                        .max(if cylindrical >= 128. { 1. } else { 0. })
+                        * 0.5;
+                let expected: [u8; 3] = std::array::from_fn(|i| {
+                    if h > edge {
+                        ([0.1, 0.2, 0.3][i] * 255_f64).round() as u8
+                    } else {
+                        (([0.2, 0.4, 0.8][i] * (1. - amount) + [0.1, 0.2, 0.3][i] * amount) * 255.)
+                            .round() as u8
+                    }
+                });
+                let actual = &base[((y * 64 + x) * 4) as usize..][..3];
+                assert!(
+                    actual
+                        .iter()
+                        .zip(expected)
+                        .all(|(&a, b)| a.abs_diff(b) <= 2),
+                    "sky {x},{y}: {actual:?} != {expected:?}"
+                );
+            }
+        }
+        f.bob = glam::Mat4::from_rotation_z(0.3);
+        f.spin = glam::Mat4::from_rotation_x(0.5);
+        renderer.render_game_frame(&f, empty, options).unwrap();
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), base);
+        f.bob = glam::Mat4::IDENTITY;
+        f.spin = glam::Mat4::IDENTITY;
+        f.pitch = 0.;
+        f.yaw = 90.;
+        f.sky.sunrise_color = [1., 0., 0., 1.];
+        f.fog = Some(fog([16. / 255., 32. / 255., 48. / 255., 1.], 0.));
+        renderer.render_game_frame(&f, empty, options).unwrap();
+        let dawn = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        assert!(
+            dawn[0] > 230 && dawn[1] < 10 && dawn[2] < 10,
+            "sunrise apex {dawn:?}"
+        );
+        let stable = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        renderer.limits.sky_vertices = 71;
+        assert!(renderer.render_game_frame(&f, empty, options).is_err());
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        renderer.limits.sky_vertices = 32768;
+        let missing = [[7, 0, 0]];
+        assert!(
+            renderer
+                .render_game_frame(
+                    &f,
+                    frame::VisibleSections {
+                        solid: &missing,
+                        translucent: &[]
+                    },
+                    options
+                )
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        f.sky.sunrise_color = [0.; 4];
+        f.yaw = 0.;
+        f.camera = glam::DVec3::new(30_000_000.25, 0., 0.);
+        let celestial =
+            [[-4., -4., 4.], [-4., 4., 4.], [4., 4., 4.], [4., -4., 4.]].map(|pos| Vertex {
+                pos,
+                uv,
+                layer: 2,
+                color: 0x8000ff00,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            });
+        f.celestial = &celestial;
+        renderer.render_game_frame(&f, empty, options).unwrap();
+        let pixel = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        assert!(
+            pixel[..3]
+                .iter()
+                .zip([16, 160, 48])
+                .all(|(&a, b)| a.abs_diff(b) <= 2),
+            "celestial {pixel:?}"
+        );
+        let mut solid = SectionMesh::default();
+        solid.solid.extend(
+            [[-20., -20.], [20., -20.], [20., 20.], [-20., 20.]].map(|p| {
+                TerrainVertex::new([p[0] + 0.25, p[1], 8.], [0.5; 2], 0x8000, 0xff0000ff, 0)
+            }),
+        );
+        let key = [1_875_000, 0, 0];
+        let keys = [key];
+        renderer.upload_section(key, &solid).unwrap();
+        renderer
+            .render_game_frame(
+                &f,
+                frame::VisibleSections {
+                    solid: &keys,
+                    translucent: &[],
+                },
+                options,
+            )
+            .unwrap();
+        assert_eq!(
+            &renderer.read_rgba([32, 32, 1, 1]).unwrap()[..3],
+            &[255, 0, 0]
+        ); // sky cannot hide later world depth
+        renderer.unload_section(key).unwrap();
+        renderer.world.collect_garbage().unwrap();
+        f.celestial = &[];
+        f.skybox = false;
+        f.end_sky = true;
+        f.end_sky_sprite = Some([
+            uv[0] - 0.5 / atlas.width as f32,
+            uv[1] - 0.5 / atlas.height as f32,
+            uv[0] + 0.5 / atlas.width as f32,
+            uv[1] + 0.5 / atlas.height as f32,
+        ]);
+        f.fog = Some(fog([0., 0., 0., 1.], 512.));
+        renderer.render_game_frame(&f, empty, options).unwrap();
+        let end = renderer.read_rgba([32, 32, 1, 1]).unwrap();
+        assert!(end[..3].iter().all(|&c| c.abs_diff(40) <= 2), "End {end:?}");
+        f.dark_disc = true;
+        f.pitch = 45.;
+        renderer.render_game_frame(&f, empty, options).unwrap();
+        assert_eq!(&renderer.read_rgba([32, 32, 1, 1]).unwrap()[..3], &[0; 3]);
+        let mut small = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits {
+                gpu: Budget {
+                    mesh_bytes: 2207,
+                    ..Budget::default()
+                },
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        f.end_sky = false;
+        f.skybox = true;
+        f.dark_disc = false;
+        f.pitch = 0.;
+        f.yaw = 90.;
+        f.sky.sunrise_color = [0.; 4];
+        small.render_game_frame(&f, empty, options).unwrap();
+        let saved = small.read_rgba([0, 0, 64, 64]).unwrap();
+        f.sky.sunrise_color = [1.; 4];
+        assert!(small.render_game_frame(&f, empty, options).is_err());
+        assert_eq!(small.read_rgba([0, 0, 64, 64]).unwrap(), saved); // sunrise needs 2208 bytes
+        renderer.resize([512; 2]).unwrap();
+        let star_hud = HudBatch::new([512; 2]);
+        let mut stars = frame::tests::source(&star_hud);
+        stars.skybox = true;
+        stars.pitch = -45.;
+        stars.yaw = 0.;
+        stars.fov_degrees = 90.;
+        stars.sky.sky_color = [0.; 3];
+        stars.fog = Some(fog([0., 0., 0., 1.], 512.));
+        stars.stars = Some((glam::Mat4::IDENTITY, 1.));
+        renderer.render_game_frame(&stars, empty, options).unwrap();
+        let bright = renderer.read_rgba([0, 0, 512, 512]).unwrap();
+        assert!(
+            bright.iter().step_by(4).any(|&c| c > 200),
+            "seeded stars did not draw"
+        );
+        stars.stars = Some((glam::Mat4::IDENTITY, 0.5));
+        renderer.render_game_frame(&stars, empty, options).unwrap();
+        let dim = renderer.read_rgba([0, 0, 512, 512]).unwrap();
+        assert!(
+            bright
+                .iter()
+                .step_by(4)
+                .zip(dim.iter().step_by(4))
+                .any(|(&a, &b)| a == 255 && b.abs_diff(64) <= 2),
+            "star b*b SDR blend missing"
+        );
+        stars.stars = Some((glam::Mat4::from_rotation_y(0.8), 0.5));
+        renderer.render_game_frame(&stars, empty, options).unwrap();
+        assert_ne!(renderer.read_rgba([0, 0, 512, 512]).unwrap(), dim);
+        assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 0);
+    }
     #[test]
     #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
     fn bridge_actual_weather_animates_sprites_after_translucency_before_text_hand_screen_and_hud() {

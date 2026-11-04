@@ -47,7 +47,7 @@ jobs:
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
-          for filter in legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: lightmap::tests::; do
+          for filter in legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: lightmap::tests::; do
             if [ "$status" -eq 0 ]; then
               cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
               status=$?

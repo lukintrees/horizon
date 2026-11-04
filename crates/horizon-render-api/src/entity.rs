@@ -66,6 +66,8 @@ pub enum Kind {
     DragonRays,
     /// Extracted-sprite repeating weather; alpha blend, LEQUAL, no depth writes.
     Weather,
+    /// Unlit/lightmapped celestial additive view, no depth test or writes.
+    SkyCelestial,
     Particle,
     SeeThrough,
 }

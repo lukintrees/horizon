@@ -40,7 +40,7 @@ impl EndSky {
 
 /// SkyRenderer.buildEndSky: six faces of end_sky.png tiled 16 times,
 /// tinted 0x282828. The atlas does not wrap, so each face is 16×16 quads.
-fn vertices(uv: [f32; 4]) -> Vec<Vertex> {
+pub(crate) fn vertices(uv: [f32; 4]) -> Vec<Vertex> {
     let mut out = Vec::with_capacity(VERTICES as usize);
     use std::f32::consts::FRAC_PI_2;
     let faces = [

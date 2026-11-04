@@ -10,6 +10,8 @@ pub type SectionKey = [i32; 3];
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Solid,
+    /// Opaque/cutout terrain after a separately cleared background pass.
+    SolidLoad,
     Translucent,
 }
 
@@ -20,6 +22,7 @@ pub enum SceneError<E> {
     InvalidRuns,
     SectionLimit,
     MissingSection(SectionKey),
+    InvalidOrigin,
     Backend(E),
 }
 
@@ -219,6 +222,19 @@ impl<B: RenderBackend> WorldScene<B> {
     pub fn lightmap(&self) -> TextureId {
         self.lightmap.unwrap()
     }
+    /// Preflight all visible keys and camera-relative translations without
+    /// clearing or drawing; background passes must not erase a rejected frame.
+    pub fn validate_visible(&self, frame: &SceneFrame<'_>) -> Result<(), SceneError<B::Error>> {
+        for key in frame.solid.iter().chain(frame.translucent) {
+            if !self.sections.contains_key(key) {
+                return Err(SceneError::MissingSection(*key));
+            }
+            if crate::relative_origin(key.map(|v| f64::from(v) * 16.), frame.camera).is_none() {
+                return Err(SceneError::InvalidOrigin);
+            }
+        }
+        Ok(())
+    }
     pub fn render_phase(
         &mut self,
         frame: &SceneFrame<'_>,
@@ -234,6 +250,7 @@ impl<B: RenderBackend> WorldScene<B> {
         frame: &SceneFrame<'_>,
         phase: Option<Phase>,
     ) -> Result<(), SceneError<B::Error>> {
+        self.validate_visible(frame)?;
         self.collect_garbage()?;
         let mut draws = Vec::new();
         for (keys, translucent) in [(frame.solid, false), (frame.translucent, true)] {
@@ -266,7 +283,7 @@ impl<B: RenderBackend> WorldScene<B> {
             .render(&Frame {
                 view_projection: frame.view_projection,
                 camera: frame.camera,
-                clear: if phase == Some(Phase::Translucent) {
+                clear: if matches!(phase, Some(Phase::Translucent | Phase::SolidLoad)) {
                     crate::Clear::Load
                 } else {
                     crate::Clear::ColorDepth(frame.clear)

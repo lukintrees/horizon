@@ -33,6 +33,12 @@ pub struct Image<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pass {
     Opaque,
+    /// Camera-relative background geometry, no depth test/write. Flattening
+    /// removes near/far clipping of analytic sky discs, but preserves XY/w.
+    Sky {
+        additive: bool,
+        flatten_depth: bool,
+    },
     /// Unlit, unfogged camera overlay with sprite-local sampler state.
     Screen(screen::Material),
     Entity(entity::Material),

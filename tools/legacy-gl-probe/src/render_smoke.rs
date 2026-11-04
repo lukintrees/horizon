@@ -452,6 +452,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_entity_glint");
     gui_glint(context)?;
     checks.push("backend_gui_glint");
+    sky_background(context)?;
+    checks.push("backend_sky_background");
     weather_world(context)?;
     checks.push("backend_world_weather");
     additive_world(context)?;
@@ -1978,6 +1980,145 @@ fn gui_glint(context: &Context) -> Result<(), String> {
         renderer.stats() == Stats::default(),
         "GUI foil resources not reclaimed",
     )
+}
+
+fn sky_background(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        GameFog,
+        atlas::{SpriteSize, pack_atlas},
+        entity::{Kind, LitVertex, Material, Overlay},
+        scene::{Phase, SceneFrame, WorldScene},
+    };
+    let mut r = Renderer::new(context, Budget::default())?;
+    let white = r.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let green = r.create_mesh(&quad([0., 1., 0., 1.], 0.5, 1.), &[0, 1, 2, 0, 2, 3])?;
+    let red = r.create_mesh(&quad([1., 0., 0., 1.], -0.5, 1.), &[0, 1, 2, 0, 2, 3])?;
+    let flat = r.create_mesh(&quad([0., 1., 0., 1.], 2., 1.), &[0, 1, 2, 0, 2, 3])?;
+    let draw = Draw {
+        mesh: green,
+        texture: white,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Sky {
+            additive: false,
+            flatten_depth: false,
+        },
+        scissor: None,
+    };
+    r.render(&frame(&[
+        Draw {
+            mesh: red,
+            pass: Pass::Opaque,
+            ..draw
+        },
+        draw,
+    ]))?;
+    pixel(&mut r, [32, 32], [0, 255, 0])?; // sky does not test earlier terrain depth
+    r.render(&frame(&[
+        Draw { mesh: red, ..draw },
+        Draw {
+            pass: Pass::Opaque,
+            ..draw
+        },
+    ]))?;
+    pixel(&mut r, [32, 32], [0, 255, 0])?; // nor write depth that hides later terrain
+    r.render(&frame(&[Draw {
+        mesh: flat,
+        pass: Pass::Sky {
+            additive: false,
+            flatten_depth: true,
+        },
+        ..draw
+    }]))?;
+    pixel(&mut r, [32, 32], [0, 255, 0])?;
+    r.render(&frame(&[Draw {
+        mesh: flat,
+        pass: Pass::Opaque,
+        ..draw
+    }]))?;
+    pixel(&mut r, [32, 32], [0; 3])?; // flattening must reset for normal draws
+    let fog_mesh = r.create_mesh(&quad([0., 1., 0., 1.], 0., 1.), &[0, 1, 2, 0, 2, 3])?;
+    let draws = [Draw {
+        mesh: fog_mesh,
+        ..draw
+    }];
+    let mut view = frame(&draws);
+    view.fog = Some(Fog {
+        color: [0., 0., 1.],
+        start: 0.,
+        end: 2.,
+        game: Some(GameFog {
+            start: 2.,
+            end: 2.,
+            alpha: 0.5,
+        }),
+    });
+    r.render(&view)?;
+    pixel(&mut r, [32, 32], [0, 165, 90])?;
+    let vertices = quad([0., 0., 1., 0.5], 0.5, 1.).map(|base| LitVertex {
+        base,
+        back_color: base.color,
+        light_color: [1.; 4],
+        glint_uv: [0.; 2],
+    });
+    let celestial = r.create_entity_mesh(&vertices, &[0, 1, 2, 0, 2, 3])?;
+    r.render(&frame(&[
+        Draw {
+            mesh: red,
+            pass: Pass::Opaque,
+            ..draw
+        },
+        Draw {
+            mesh: celestial,
+            pass: Pass::Entity(Material {
+                kind: Kind::SkyCelestial,
+                cull: false,
+                overlay: Overlay::None,
+                glint: None,
+            }),
+            ..draw
+        },
+    ]))?;
+    pixel(&mut r, [32, 32], [255, 0, 128])?; // celestial ignores terrain depth and adds source-alpha light
+    r.render(&frame(&[draw]))?;
+    for m in [green, red, flat, fog_mesh, celestial] {
+        r.remove_mesh(m)?;
+    }
+    r.remove_texture(white)?;
+    require(r.stats() == Stats::default(), "sky leaked native resources")?;
+    let layout = pack_atlas(
+        &[SpriteSize {
+            width: 1,
+            height: 1,
+        }],
+        4,
+        1,
+        1,
+    )
+    .map_err(|e| format!("sky layout {e:?}"))?;
+    let mut scene = WorldScene::new(r, layout, &[&[255; 64]], &[255; 1024], 1)
+        .map_err(|e| format!("sky scene {e:?}"))?;
+    let world = SceneFrame {
+        view_projection: IDENTITY,
+        camera: [0.; 3],
+        clear: [0.25, 0.5, 0.75, 1.],
+        fog: None,
+        solid: &[],
+        translucent: &[],
+    };
+    scene
+        .render_phase(&world, Phase::SolidLoad)
+        .map_err(|e| format!("sky load {e:?}"))?;
+    pixel(scene.backend_mut(), [32, 32], [0, 255, 0])?;
+    scene
+        .render_phase(&world, Phase::Solid)
+        .map_err(|e| format!("sky clear {e:?}"))?;
+    pixel(scene.backend_mut(), [32, 32], [64, 128, 191])?;
+    Ok(())
 }
 
 fn weather_world(context: &Context) -> Result<(), String> {

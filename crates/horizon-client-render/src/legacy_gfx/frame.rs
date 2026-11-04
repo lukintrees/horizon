@@ -357,12 +357,7 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
     // does not request an additional classic pass and is intentionally unused.
     for (requested, name) in [
         (frame.title, "title panorama"),
-        (!frame.sky_blocked && (frame.skybox || frame.end_sky), "sky"),
         (frame.clouds.is_some(), "clouds"),
-        (
-            !frame.celestial.is_empty() || frame.stars.is_some(),
-            "celestial/stars",
-        ),
         (
             !frame.outline.is_empty()
                 || !frame.debug_lines.is_empty()
@@ -799,7 +794,7 @@ pub(super) mod tests {
         );
         frame.title = false;
         frame.skybox = true;
-        assert_eq!(prepare(&frame).err(), Some(Error::Unsupported("sky")));
+        assert!(prepare(&frame).is_ok());
         frame.sky_blocked = true;
         assert!(prepare(&frame).is_ok());
         frame.chunk_fade = 0.3;
