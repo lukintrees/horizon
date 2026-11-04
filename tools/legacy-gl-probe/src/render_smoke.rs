@@ -379,6 +379,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_paged_gui");
     paged_entities(context)?;
     checks.push("backend_paged_entities");
+    entity_layers(context)?;
+    checks.push("backend_entity_layers");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -1094,7 +1096,7 @@ fn paged_entities(context: &Context) -> Result<(), String> {
     let material = entity::Material {
         overlay: entity::Overlay::None,
         cull: false,
-        particle: false,
+        kind: entity::Kind::Body,
     };
     let mut bad = frame(&[]);
     bad.clear = Clear::ColorDepth([1., 1., 0., 1.]);
@@ -1152,5 +1154,162 @@ fn paged_entities(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "entity stream cleanup leaked resources",
+    )
+}
+
+fn entity_layers(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        entity::{self, Input},
+        paged_gui::{self, Cache, Layout, WorldView},
+    };
+    fn error(e: impl std::fmt::Debug) -> String {
+        format!("entity layers: {e:?}")
+    }
+    let mut renderer = Renderer::new(context, Budget::default())?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let clear_rgba = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[0; 4],
+    })?;
+    let layout = Layout::new([1, 1], 4, 1).map_err(error)?;
+    let mut cache = Cache::new(layout, 1).map_err(error)?;
+    let view = WorldView {
+        view_projection: IDENTITY,
+        camera: [0.; 3],
+        fog: None,
+        lightmap: white,
+    };
+    let input = |layer, z, color| {
+        quad([1.; 4], z, 0.9).map(|v| Input {
+            pos: v.pos,
+            uv: [0.5; 2],
+            layer,
+            color,
+            light: 0xf0f0,
+            normal: [0; 4],
+        })
+    };
+    let prepare = |vertices: [Input; 4]| -> Result<_, String> {
+        let runs = entity::runs(vertices, &[255; 1024], false, 4).map_err(error)?;
+        paged_gui::split_entities(layout, &runs, 32).map_err(error)
+    };
+    let mut clear = frame(&[]);
+    clear.clear = Clear::ColorDepth([1.; 4]);
+    renderer.render(&clear)?;
+    let shadow = prepare(input(14, -0.5, u32::MAX))?;
+    cache
+        .render_world(&mut renderer, &shadow, &view, |p| {
+            layout.pixels(p, &[0, 0, 0, 8])
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [247; 3])?; // alpha 8/255 must not hit entity cutout
+    // It darkens colour but must not write a near depth that hides later items.
+    let red = prepare(input(32, 0.5, 0xff0000ff))?;
+    cache.invalidate(&[0]);
+    cache
+        .render_world(&mut renderer, &red, &view, |p| layout.pixels(p, &[255; 4]))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?;
+    let mut back = input(14, 0., u32::MAX);
+    back.reverse();
+    let back = prepare(back)?;
+    renderer.render(&clear)?;
+    cache.invalidate(&[0]);
+    cache
+        .render_world(&mut renderer, &back, &view, |p| {
+            layout.pixels(p, &[0, 0, 0, 128])
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [255; 3])?;
+    // A mask has no dependency on atlas colour/alpha or a resident page. Bind
+    // a transparent texture as its otherwise-unused image to prove no discard.
+    cache.release(&mut renderer)?;
+    let mask = prepare(input(13, 0., 0))?;
+    let mask_view = WorldView {
+        lightmap: clear_rgba,
+        ..view
+    };
+    let mut background = frame(&[]);
+    background.clear = Clear::ColorDepth([32. / 255., 64. / 255., 96. / 255., 1.]);
+    renderer.render(&background)?;
+    cache
+        .render_world(&mut renderer, &mask, &mask_view, |_| {
+            Err::<Vec<u8>, _>("mask requested atlas pixels")
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [32, 64, 96])?;
+    let indices = [0, 1, 2, 0, 2, 3];
+    let blue = renderer.create_mesh(&quad([0., 0., 1., 1.], 0.3, 0.9), &indices)?;
+    let red_mesh = renderer.create_mesh(&quad([1., 0., 0., 1.], -0.3, 0.9), &indices)?;
+    let draw = |mesh| Draw {
+        mesh,
+        texture: white,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Opaque,
+        scissor: None,
+    };
+    let blue_draw = draw(blue);
+    let red_draw = draw(red_mesh);
+    let mut load = frame(std::slice::from_ref(&blue_draw));
+    load.clear = Clear::Load;
+    renderer.render(&load)?;
+    pixel(&mut renderer, [32, 32], [32, 64, 96])?; // water behind the mask is hidden
+    load.draws = std::slice::from_ref(&red_draw);
+    renderer.render(&load)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?; // colour writes restored in the same view
+    renderer.render(&background)?;
+    cache
+        .render_world(&mut renderer, &mask, &mask_view, |_| {
+            Err::<Vec<u8>, _>("mask requested atlas pixels")
+        })
+        .map_err(error)?;
+    clear.clear = Clear::ColorDepth([0., 1., 0., 1.]);
+    renderer.render(&clear)?;
+    pixel(&mut renderer, [32, 32], [0, 255, 0])?; // colour mask restored before clear
+    // Text pulls a very slightly farther plane in front. A later unbiased plane
+    // stays behind it: leaking POLYGON_OFFSET_FILL would turn the pixel green.
+    let plate = renderer.create_mesh(&quad([0., 0., 1., 1.], 0., 0.9), &indices)?;
+    let green = renderer.create_mesh(&quad([0., 1., 0., 1.], 0., 0.9), &indices)?;
+    let plate_draw = draw(plate);
+    let green_draw = draw(green);
+    let clear_plate = frame(std::slice::from_ref(&plate_draw));
+    renderer.render(&clear_plate)?;
+    let text = prepare(input(35, 0.0000005, 0xff0000ff))?;
+    cache
+        .render_world(&mut renderer, &text, &view, |p| layout.pixels(p, &[255; 4]))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?;
+    let mut load = frame(std::slice::from_ref(&green_draw));
+    load.clear = Clear::Load;
+    renderer.render(&load)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?;
+    // Text is front-culled even with baked normals; outside its cutout there is
+    // no hidden depth. Shadows do not inherit the text's alpha cutoff either.
+    let mut back_text = input(35, 0., u32::MAX);
+    back_text.reverse();
+    let back_text = prepare(back_text)?;
+    clear.clear = Clear::ColorDepth([0., 0., 0., 1.]);
+    renderer.render(&clear)?;
+    cache
+        .render_world(&mut renderer, &back_text, &view, |p| {
+            layout.pixels(p, &[255; 4])
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0; 3])?;
+    for mesh in [blue, red_mesh, plate, green] {
+        renderer.remove_mesh(mesh)?;
+    }
+    cache.release(&mut renderer)?;
+    renderer.remove_texture(white)?;
+    renderer.remove_texture(clear_rgba)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "special entity layers retained resources",
     )
 }

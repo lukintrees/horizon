@@ -83,6 +83,8 @@ entry_points! {
     cull_face: c"glCullFace" (u32) -> ();
     front_face: c"glFrontFace" (u32) -> ();
     disable: c"glDisable" (u32) -> ();
+    color_mask: c"glColorMask" (u8, u8, u8, u8) -> ();
+    polygon_offset: c"glPolygonOffset" (f32, f32) -> ();
     depth_mask: c"glDepthMask" (u8) -> ();
     depth_func: c"glDepthFunc" (u32) -> ();
     blend_func: c"glBlendFuncSeparate" (u32, u32, u32, u32) -> ();

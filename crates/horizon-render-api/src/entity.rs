@@ -8,13 +8,21 @@ pub enum Overlay {
     Hurt,
     White(u8),
 }
+/// Classic submission order before translucent terrain; particles follow it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Kind {
+    Body,
+    Text,
+    Shadow,
+    Item,
+    WaterMask,
+    Particle,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Material {
     pub overlay: Overlay,
     pub cull: bool,
-    /// Translucent particles draw after terrain without depth writes. Ordinary
-    /// entities and translucent items retain depth writes in the classic path.
-    pub particle: bool,
+    pub kind: Kind,
 }
 impl Material {
     pub fn overlay_color(self) -> Option<[f32; 4]> {
@@ -100,10 +108,9 @@ pub fn runs(
             .checked_add(4)
             .filter(|&n| n <= max_vertices)
             .ok_or(Error::VertexBudget)?;
-        if quad
-            .iter()
-            .any(|v| v.layer != first.layer || v.normal[3] != first.normal[3])
-        {
+        if quad.iter().any(|v| {
+            v.layer != first.layer || (first.layer & 0xffff != 13 && v.normal[3] != first.normal[3])
+        }) {
             return Err(Error::MixedMaterial);
         }
         // HDR tier and classic-path OIT tag do not change SDR shading. Unknown
@@ -113,7 +120,7 @@ pub fn runs(
         }
         let code = first.layer & 0xffff;
         let overlay = match code {
-            0 | 15 | 32 => Overlay::None,
+            0 | 13 | 14 | 15 | 32 | 35 => Overlay::None,
             1 => Overlay::Hurt,
             5 => Overlay::White(15),
             16..=31 => Overlay::White((code - 16) as u8),
@@ -122,12 +129,23 @@ pub fn runs(
         let w = (f32::from(first.normal[3]) / 127.).max(-1.);
         let material = Material {
             overlay,
-            cull: (w > 0. && w < 0.5) || (w < 0. && w > -0.996),
-            particle: code == 15,
+            cull: code != 13
+                && (code == 14 || code == 35 || (w > 0. && w < 0.5) || (w < 0. && w > -0.996)),
+            kind: match code {
+                13 => Kind::WaterMask,
+                14 => Kind::Shadow,
+                15 => Kind::Particle,
+                32 => Kind::Item,
+                35 => Kind::Text,
+                _ => Kind::Body,
+            },
         };
         if quad.iter().any(|v| {
-            v.pos.iter().chain(&v.uv).any(|f| !f.is_finite())
-                || v.uv.iter().any(|f| !(0.0..=1.0).contains(f))
+            v.pos.iter().any(|f| !f.is_finite())
+                || (code != 13
+                    && v.uv
+                        .iter()
+                        .any(|f| !f.is_finite() || !(0.0..=1.0).contains(f)))
         }) {
             return Err(Error::InvalidVertex);
         }
@@ -156,7 +174,7 @@ pub fn runs(
             LitVertex {
                 base: Vertex {
                     pos: v.pos,
-                    uv: v.uv,
+                    uv: if code == 13 { [0.; 2] } else { v.uv },
                     light_uv: crate::light_uv(v.light as u16),
                     color: tint(front),
                 },
@@ -230,13 +248,13 @@ mod tests {
             Pass::Entity(Material {
                 overlay: Overlay::Hurt,
                 cull: false,
-                particle: false
+                kind: Kind::Body
             })
         );
     }
     #[test]
     fn rejects_special_materials_bad_geometry_and_budgets_without_dropping_quads() {
-        for layer in [2, 7, 9, 14, 33, 35, 38, 1 << 31] {
+        for layer in [2, 7, 9, 33, 34, 38, 1 << 31] {
             assert!(matches!(
                 runs([Input { layer, ..input() }; 4], &[255; 1024], false, 4),
                 Err(Error::UnsupportedMaterial(_))
@@ -265,6 +283,42 @@ mod tests {
         assert_eq!(
             runs([], &[0; 4], false, 4).err(),
             Some(Error::InvalidLightmap)
+        );
+    }
+    #[test]
+    fn mask_ignores_texture_attributes_and_special_kinds_keep_their_own_policy() {
+        let mut quad = [Input {
+            layer: 13,
+            uv: [f32::NAN, 5.],
+            ..input()
+        }; 4];
+        quad[2].normal[3] = 0;
+        let mask = runs(quad, &[255; 1024], false, 4).unwrap();
+        assert_eq!(mask[0].vertices[0].base.uv, [0.; 2]);
+        assert!(matches!(mask[0].pass,Pass::Entity(m) if m.kind==Kind::WaterMask && !m.cull));
+        for (layer, kind, cull) in [
+            (14, Kind::Shadow, true),
+            (35, Kind::Text, true),
+            (32, Kind::Item, false),
+            (15, Kind::Particle, false),
+        ] {
+            let runs = runs(
+                [Input {
+                    layer,
+                    normal: [0; 4],
+                    ..input()
+                }; 4],
+                &[255; 1024],
+                false,
+                4,
+            )
+            .unwrap();
+            assert!(matches!(runs[0].pass,Pass::Entity(m) if m.kind==kind && m.cull==cull));
+        }
+        quad[3].pos[0] = f32::NAN;
+        assert_eq!(
+            runs(quad, &[255; 1024], false, 4).err(),
+            Some(Error::InvalidVertex)
         );
     }
 }

@@ -45,7 +45,24 @@ mod tests {
         );
         assert_eq!(runs[0].vertices[0].base.light_uv, [17. / 32., 9. / 32.]);
         assert!(
-            matches!(runs[0].pass, horizon_render_api::Pass::Entity(m) if m.cull && m.particle)
+            matches!(runs[0].pass, horizon_render_api::Pass::Entity(m) if m.cull && m.kind == entity::Kind::Particle)
+        );
+    }
+    #[test]
+    fn real_boat_mask_does_not_require_a_sampleable_atlas_uv() {
+        let vertex = Vertex {
+            pos: [0.; 3],
+            uv: [f32::NAN; 2],
+            layer: 13,
+            color: 0,
+            light: 0,
+            normal: [0; 4],
+            glint_uv: [0.; 2],
+        };
+        let mask = runs(&[vertex; 4], &[255; 1024], false, 4).unwrap();
+        assert_eq!(mask[0].vertices[0].base.uv, [0.; 2]);
+        assert!(
+            matches!(mask[0].pass,horizon_render_api::Pass::Entity(m) if m.kind==entity::Kind::WaterMask)
         );
     }
 }

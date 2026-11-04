@@ -511,7 +511,12 @@ impl Cache {
         self.collect_garbage(backend)
             .map_err(RenderError::Backend)?;
         for run in runs {
-            let texture = self.texture(backend, run.page, &mut load)?;
+            let texture = if matches!(run.geometry.pass, crate::Pass::Entity(m) if m.kind == crate::entity::Kind::WaterMask)
+            {
+                view.lightmap
+            } else {
+                self.texture(backend, run.page, &mut load)?
+            };
             let mesh = backend
                 .create_entity_mesh(&run.geometry.vertices, &run.geometry.indices)
                 .map_err(RenderError::Backend)?;

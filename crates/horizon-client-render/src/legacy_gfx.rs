@@ -1,6 +1,6 @@
 //! Opt-in terrain/HUD coordinator using actual game types and the native GL2
 //! renderer. This is not yet a replacement for every gfx::Renderer feature:
-//! entities/hand/sky and special pack shaders must be ported before selecting it
+//! complete material/sky/platform coverage is required before selecting it
 //! from the normal Game startup. Unsupported GUI materials are explicit errors.
 use crate::{
     entity_bridge, gui_bridge,
@@ -13,6 +13,7 @@ use horizon_legacy_render::{Budget, Context, Renderer};
 use horizon_render_api::{
     Image, RenderBackend, TextureId,
     atlas::AtlasLayout,
+    entity::Kind,
     paged_gui::{self, Cache, Layout},
     scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
@@ -139,7 +140,7 @@ impl TerrainHudRenderer {
     pub fn render(&mut self, world: &SceneFrame<'_>, hud: &HudBatch) -> Result<(), String> {
         self.render_with_entities(world, hud, &[], false)
     }
-    /// Classic camera-relative entity stream; special glint/portal/shadow
+    /// Classic camera-relative entity stream; special glint/portal
     /// materials remain explicit errors. Particles follow translucent terrain.
     pub fn render_with_entities(
         &mut self,
@@ -184,13 +185,21 @@ impl TerrainHudRenderer {
             self.limits.entity_vertices,
         )
         .map_err(diagnostic)?;
-        let hand = paged_gui::split_entities(self.hud.layout(), &hand, self.limits.entity_vertices)
-            .map_err(diagnostic)?;
+        let mut hand =
+            paged_gui::split_entities(self.hud.layout(), &hand, self.limits.entity_vertices)
+                .map_err(diagnostic)?;
         if hand
             .iter()
-            .any(|r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if m.particle))
+            .any(|r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::WaterMask | Kind::Text)))
         {
-            return Err("particle material in hand view".into());
+            return Err("world-only material in hand view".into());
+        }
+        // The modern hand uses its ordinary entity pipeline even for item-sheet
+        // quads; its near-plane bias is not the world item pipeline's default.
+        for run in &mut hand {
+            if let horizon_render_api::Pass::Entity(ref mut material) = run.geometry.pass {
+                material.kind = Kind::Body;
+            }
         }
         let entity = entity_bridge::runs(
             geometry.entities,
@@ -210,9 +219,16 @@ impl TerrainHudRenderer {
         {
             return Err("entity/hand vertex budget exceeded".into());
         }
-        let (body, particles): (Vec<_>, Vec<_>) = entity.into_iter().partition(
-            |r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if !m.particle),
+        let (mut body, particles): (Vec<_>, Vec<_>) = entity.into_iter().partition(
+            |r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if m.kind != Kind::Particle),
         );
+
+        // Match the classic game's material ordering, retaining input order
+        // within each kind (not sorting translucent quads by texture/page).
+        body.sort_by_key(|r| match r.geometry.pass {
+            horizon_render_api::Pass::Entity(m) => m.kind,
+            _ => unreachable!(),
+        });
 
         let runs = gui_bridge::runs(hud, self.size(), [1.; 2], self.limits.gui_vertices)
             .map_err(diagnostic)?;
@@ -712,5 +728,129 @@ mod tests {
             .render_with_entities(&frame, &HudBatch::new([64; 2]), &quad(0.1, -0.5, 0), false)
             .unwrap();
         near(&renderer.read_rgba([32, 32, 1, 1]).unwrap(), [0; 3]);
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_shadow_item_mask_text_and_water_obey_classic_submission_order() {
+        use crate::mesher::Vertex;
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 3;
+        atlas.height = 1;
+        atlas.pixels = vec![255, 0, 0, 128, 0, 0, 0, 16, 0, 0, 0, 0];
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }; 2],
+            4,
+            1,
+            2,
+        )
+        .unwrap();
+        let sprites: [&[u8]; 2] = [&[255; 4], &[255, 255, 255, 128]];
+        let pages: Vec<_> = (0..layout.page_count())
+            .map(|p| build_page(&layout, p, &sprites).unwrap())
+            .collect();
+        let refs: Vec<_> = pages.iter().map(Vec::as_slice).collect();
+        let limits = Limits {
+            hud_page_size: 4,
+            gpu: Budget {
+                texture_bytes: 1220,
+                ..Budget::default()
+            },
+            ..Limits::default()
+        };
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &refs,
+            &[255; 1024],
+            &atlas,
+            limits,
+        )
+        .unwrap();
+        let positions = [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]];
+        let mut terrain = SectionMesh::default();
+        terrain
+            .solid
+            .extend(positions.map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, 0xff808080, 0xf0f0)));
+        terrain.translucent.extend(
+            positions
+                .map(|p| TerrainVertex::new([p[0], p[1], -0.3], [0.5; 2], 1, 0xffff0000, 0xf0f0)),
+        );
+        renderer.upload_section([0; 3], &terrain).unwrap();
+        let frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: None,
+            solid: &[[0; 3]],
+            translucent: &[[0; 3]],
+        };
+        let entity = |layer, z, u| {
+            positions.map(|p| Vertex {
+                pos: [p[0], p[1], z],
+                uv: [u, 0.5],
+                layer,
+                color: u32::MAX,
+                light: 0xf0f0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            })
+        };
+        let mut mask = entity(13, -0.5, f32::NAN);
+        for v in &mut mask {
+            v.pos[0] = v.pos[0] * 0.5 + 0.5;
+            v.color = 0;
+        }
+        let item = entity(32, -0.2, 0.5 / 3.);
+        let shadow = entity(14, 0., 1.5 / 3.);
+        // Deliberately opposite to submission order: mask first, item before
+        // shadow. Sorting by texture or preserving these phase tags verbatim
+        // would hide the item or miss its faint shadow beneath the water.
+        let vertices = [mask, item, shadow].concat();
+        let hud = HudBatch::new([64; 2]);
+        renderer
+            .render_with_entities(&frame, &hud, &vertices, false)
+            .unwrap();
+        let near = |actual: &[u8], expected: [u8; 3]| {
+            for i in 0..3 {
+                assert!(
+                    (i16::from(actual[i]) - i16::from(expected[i])).abs() <= 2,
+                    "{actual:?} != {expected:?}"
+                );
+            }
+        };
+        near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [94, 30, 158]);
+        near(&renderer.read_rgba([48, 32, 1, 1]).unwrap(), [188, 60, 60]);
+        assert_eq!(renderer.world.backend_mut().stats().texture_bytes, 1220);
+        assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 376);
+        let text = entity(35, 0.0000005, 0.5 / 3.);
+        renderer
+            .render_with_entities(&frame, &hud, &text, false)
+            .unwrap();
+        near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [96, 32, 160]);
+        let mut back = text;
+        back.reverse();
+        renderer
+            .render_with_entities(&frame, &hud, &back, false)
+            .unwrap();
+        near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [64, 64, 192]);
+        let before = renderer.read_rgba([48, 32, 1, 1]).unwrap();
+        assert!(
+            renderer
+                .render_geometry(
+                    &frame,
+                    &hud,
+                    &Geometry {
+                        entities: &[],
+                        hand: &mask,
+                        hand_view_projection: IDENTITY,
+                        nether_lighting: false
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([48, 32, 1, 1]).unwrap(), before);
     }
 }

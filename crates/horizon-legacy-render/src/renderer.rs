@@ -3,6 +3,7 @@ use crate::{
     Context,
     raw::{ContextHandle, Gl},
 };
+use horizon_render_api::entity::Kind;
 use horizon_render_api::{
     Clear, Draw, Frame, Image, MeshId, Pass, RenderBackend, TextureId, Vertex, relative_origin,
 };
@@ -52,6 +53,7 @@ struct Uniforms {
     force_opaque: i32,
     entity: i32,
     overlay: i32,
+    mask: i32,
 }
 
 pub struct Renderer<'a> {
@@ -149,6 +151,7 @@ impl<'a> Renderer<'a> {
                 force_opaque: -1,
                 entity: -1,
                 overlay: -1,
+                mask: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -175,6 +178,7 @@ impl<'a> Renderer<'a> {
                 force_opaque: location(c"force_opaque")?,
                 entity: location(c"entity_mode")?,
                 overlay: location(c"overlay")?,
+                mask: location(c"mask_only")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -485,6 +489,8 @@ impl RenderBackend for Renderer<'_> {
             (self.gl.disable)(0x0C11); // SCISSOR_TEST before clear
             (self.gl.disable)(0x0B44); // CULL_FACE: CPU prepares the visible faces
             (self.gl.depth_mask)(1);
+            (self.gl.color_mask)(1, 1, 1, 1);
+            (self.gl.disable)(0x8037); // POLYGON_OFFSET_FILL
             (self.gl.depth_func)(0x0201); // LESS
             match frame.clear {
                 Clear::Load => (),
@@ -506,6 +512,7 @@ impl RenderBackend for Renderer<'_> {
                 (self.gl.uniform4f)(self.uniforms.fog, color[0], color[1], color[2], start);
                 (self.gl.uniform1f)(self.uniforms.fog_end, end);
                 let cutoff = match draw.pass {
+                    Pass::Entity(m) if matches!(m.kind, Kind::Shadow | Kind::WaterMask) => 0.,
                     Pass::Cutout | Pass::Entity(_) => 0.1,
                     Pass::Overlay | Pass::OverlayAdditive | Pass::OverlayDepth => 0.004,
                     _ => 0.,
@@ -516,6 +523,23 @@ impl RenderBackend for Renderer<'_> {
                     _ => None,
                 };
                 (self.gl.uniform1f)(self.uniforms.entity, if entity.is_some() { 1. } else { 0. });
+                let mask = entity.is_some_and(|m| m.kind == Kind::WaterMask);
+                (self.gl.uniform1f)(self.uniforms.mask, if mask { 1. } else { 0. });
+                let write = u8::from(!mask);
+                (self.gl.color_mask)(write, write, write, write);
+                let bias = entity.and_then(|m| match m.kind {
+                    Kind::Body => Some((0., -128.)),
+                    Kind::Text => Some((-1., -10.)),
+                    Kind::Shadow => Some((-0.015, -128.)),
+                    _ => None,
+                });
+                if let Some((slope, units)) = bias {
+                    (self.gl.enable)(0x8037);
+                    (self.gl.polygon_offset)(slope, units);
+                } else {
+                    (self.gl.disable)(0x8037);
+                }
+
                 let overlay = entity
                     .and_then(|m| m.overlay_color())
                     .unwrap_or([0., 0., 0., 1.]);
@@ -554,9 +578,10 @@ impl RenderBackend for Renderer<'_> {
                         0x0201
                     },
                 );
-                let depth_write =
-                    matches!(draw.pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
-                        || matches!(draw.pass, Pass::Entity(m) if !m.particle);
+                let depth_write = matches!(
+                    draw.pass,
+                    Pass::Opaque | Pass::Cutout | Pass::OverlayDepth
+                ) || matches!(draw.pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow));
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match draw.pass {
                     Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),

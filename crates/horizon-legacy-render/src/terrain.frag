@@ -2,6 +2,7 @@
 uniform sampler2D image;
 uniform sampler2D lightmap;
 uniform float entity_mode;
+uniform float mask_only;
 uniform vec4 overlay;
 varying vec4 back_tint;
 varying vec4 vertex_light;
@@ -14,6 +15,7 @@ varying vec2 light_uv;
 varying vec4 tint;
 varying float distance_to_eye;
 void main() {
+    if (mask_only > 0.5) { gl_FragColor = vec4(0.0); return; }
     vec4 color = tint;
     if (entity_mode > 0.5 && !gl_FrontFacing) color = back_tint;
     vec4 pixel = texture2D(image, uv) * color;
