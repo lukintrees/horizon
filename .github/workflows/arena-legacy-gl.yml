@@ -125,7 +125,13 @@ jobs:
             exit "$rc"
           fi
           tail -30 /tmp/gfx21-test.log
-          cargo test -p horizon-client --lib legacy_game --no-default-features --features legacy-gl
+          cargo test -p horizon-client --lib legacy_game --no-default-features --features legacy-gl > /tmp/legacy-game-test.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            python3 -c 'import re; from pathlib import Path; t=re.sub(r"\x1b\[[0-9;]*[A-Za-z]","",Path("/tmp/legacy-game-test.log").read_text(errors="replace")); ls=[l for l in t.splitlines() if not any(k in l for k in ("Downloaded","Compiling","Checking","Updating crates.io"))]; s="\n".join(ls[-120:])[-20000:]; print("::error::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+            exit "$rc"
+          fi
+          tail -40 /tmp/legacy-game-test.log
 
       - name: GL 2.1/2.0 smoke frames under Xvfb
         run: |
