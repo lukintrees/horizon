@@ -121,6 +121,12 @@ jobs:
             }
             $lines += $line
           }
+          $samples = @()
+          foreach ($f in @(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9)) {
+            $p = $bmp.GetPixel([int]($bmp.Width / 2), [int]($bmp.Height * $f))
+            $samples += "$f=($($p.R),$($p.G),$($p.B))"
+          }
+          Write-Output "::notice title=terrain colours down the middle column (fraction from the top)::$($samples -join '  ')"
           $size = "$($bmp.Width)x$($bmp.Height)"
           $bmp.Dispose()
           $text = ($lines -join '%0A')
