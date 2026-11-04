@@ -53,6 +53,7 @@ impl Default for Limits {
 pub struct Geometry<'a> {
     pub entities: &'a [crate::mesher::Vertex],
     pub hand: &'a [crate::mesher::Vertex],
+    pub see_through: &'a [crate::mesher::Vertex],
     pub hand_view_projection: [f32; 16],
     pub nether_lighting: bool,
 }
@@ -155,6 +156,7 @@ impl TerrainHudRenderer {
             &Geometry {
                 entities,
                 hand: &[],
+                see_through: &[],
                 hand_view_projection: world.view_projection,
                 nether_lighting: nether,
             },
@@ -170,6 +172,7 @@ impl TerrainHudRenderer {
             .entities
             .len()
             .checked_add(geometry.hand.len())
+            .and_then(|n| n.checked_add(geometry.see_through.len()))
             .is_none_or(|n| n > self.limits.entity_vertices)
         {
             return Err("entity/hand input budget exceeded".into());
@@ -178,16 +181,15 @@ impl TerrainHudRenderer {
         {
             return Err("invalid hand projection".into());
         }
-        let hand = entity_bridge::runs(
+        let mut hand = entity_bridge::prepare(
             geometry.hand,
             &self.lightmap,
             geometry.nether_lighting,
+            self.hud.layout(),
             self.limits.entity_vertices,
+            entity_bridge::View::World,
         )
         .map_err(diagnostic)?;
-        let mut hand =
-            paged_gui::split_entities(self.hud.layout(), &hand, self.limits.entity_vertices)
-                .map_err(diagnostic)?;
         if hand
             .iter()
             .any(|r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::WaterMask | Kind::Text)))
@@ -201,24 +203,34 @@ impl TerrainHudRenderer {
                 material.kind = Kind::Body;
             }
         }
-        let entity = entity_bridge::runs(
+        let remaining = self.limits.entity_vertices
+            - hand
+                .iter()
+                .map(|r| r.geometry.vertices.len())
+                .sum::<usize>();
+        let see_through = entity_bridge::prepare(
+            geometry.see_through,
+            &self.lightmap,
+            geometry.nether_lighting,
+            self.hud.layout(),
+            remaining,
+            entity_bridge::View::SeeThrough,
+        )
+        .map_err(diagnostic)?;
+        let remaining = remaining
+            - see_through
+                .iter()
+                .map(|r| r.geometry.vertices.len())
+                .sum::<usize>();
+        let entity = entity_bridge::prepare(
             geometry.entities,
             &self.lightmap,
             geometry.nether_lighting,
-            self.limits.entity_vertices,
+            self.hud.layout(),
+            remaining,
+            entity_bridge::View::World,
         )
         .map_err(diagnostic)?;
-        let entity =
-            paged_gui::split_entities(self.hud.layout(), &entity, self.limits.entity_vertices)
-                .map_err(diagnostic)?;
-        if entity
-            .iter()
-            .chain(&hand)
-            .try_fold(0usize, |n, r| n.checked_add(r.geometry.vertices.len()))
-            .is_none_or(|n| n > self.limits.entity_vertices)
-        {
-            return Err("entity/hand vertex budget exceeded".into());
-        }
         let (mut body, particles): (Vec<_>, Vec<_>) = entity.into_iter().partition(
             |r| matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if m.kind != Kind::Particle),
         );
@@ -246,15 +258,22 @@ impl TerrainHudRenderer {
             std::mem::size_of_val(run.geometry.vertices.as_slice())
                 + std::mem::size_of_val(run.geometry.indices.as_slice())
                 > remaining.mesh_bytes
-        }) || body.iter().chain(&particles).chain(&hand).any(|run| {
-            std::mem::size_of_val(run.geometry.vertices.as_slice())
-                + std::mem::size_of_val(run.geometry.indices.as_slice())
-                > remaining.mesh_bytes
-        }) || ((!runs.is_empty()
-            || !body.is_empty()
-            || !particles.is_empty()
-            || !hand.is_empty())
-            && remaining.meshes == 0)
+        }) || body
+            .iter()
+            .chain(&particles)
+            .chain(&hand)
+            .chain(&see_through)
+            .any(|run| {
+                std::mem::size_of_val(run.geometry.vertices.as_slice())
+                    + std::mem::size_of_val(run.geometry.indices.as_slice())
+                    > remaining.mesh_bytes
+            })
+            || ((!runs.is_empty()
+                || !body.is_empty()
+                || !particles.is_empty()
+                || !hand.is_empty()
+                || !see_through.is_empty())
+                && remaining.meshes == 0)
         {
             return Err("no transient mesh capacity for legacy frame".into());
         }
@@ -278,6 +297,11 @@ impl TerrainHudRenderer {
             .map_err(diagnostic)?;
         self.cache
             .render_world(self.world.backend_mut(), &particles, &view, |page| {
+                backing.load(page)
+            })
+            .map_err(diagnostic)?;
+        self.cache
+            .render_world(self.world.backend_mut(), &see_through, &view, |page| {
                 backing.load(page)
             })
             .map_err(diagnostic)?;
@@ -692,6 +716,7 @@ mod tests {
                 &Geometry {
                     entities: &entities,
                     hand: &hand,
+                    see_through: &[],
                     hand_view_projection: IDENTITY,
                     nether_lighting: false,
                 },
@@ -716,6 +741,7 @@ mod tests {
                     &Geometry {
                         entities: &[],
                         hand: &hand,
+                        see_through: &[],
                         hand_view_projection: invalid,
                         nether_lighting: false
                     }
@@ -836,6 +862,70 @@ mod tests {
             .render_with_entities(&frame, &hud, &back, false)
             .unwrap();
         near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [64, 64, 192]);
+        let names = entity(0, 0.8, 0.5 / 3.);
+        renderer
+            .render_geometry(
+                &frame,
+                &hud,
+                &Geometry {
+                    entities: &[],
+                    hand: &[],
+                    see_through: &names,
+                    hand_view_projection: IDENTITY,
+                    nether_lighting: false,
+                },
+            )
+            .unwrap();
+        near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [160, 32, 96]);
+        let held = entity(32, 0.9, 0.5 / 3.);
+        renderer
+            .render_geometry(
+                &frame,
+                &hud,
+                &Geometry {
+                    entities: &[],
+                    hand: &held,
+                    see_through: &names,
+                    hand_view_projection: IDENTITY,
+                    nether_lighting: false,
+                },
+            )
+            .unwrap();
+        near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [208, 16, 48]);
+        let stable = renderer.read_rgba([16, 32, 1, 1]).unwrap();
+        renderer.limits.entity_vertices = 10; // eight input vertices expand to twelve
+        assert!(
+            renderer
+                .render_geometry(
+                    &frame,
+                    &hud,
+                    &Geometry {
+                        entities: &[],
+                        hand: &held,
+                        see_through: &names,
+                        hand_view_projection: IDENTITY,
+                        nether_lighting: false
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([16, 32, 1, 1]).unwrap(), stable);
+        renderer.limits.entity_vertices = 12;
+        renderer
+            .render_geometry(
+                &frame,
+                &hud,
+                &Geometry {
+                    entities: &[],
+                    hand: &held,
+                    see_through: &names,
+                    hand_view_projection: IDENTITY,
+                    nether_lighting: false,
+                },
+            )
+            .unwrap();
+        near(&renderer.read_rgba([16, 32, 1, 1]).unwrap(), [208, 16, 48]);
+        renderer.limits.entity_vertices = limits.entity_vertices;
         let before = renderer.read_rgba([48, 32, 1, 1]).unwrap();
         assert!(
             renderer
@@ -845,6 +935,7 @@ mod tests {
                     &Geometry {
                         entities: &[],
                         hand: &mask,
+                        see_through: &[],
                         hand_view_projection: IDENTITY,
                         nether_lighting: false
                     }

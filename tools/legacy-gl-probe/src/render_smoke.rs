@@ -1302,7 +1302,57 @@ fn entity_layers(context: &Context) -> Result<(), String> {
         })
         .map_err(error)?;
     pixel(&mut renderer, [32, 32], [0; 3])?;
-    for mesh in [blue, red_mesh, plate, green] {
+    let name = entity::see_through_runs(input(0, 0.8, 0x800000ff), &[255; 1024], false, 4)
+        .map_err(error)?;
+    let name = paged_gui::split_entities(layout, &name, 32).map_err(error)?;
+    renderer.render(&clear_plate)?;
+    cache
+        .render_world(&mut renderer, &name, &view, |p| layout.pixels(p, &[255; 4]))
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [128, 0, 127])?;
+    let mut load = frame(std::slice::from_ref(&green_draw));
+    load.clear = Clear::Load;
+    renderer.render(&load)?;
+    pixel(&mut renderer, [32, 32], [128, 0, 127])?; // original depth survived see-through text
+    renderer.render(&clear_plate)?;
+    let fogged = WorldView {
+        fog: Some(Fog {
+            color: [0., 1., 0.],
+            start: 0.,
+            end: 0.4,
+        }),
+        ..view
+    };
+    cache
+        .render_world(&mut renderer, &name, &fogged, |p| {
+            layout.pixels(p, &[255; 4])
+        })
+        .map_err(error)?;
+    pixel(&mut renderer, [32, 32], [0, 128, 127])?; // world fog, not a screen overlay
+    let mask_source = entity::runs(input(13, 0., 0), &[255; 1024], false, 4).map_err(error)?;
+    let mask_mesh = renderer.create_entity_mesh(&mask_source[0].vertices, &indices)?;
+    let mask_draw = Draw {
+        mesh: mask_mesh,
+        texture: clear_rgba,
+        pass: mask_source[0].pass,
+        ..plate_draw
+    };
+    let draws = [mask_draw, blue_draw, red_draw];
+    let mixed = frame(&draws);
+    renderer.render(&mixed)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?; // per-draw colour mask/layout restored too
+    let text_source =
+        entity::runs(input(35, 0.0000005, 0xff0000ff), &[255; 1024], false, 4).map_err(error)?;
+    let text_mesh = renderer.create_entity_mesh(&text_source[0].vertices, &indices)?;
+    let text_draw = Draw {
+        mesh: text_mesh,
+        pass: text_source[0].pass,
+        ..plate_draw
+    };
+    let draws = [plate_draw, text_draw, green_draw];
+    renderer.render(&frame(&draws))?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?; // polygon offset reset within one draw list
+    for mesh in [blue, red_mesh, plate, green, mask_mesh, text_mesh] {
         renderer.remove_mesh(mesh)?;
     }
     cache.release(&mut renderer)?;

@@ -17,6 +17,7 @@ pub enum Kind {
     Item,
     WaterMask,
     Particle,
+    SeeThrough,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Material {
@@ -60,6 +61,7 @@ pub enum Error {
     MixedMaterial,
     UnsupportedMaterial(u32),
     InvalidVertex,
+    InvalidViewMaterial,
     VertexBudget,
 }
 fn shade(normal: [f32; 3], nether: bool) -> f32 {
@@ -204,6 +206,27 @@ pub fn runs(
     Ok(result)
 }
 
+/// TEXT_SEE_THROUGH is an explicit view, not an overlay encoded in Vertex.layer.
+/// Keep its world projection/fog, but cull the back and bypass depth entirely.
+pub fn see_through_runs(
+    input: impl IntoIterator<Item = Input>,
+    lightmap: &[u8],
+    nether: bool,
+    max_vertices: usize,
+) -> Result<Vec<gui::Run<LitVertex>>, Error> {
+    let mut runs = runs(input, lightmap, nether, max_vertices)?;
+    for run in &mut runs {
+        if let Pass::Entity(ref mut material) = run.pass {
+            if !matches!(material.kind, Kind::Body | Kind::Text) {
+                return Err(Error::InvalidViewMaterial);
+            }
+            material.kind = Kind::SeeThrough;
+            material.cull = true;
+        }
+    }
+    Ok(runs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +343,26 @@ mod tests {
             runs(quad, &[255; 1024], false, 4).err(),
             Some(Error::InvalidVertex)
         );
+    }
+    #[test]
+    fn see_through_is_an_explicit_world_text_view_not_a_mask_or_particle_override() {
+        let text = see_through_runs(
+            [Input {
+                normal: [0; 4],
+                ..input()
+            }; 4],
+            &[255; 1024],
+            false,
+            4,
+        )
+        .unwrap();
+        assert!(matches!(text[0].pass,Pass::Entity(m) if m.kind==Kind::SeeThrough && m.cull));
+        assert_eq!(text[0].vertices[0].base.pos, [0.; 3]);
+        for layer in [13, 14, 15, 32] {
+            assert_eq!(
+                see_through_runs([Input { layer, ..input() }; 4], &[255; 1024], false, 4).err(),
+                Some(Error::InvalidViewMaterial)
+            );
+        }
     }
 }

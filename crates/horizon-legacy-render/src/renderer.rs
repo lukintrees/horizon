@@ -566,7 +566,9 @@ impl RenderBackend for Renderer<'_> {
                         0.
                     },
                 );
-                if draw.pass.is_overlay() && draw.pass != Pass::OverlayDepth {
+                if (draw.pass.is_overlay() && draw.pass != Pass::OverlayDepth)
+                    || entity.is_some_and(|m| m.kind == Kind::SeeThrough)
+                {
                     (self.gl.disable)(0x0B71);
                 } else {
                     (self.gl.enable)(0x0B71);
@@ -581,7 +583,7 @@ impl RenderBackend for Renderer<'_> {
                 let depth_write = matches!(
                     draw.pass,
                     Pass::Opaque | Pass::Cutout | Pass::OverlayDepth
-                ) || matches!(draw.pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow));
+                ) || matches!(draw.pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough));
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match draw.pass {
                     Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),
