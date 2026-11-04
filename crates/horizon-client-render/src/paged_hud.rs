@@ -66,6 +66,7 @@ impl Backing {
         }
         let mut working: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
         let mut decoded_bytes = incoming;
+        let mut written_bytes = 0usize;
         for p in patches {
             for page in self
                 .layout
@@ -81,22 +82,44 @@ impl Backing {
                 }
                 let pixels = working.get_mut(&page).unwrap();
                 let side = self.layout.page_size();
-                for y in 0..side {
+                let origin = self
+                    .layout
+                    .origin(page)
+                    .map_err(|e| format!("HUD patch: {e:?}"))?;
+                // Only visit the dirty rectangle, not a whole tile per glyph.
+                // Source-edge texels can alias the entire padded tail of a tile.
+                let range = |axis: usize, start: u32, length: u32| {
+                    let local = |v: u32| {
+                        (i64::from(v) - i64::from(origin[axis]) + 1).clamp(0, i64::from(side))
+                            as u32
+                    };
+                    let lo = if start == 0 { 0 } else { local(start) };
+                    let hi = if start + length == self.layout.size()[axis] {
+                        side
+                    } else {
+                        local(start + length)
+                    };
+                    lo..hi
+                };
+                let horizontal = range(0, p.x, p.width);
+                let vertical = range(1, p.y, p.height);
+                let writes = (horizontal.end - horizontal.start) as usize
+                    * (vertical.end - vertical.start) as usize
+                    * 4;
+                written_bytes = written_bytes
+                    .checked_add(writes)
+                    .filter(|&n| n <= working_limit)
+                    .ok_or("HUD patch write-work budget exceeded")?;
+                for y in vertical {
                     let [_, sy] = self
                         .layout
                         .source_texel(page, [0, y])
                         .map_err(|e| format!("HUD patch: {e:?}"))?;
-                    if sy < p.y || sy - p.y >= p.height {
-                        continue;
-                    }
-                    for x in 0..side {
+                    for x in horizontal.clone() {
                         let [sx, _] = self
                             .layout
                             .source_texel(page, [x, y])
                             .map_err(|e| format!("HUD patch: {e:?}"))?;
-                        if sx < p.x || sx - p.x >= p.width {
-                            continue;
-                        }
                         let src =
                             ((sy - p.y) as usize * p.width as usize + (sx - p.x) as usize) * 4;
                         let dst = (y as usize * side as usize + x as usize) * 4;
@@ -175,5 +198,53 @@ mod tests {
         backing.limit = backing.bytes;
         assert!(backing.patch(&[patch], 1024).is_err());
         assert_eq!(backing.load(0).unwrap(), before);
+    }
+    #[test]
+    fn bridge_patch_rectangles_match_full_rebuild_including_all_edge_aliases() {
+        let layout = Layout::new([5, 3], 4, 6).unwrap();
+        let original: Vec<u8> = (0..60).collect();
+        for y in 0..3 {
+            for x in 0..5 {
+                for height in 1..=3 - y {
+                    for width in 1..=5 - x {
+                        let mut backing = Backing::new(layout, &original, 4096).unwrap();
+                        let patch = Patch {
+                            x,
+                            y,
+                            width,
+                            height,
+                            rgba: vec![240; (width * height * 4) as usize],
+                        };
+                        backing.patch(&[patch], 4096).unwrap();
+                        let mut expected = original.clone();
+                        for row in y..y + height {
+                            let offset = ((row * 5 + x) * 4) as usize;
+                            expected[offset..offset + width as usize * 4].fill(240);
+                        }
+                        for page in 0..layout.page_count() {
+                            assert_eq!(
+                                backing.load(page).unwrap(),
+                                layout.pixels(page, &expected).unwrap()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn bridge_patch_work_is_bounded_even_for_repeated_tiny_edge_edits() {
+        let layout = Layout::new([1, 1], 4, 1).unwrap();
+        let mut backing = Backing::new(layout, &[0; 4], 1024).unwrap();
+        let patch = Patch {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![255; 4],
+        };
+        // Incoming+decoded bytes fit (72), but 128 bytes of repeated writes do not.
+        assert!(backing.patch(&[patch.clone(), patch], 80).is_err());
+        assert_eq!(backing.load(0).unwrap(), vec![0; 64]);
     }
 }

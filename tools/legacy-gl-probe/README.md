@@ -165,20 +165,22 @@ to its independent triangle test. Its safe `RenderBackend` contract is defined i
 `horizon-render-api`; the game library has real terrain/GUI adapters and an opt-in terrain/HUD
 coordinator, not yet the normal Game renderer.
 
-All three llvmpipe modes now require **15 backend outcomes per mode**, including
+All three llvmpipe modes now require **16 backend outcomes per mode**, including
 real texture updates, cutout, transparency/depth write, lightmap, fog, clipped
 UI-like overlay, large-coordinate rendering, padded atlas/terrain conversion,
 context switching, resource validation and reclamation, and resident-section
 replacement/rollback/eviction through `WorldScene`, GUI blend/depth compositing
-and dynamic glyph patches including POT edge updates. Reports include a
+and dynamic glyph patches including POT edge updates. Paged GUI checks enforce
+a one-page GPU cache and verify alpha order, linear gutters, depth across
+evictions, dirty-page reload and resource release. Reports include a
 `backend_checks` list; runner schema is 2 and old triangle-only reports fail.
-Run the 17 native/API unit tests independently (the probe itself has 2 tests):
+Run the 20 native/API unit tests independently (the probe itself has 2 tests):
 
 ```sh
 cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
 ```
 
-For this continuation, 19 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
+For this continuation, 22 standalone Rust unit tests, host and x86 Windows Clippy, all runtime
 modes and the Python suite (641 tests, 1 skipped) passed. Local full-game dependency resolution remains incomplete (287/488 exact packages
 from pinned GitHub mirrors). Our branch-only Actions now compile and test the real
 game bridges and run a real HudAtlas/HudBatch GL2 fixture. This is not a complete
@@ -192,3 +194,10 @@ modern Windows (own run 41774182610 passed). Its artifact is labelled
 real Radeon ICD qualification is inferred from that build. The same run checked
 the full client with `legacy-gl` and ran three actual-game GL2 fixtures; default
 Game renderer selection is still wgpu.
+
+
+Paged HUD continuation: own runs 41776018494 and 41776564666 passed, including
+full-client checking, CPU compressed-backing tests and actual-game large-atlas
+readbacks. Run 41776564666 covers five opt-in actual-game GPU fixtures; a 16385x2
+source atlas is addressed through one 512x512 resident GPU page. Backend selection,
+upstream CPU atlas peak memory and real Win7/X1650 qualification remain unfinished.

@@ -410,7 +410,7 @@ OSMesa/llvmpipe режима с **15 backend checks**. Python: 641 tests, 1 skip
 TerrainHudRenderer (включая HUD reload/unload) и game-bridge Clippy.
 
 Осталось: выбрать backend в Game только после реализации entities/hand/sky,
-полного GUI glint/portal/CIT, большого GUI atlas paging, scheduling/input/resize.
+полного GUI glint/portal/CIT, scheduling/input/resize. GUI paging добавлен в §13.
 Для Win7 нужны dedicated std/toolchain и PE/import/CRT checks; modern i686 ABI
 Clippy и llvmpipe не являются Win7/X1650 runtime qualification.
 
@@ -429,3 +429,52 @@ Cargo check не является linking/runtime тестом игры. Feature
 переключает обычный startup. Поэтому готового legacy gameplay EXE/Win7 runtime
 по-прежнему нет. Новый workflow фильтрует code paths, чтобы docs-only push в этой
 ветке не запускал повторную полную компиляцию.
+
+
+## 13. Большой GUI atlas: страницы, сжатый backing и ограниченный cache
+
+Игровой `TerrainHudRenderer` больше не требует единую POT-текстуру всего HUD.
+`paged_gui::Layout` делит исходное изображение на POT-страницы 512×512 с interior
+510×510 и gutter в один texel. CPU clipping выполняется в f64 texture-pixel space,
+интерполирует position/depth/colour/UV/light UV, сохраняет исходный порядок
+треугольников и очищает depth лишь один раз на исходную группу моделей. Пределы
+выходных vertices и посещаемых clipping cells ограничивают работу на плохих UV.
+Сортировки по страницам нет: alpha-overlap не меняет порядок.
+
+В игровом адаптере страницы хранятся отдельными LZ4 blocks. Профиль по умолчанию:
+до 8 resident pages (8 MiB tracked RGBA payload), compressed backing до 128 MiB,
+4096 virtual pages; 8 MiB для входящих glyph pixels + decoded dirty pages одного
+patch batch. Реальная ёмкость cache уменьшается по доступному byte/object budget
+после terrain/lightmap/white textures. Это не измерение физической VRAM драйвера.
+Первоначальная сборка полного CPU atlas, reload peak и всё адресное пространство
+процесса ещё требуют отдельной Win7/x86 квалификации.
+
+Font patches сначала полностью валидируются, затем каждая затронутая страница
+декодируется один раз. Обходится только dirty rectangle, а не вся страница на
+каждый глиф; отдельный write-work cap защищает от повторных tiny edge patches. Обновляются также neighbouring gutters и повторяющиеся
+края. Новые compressed blocks коммитятся только после проверки общего бюджета;
+ошибка оставляет старый backing. LRU cache инвалидирует изменённые страницы,
+вытесняет старые до новых GPU allocations и загружает их по необходимости.
+Reload готовит новый backing до swap; старые GPU pages удаляются перед следующим
+streamed frame. CPU GUI conversion и проверка transient mesh capacity проходят
+до очистки world framebuffer. При driver/upload failure посреди streaming
+полного GPU rollback нет — частично нарисованный кадр возможен.
+
+Оба собственных Actions runs **41776018494** и **41776564666** прошли все три jobs.
+Последний проверяет code commit `d5dbd2b`:
+
+- полный `horizon-client` Cargo check с `legacy-gl`, CPU bridges/backing и game Clippy;
+- **пять actual-game GL2 fixtures**, включая синтетический HudAtlas 16385×2:
+  при запросе восьми страниц GPU budget позволяет только одну 512×512; pixel
+  readbacks подтверждают seams и font patch через границу. Отдельный fixture
+  подтверждает сохранение предыдущего кадра при нехватке transient mesh budget;
+- independent OSMesa/llvmpipe GL2.0, GL2.1 и native: **16 backend checks на режим**.
+  Проверяются alpha-order, линейные gutters, глубина при eviction, dirty reload
+  и полное освобождение ресурсов;
+- ordinary i686 MSVC probe вновь собран/слинкован на современной Windows.
+
+Локально: 22 standalone Rust tests, host/i686 Clippy, 3×16 Mesa checks и Python
+641 tests (1 skipped). Это всё ещё не переключает Game startup с wgpu: entities,
+hand, sky, специальные pack shaders, input/resize и dedicated Win7 toolchain /
+PE/import/CRT/ICD/runtime qualification остаются незавершёнными. Готового
+playable Win7 EXE этот этап не предоставляет.

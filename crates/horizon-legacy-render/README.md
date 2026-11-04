@@ -43,12 +43,13 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-15 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+16 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
-cleanup after partial construction, and GUI compositing/depth/glyph updates. The runner requires all 15 outcomes; a triangle-only report cannot pass.
+cleanup after partial construction, GUI compositing/depth/glyph updates, and
+paged GUI streaming with linear gutters, depth continuity and one-page eviction. The runner requires all 16 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -58,10 +59,11 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 17 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 20 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 15 backend checks per mode. Python regression suite:
-641 tests, 1 skipped. Windows is type-checked, not linked/executed. Existing
+LLVM 17.0.6, all three modes, 16 backend checks per mode. Python regression suite:
+641 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
+probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
 and the GLSL120 reported-version workaround (shader source remains GLSL110).
 
@@ -139,7 +141,10 @@ uploads/unloads, changing lightmaps, HUD atlas replacement, bounded glyph upload
 GUI scaling, top-left scissors, invert/additive/vignette blending and isolated
 LEQUAL depth previews. `Clear::Load` and `Clear::Depth` preserve world colour across
 views. Vignette uses a linear atlas sample; other draws restore nearest filtering.
-Geometry is uploaded before any GUI draw, with cleanup on a staging failure.
+The paged coordinator streams runs in original triangle order and releases each
+transient mesh after drawing. It preflights tracked transient mesh capacity before
+clearing the world; driver/load failures during streaming can still leave a
+partial frame. There is no full-frame GPU rollback guarantee.
 
 `Renderer::owned` and the owning `WorldScene<B>` remove self-referential lifetime
 requirements for storing this coordinator in a Game. Borrowed backends still work
@@ -147,8 +152,9 @@ through `RenderBackend for &mut B`. Every native operation remains thread-confin
 
 This is an explicit terrain/HUD subset, **not the normal game renderer selection**.
 Portal, vanilla/CIT glint and pack-text shaders are not silently drawn as plain
-atlas quads. Large HUD atlases still need paging to meet X1650 texture/VA limits;
-POT padding is bounded and an oversized upload fails rather than shrinking assets.
+atlas quads. Large HUD atlases now use bounded POT pages rather than a single
+oversized texture; the upstream full-image CPU atlas construction still needs
+Win7 address-space qualification.
 The entities/hand/sky path and input/resize integration remain separate work.
 
 Our own `.github/workflows/legacy-gl-branch.yml` triggers only on
@@ -158,7 +164,7 @@ real boot-atlas/HUD GL2 test. Run 41773789614 also passed the owning coordinator
 readback, glyph patches, atlas reload and game-bridge Clippy. These are not tests on Win7/X1650.
 
 
-Latest own run: [41774182610](https://github.com/lukintrees/horizon/actions/runs/41774182610)
+Earlier full-client validation: [41774182610](https://github.com/lukintrees/horizon/actions/runs/41774182610)
 (all three jobs passed, code commit `85623ba`):
 
 - `cargo check --locked -p horizon-client --no-default-features --features horizon-client-render/legacy-gl`;
@@ -171,3 +177,36 @@ A Cargo check does not link/run the game, and the ordinary i686 target is not th
 Win7-specific std/import/CRT qualification. The `legacy-gl` feature currently
 adds a coordinator alongside wgpu; it does not yet select it at Game startup or
 remove the modern dependency graph. No playable Win7 game is claimed.
+
+
+## Paged HUD backing and residency
+
+`horizon-render-api::paged_gui` clips real GUI triangles into 512x512 POT pages
+(510x510 interior with one-texel replicated gutters). It interpolates colour,
+depth, UVs and light UVs in double precision, preserves triangle order and a single
+depth clear per original group, and bounds output vertices and visited cells.
+Pages are **not sorted**: transparent overlaps keep their original draw order.
+
+`TerrainHudRenderer` uses independent LZ4 CPU blocks and an LRU GPU cache. Defaults:
+at most 8 resident pages (8 MiB tracked RGBA payload), 128 MiB compressed backing,
+4096 virtual pages, and 8 MiB incoming+decoded dirty-page patch working storage.
+Actual residency is reduced to the byte/object capacity left after terrain,
+lightmap and white textures. These are tracked payload limits, not measured driver
+VRAM; original atlas construction and full-process peaks remain separate concerns.
+Glyph updates visit only dirty subrectangles, with a separate write-work cap
+to prevent repeated tiny edge edits amplifying into unbounded tile scans.
+Each dirty page is decoded once per patch batch; neighbouring gutters are patched
+in the same transaction. Validation/compression-budget failures retain old CPU
+backing. Reload prepares a replacement backing before retiring the old GPU cache;
+GPU page uploads are lazy. Cleanup/retry handles remain owned by the backend.
+
+Own runs [41776018494](https://github.com/lukintrees/horizon/actions/runs/41776018494)
+and [41776564666](https://github.com/lukintrees/horizon/actions/runs/41776564666)
+passed all three jobs. The latter verifies code `d5dbd2b`: full-client Cargo check,
+game lib/tests Clippy, CPU bridges/backing, **five actual-game GL2 fixtures**, the
+16-check llvmpipe matrix and the ordinary Windows x86 probe build/link. A synthetic
+16385x2 `HudAtlas` is drawn with only one 512x512 GPU page despite requesting eight;
+pixel readbacks check both sides of a glyph-patched seam. An exhausted transient
+mesh budget fails before erasing the previous frame. Independent readbacks also
+check alpha order, linear seam continuity, depth across evictions, dirty reload
+and complete resource release. No Win7/X1650 gameplay or FPS result is inferred.
