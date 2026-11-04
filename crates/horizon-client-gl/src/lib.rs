@@ -44,6 +44,7 @@ pub mod first_frame;
 pub mod gl;
 pub mod loader;
 pub mod mesh;
+pub mod msaa;
 pub mod multi_draw;
 
 pub use error::{Error, Result};
