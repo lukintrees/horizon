@@ -54,6 +54,7 @@ pub mod inventory_effects;
 pub mod java_text;
 pub mod jigsaw_block;
 pub use horizon_world::json_folder;
+pub mod legacy;
 pub mod level_loading;
 pub mod light;
 pub mod lod;
