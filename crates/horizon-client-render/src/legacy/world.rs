@@ -1,7 +1,7 @@
 //! CPU-side resident world for the experimental GL backend. It accepts the same
 //! section meshes as the game renderer, retaining originals to rebake lighting.
 //! It is not yet connected to the game's renderer selection or window lifecycle.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{atlas::Atlas, terrain};
 use crate::mesher::{SectionMesh, TerrainVertex};
@@ -63,6 +63,16 @@ impl World {
         self.sections.clear();
     }
 
+    /// Drop every section of each unloaded chunk column, matching the game's
+    /// streaming lifecycle. Missing columns and duplicates are harmless.
+    pub fn remove_columns(&mut self, columns: impl IntoIterator<Item = (i32, i32)>) {
+        let columns: BTreeSet<_> = columns.into_iter().collect();
+        if !columns.is_empty() {
+            self.sections
+                .retain(|&(x, _, z), _| !columns.contains(&(x, z)));
+        }
+    }
+
     /// A failed conversion leaves the previous section untouched.
     pub fn upload(
         &mut self,
@@ -72,13 +82,27 @@ impl World {
         let solid = terrain::build_with_lightmap(&self.atlas, &mesh.solid, &self.lightmap)?;
         let translucent =
             terrain::build_with_lightmap(&self.atlas, &mesh.translucent, &self.lightmap)?;
+        let copy = |source: &[TerrainVertex]| -> Result<Vec<TerrainVertex>, terrain::MeshError> {
+            let mut copy = Vec::new();
+            copy.try_reserve_exact(source.len())
+                .map_err(|_| terrain::MeshError::AllocationFailed)?;
+            copy.extend_from_slice(source);
+            Ok(copy)
+        };
+        let solid_source = copy(&mesh.solid)?;
+        let translucent_source = copy(&mesh.translucent)?;
+        let mut translucent_ids = Vec::new();
+        translucent_ids
+            .try_reserve_exact(translucent.vertices.len() / 6)
+            .map_err(|_| terrain::MeshError::AllocationFailed)?;
+        translucent_ids.extend(0..translucent.vertices.len() / 6);
         self.sections.insert(
             key,
             Section {
-                solid_source: mesh.solid.clone(),
-                translucent_source: mesh.translucent.clone(),
+                solid_source,
+                translucent_source,
                 solid,
-                translucent_ids: (0..translucent.vertices.len() / 6).collect(),
+                translucent_ids,
                 translucent,
                 sorted_camera: None,
             },
@@ -385,6 +409,25 @@ mod tests {
         assert_eq!(plan[0].transform[13], -64.0);
         assert_eq!(plan[1].transform[12], 160.0);
     }
+    #[test]
+    fn unloaded_columns_remove_all_sections_only_in_those_columns() {
+        let atlas = Atlas::new(1, 1, 4, &[255; 4]).unwrap();
+        let mut world = World::new(atlas, [255; 1024]);
+        for key in [(2, 0, -3), (2, 1, -3), (2, 0, 3), (9, 2, -3)] {
+            world.upload(key, &SectionMesh::default()).unwrap();
+        }
+        world.remove_columns([(2, -3), (2, -3), (100, 100)]);
+        assert_eq!(world.len(), 2);
+        assert!(!world.contains((2, 0, -3)));
+        assert!(!world.contains((2, 1, -3)));
+        assert!(world.contains((2, 0, 3)));
+        assert!(world.contains((9, 2, -3)));
+        world.remove_columns([]);
+        assert_eq!(world.len(), 2);
+        world.clear();
+        assert!(world.is_empty());
+    }
+
     #[test]
     fn lightmap_and_upload_are_transactional() {
         let mut w = world();
