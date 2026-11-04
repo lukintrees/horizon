@@ -140,7 +140,19 @@ jobs:
           targets: i686-pc-windows-msvc
           components: clippy
       - name: Execute x86 CPU and native event-contract tests (not Win7 runtime)
-        run: cargo test --offline --locked --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace --target i686-pc-windows-msvc
+        shell: pwsh
+        run: |
+          # Preserve native test failure diagnostics in check annotations too:
+          # sandbox egress cannot retrieve the redirected Actions log blob.
+          $ErrorActionPreference = 'Continue'
+          $output = & cargo test --offline --locked --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace --target i686-pc-windows-msvc 2>&1
+          $status = $LASTEXITCODE
+          $output | ForEach-Object { Write-Output $_ }
+          if ($status -ne 0) {
+            $message = (($output | Select-Object -Last 65) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Native x86 window tests::$message"
+          }
+          exit $status
       - name: Compile and link the native x86 probe (not Win7 qualification)
         run: |
           cargo clippy --offline --locked --manifest-path tools/legacy-gl-probe/Cargo.toml --target i686-pc-windows-msvc --all-targets -- -D warnings
