@@ -179,8 +179,6 @@ impl Renderer {
             return Err("the OpenGL context cannot be made current".into());
         }
         let view_proj = self.views(frame).primary().view_proj(frame.bob);
-        let frustum = Frustum::of(view_proj);
-        let clip = to_gl_clip() * view_proj;
         let (fog_color, fog_range) = fog_of(frame);
 
         let pixels = crate::gfx::lightmap_pixels(
@@ -197,8 +195,22 @@ impl Renderer {
             self.lightmap = pixels;
         }
 
+        self.draw_world(view_proj, frame.camera, fog_color, fog_range);
+
+        // SAFETY: the context is current; the HUD is drawn without depth testing, over the terrain.
+        unsafe { self.gl.disable(glow::DEPTH_TEST) };
+        self.draw_hud(frame.hud);
+        present(&self.platform);
+        Ok(true)
+    }
+
+    /// Clears to the fog colour and draws the sections whose bounds lie inside the frustum of
+    /// `view_proj`, seen from `camera`. Returns how many were drawn.
+    fn draw_world(&mut self, view_proj: Mat4, camera: DVec3, fog_color: [f32; 3], fog_range: [f32; 4]) -> usize {
+        let frustum = Frustum::of(view_proj);
+        let clip = to_gl_clip() * view_proj;
         let [width, height] = self.size;
-        // SAFETY: the context is current on this thread (`make_current` above).
+        // SAFETY: the context is current on this thread (`make_current` in `render`).
         unsafe {
             self.gl.viewport(0, 0, width as i32, height as i32);
             self.gl.disable(glow::BLEND);
@@ -214,7 +226,6 @@ impl Renderer {
 
         let fog = Fog { range: fog_range, color: fog_color };
         self.terrain.begin(&self.gl, &clip.to_cols_array(), fog);
-        let camera = frame.camera;
         let mut drawn = 0;
         for (key, placed) in &self.sections {
             let origin = (DVec3::new(key.0 as f64, key.1 as f64, key.2 as f64) * 16.0 - camera).as_vec3();
@@ -225,6 +236,7 @@ impl Renderer {
             drawn += 1;
         }
         self.drawn = drawn;
+        drawn
 
         // SAFETY: the context is current; the HUD is drawn without depth testing, over the terrain.
         unsafe { self.gl.disable(glow::DEPTH_TEST) };
@@ -357,5 +369,100 @@ mod tests {
         let far = to_gl_clip() * Vec4::new(0.0, 0.0, 0.0, 1.0);
         assert!((near.z / near.w - 1.0).abs() < 1e-6);
         assert!((far.z / far.w + 1.0).abs() < 1e-6);
+    }
+}
+
+/// Draws a section on the GPU the game's window gets, as the game would: on Windows, where the
+/// context is WGL. CI runs it on Mesa llvmpipe capped to OpenGL 2.1 (`MESA_GL_VERSION_OVERRIDE`).
+#[cfg(all(test, windows))]
+mod gpu_tests {
+    use std::time::Duration;
+
+    use glow::HasContext;
+    use winit::application::ApplicationHandler;
+    use winit::dpi::PhysicalSize;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, EventLoop};
+    use winit::platform::pump_events::EventLoopExtPumpEvents;
+    use winit::platform::windows::EventLoopBuilderExtWindows;
+    use winit::window::WindowId;
+
+    use super::*;
+    use crate::mesher::TerrainVertex;
+
+    /// Makes the window on the test's own thread, which is not the main thread.
+    #[derive(Default)]
+    struct Make {
+        window: Option<Window>,
+    }
+
+    impl ApplicationHandler for Make {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            if self.window.is_none() {
+                let attributes = Window::default_attributes().with_inner_size(PhysicalSize::new(128, 128));
+                self.window = event_loop.create_window(attributes).ok();
+            }
+        }
+
+        fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, _event: WindowEvent) {}
+    }
+
+    /// The event loop is returned too: the window must not outlive it.
+    fn window() -> (EventLoop<()>, Window) {
+        let mut builder = EventLoop::builder();
+        builder.with_any_thread(true);
+        let mut event_loop = builder.build().expect("an event loop on the test thread");
+        let mut app = Make::default();
+        for _ in 0..100 {
+            if app.window.is_some() {
+                break;
+            }
+            let _ = event_loop.pump_app_events(Some(Duration::from_millis(10)), &mut app);
+        }
+        let window = app.window.expect("a window");
+        (event_loop, window)
+    }
+
+    #[test]
+    fn a_section_in_front_of_the_camera_is_drawn() {
+        let (_event_loop, window) = window();
+        let sprite = vec![255u8; 16 * 16 * 4];
+        let hud = vec![255u8; 4 * 4 * 4];
+        let mut renderer = Renderer::new(&window, &sprite, 16, 1, (&hud, 4, 4))
+            .expect("the OpenGL 2 renderer starts on the window's context");
+
+        // One white quad across the section's far face (z = 8 of 16), facing the camera.
+        let corners = [[0.0, 0.0, 8.0], [16.0, 0.0, 8.0], [16.0, 16.0, 8.0], [0.0, 16.0, 8.0]];
+        let mut mesh = SectionMesh::default();
+        mesh.solid = corners
+            .map(|pos| TerrainVertex::new(pos, [0.5, 0.5], 0, 0xFF_FFFF, 0xF0F0))
+            .to_vec();
+        renderer.upload((0, 0, 0), &mesh);
+        assert_eq!(renderer.resident_sections(), 1);
+
+        let [width, height] = renderer.size;
+        let aspect = width as f32 / height as f32;
+        let view = View::screen(0.0, 0.0, 70.0, aspect, 512.0);
+        let camera = DVec3::new(8.0, 8.0, 0.0);
+        assert!(make_current(&renderer.platform));
+        let drawn = renderer.draw_world(view.view_proj(Mat4::IDENTITY), camera, [0.5, 0.5, 0.5], [1.0e9; 4]);
+        assert_eq!(drawn, 1, "the section lies in front of the camera");
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        // SAFETY: the context is current on this thread and `pixels` holds the whole surface.
+        unsafe {
+            renderer.gl.read_pixels(
+                0,
+                0,
+                width as i32,
+                height as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut pixels)),
+            );
+            assert_eq!(renderer.gl.get_error(), glow::NO_ERROR, "the frame draws without a GL error");
+        }
+        let bright = pixels.chunks_exact(4).filter(|p| p[0] > 200 && p[1] > 200).count();
+        assert!(bright > 1000, "the quad covers the frame: {bright} bright pixels");
     }
 }

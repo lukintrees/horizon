@@ -19,7 +19,7 @@ jobs:
       - name: Toolchain
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: verify
@@ -29,11 +29,15 @@ jobs:
           set +e
           cargo +stable clippy -p horizon-client-render -p horizon-client --all-targets --message-format=short > check.txt 2>&1
           code=$?
+          cargo +stable fmt --all -- --check > fmt.txt 2>&1
+          fmt_code=$?
+          printf '\n--- fmt exit=%s ---\n' "$fmt_code" >> check.txt
+          grep -E "Diff in" fmt.txt | head -60 >> check.txt
           python3 - "$code" <<'PY'
           import re, sys
           code = sys.argv[1]
           lines = open("check.txt", errors="replace").read().splitlines()
-          keep = [l.rstrip() for l in lines if re.search(r"error|warning: unused|warning: .*never|does not|not found", l)]
+          keep = [l.rstrip() for l in lines if re.search(r"error|warning: unused|warning: .*never|does not|not found|fmt exit|Diff in", l)]
           text = f"exit={code}\n" + "\n".join(keep)
           tail = "\n".join(lines[-30:])
           text = (text + "\n--- tail ---\n" + tail)[:40000]

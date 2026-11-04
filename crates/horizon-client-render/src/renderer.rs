@@ -55,7 +55,7 @@ impl Renderer {
         shader_pack: bool,
     ) -> Result<Self> {
         let previous = previous.and_then(Self::wgpu);
-        let fallback = !offscreen && matches!(api, GraphicsApi::Auto);
+        let fallback = !offscreen && matches!(api, GraphicsApi::Auto) && cfg!(windows);
         let attempt = gfx::Renderer::new(
             Arc::clone(&window),
             offscreen,

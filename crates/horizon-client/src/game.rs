@@ -11071,7 +11071,7 @@ impl Game<'_> {
                     self.settings.chunk_fade,
                     camera,
                     view,
-                    &off_screen,
+                    off_screen,
                     long_range,
                 )
                 .filter(|(block, section_inside)| {
