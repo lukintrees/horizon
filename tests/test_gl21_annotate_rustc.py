@@ -64,13 +64,26 @@ class Annotations(unittest.TestCase):
 
     def test_a_stream_with_no_diagnostics_falls_back_to_its_output_tail(self):
         # A leftover libtest failure or a linker crash: the only description is the text.
-        plain_lines = [f"line {i}" for i in range(100)] + ["panicked at 'assertion failed'"]
+        plain_lines = [f"line {i}" for i in range(300)] + ["panicked at 'assertion failed'"]
         lines = list(reporter.report([], plain_lines))
-        self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("::error::"))
+        # The error, then a notice saying how much of the output it left out. GitHub truncates
+        # an over-long annotation from the end, which is where libtest's verdict is, so the
+        # notice has to exist and the verdict has to come first.
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("::error::"), lines[0])
         self.assertIn("assertion failed", lines[0])
-        self.assertIn("line 99", lines[0])
-        self.assertNotIn("line 0", lines[0], "the tail, not the whole output")
+        self.assertIn("line 299", lines[0])
+        self.assertNotIn("line 0%0A", lines[0], "the tail, not the whole output")
+        self.assertTrue(lines[1].startswith("::notice::"), lines[1])
+        self.assertIn("120", lines[1])
+
+    def test_the_verdict_survives_a_truncation_that_eats_the_middle(self):
+        # What happened in CI: 110 passing test lines, then libtest's verdict, and an annotation
+        # too long for GitHub, which kept the beginning -- all of it passing tests.
+        plain_lines = [f"test a::t{i} ... ok" for i in range(108)]
+        plain_lines += ["error: test failed, to rerun pass `--lib`"]
+        lines = list(reporter.report([], plain_lines))
+        self.assertTrue(lines[0].startswith("::error::error: test failed"), lines[0][:80])
 
     def test_a_noisy_stream_is_capped_and_says_so(self):
         payloads, plain = reporter.parse([compiler_message()] * 60)
