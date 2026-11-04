@@ -61,11 +61,29 @@ const LIMITS: [(&str, u32); 9] = [
 ];
 
 /// Creates the context, gathers what it reports and runs the render check.
-/// `frame_out`, when given, is where the G1 frame is written as a PNG.
-pub fn run(frame_out: Option<String>) -> Result<Report, String> {
+/// What the probe is asked to do beyond the report.
+#[derive(Default)]
+pub struct Options {
+    /// Where the G1 frame is written as a PNG, when given.
+    pub frame_out: Option<String>,
+    /// Draw the G1 frame into a visible window and keep it on screen for two seconds (Windows).
+    pub window: bool,
+}
+
+pub fn run(options: Options) -> Result<Report, String> {
+    #[cfg(not(windows))]
+    {
+        if options.window {
+            return Err("--window needs Windows: the window is a WGL window".to_string());
+        }
+    }
     // Windows (Catalyst) offers OpenGL through WGL only; Linux and CI use EGL on Mesa.
     #[cfg(windows)]
-    let context = crate::wgl::Context::new()?;
+    let context = if options.window {
+        crate::wgl::Context::new_window(render::SIZE, render::SIZE)?
+    } else {
+        crate::wgl::Context::new()?
+    };
     #[cfg(not(windows))]
     let context = egl::Context::new_surfaceless().map_err(|e| e.to_string())?;
     let gl = context.glow();
@@ -96,7 +114,27 @@ pub fn run(frame_out: Option<String>) -> Result<Report, String> {
             render_check(&gl, &mut report);
         }
     }
-    frame_check(&gl, &mut report, frame_out.as_deref());
+    frame_check(&gl, &mut report, options.frame_out.as_deref(), options.window);
+    #[cfg(windows)]
+    {
+        if options.window && report.checks.iter().any(|c| c.name == "gate_g1_frame" && c.ok) {
+            // The frame was read back before this swap, so what is shown is what the checks saw.
+            let shown = context.swap();
+            report.checks.push(Check {
+                name: "window_swap",
+                required: true,
+                ok: shown,
+                detail: if shown {
+                    "the frame is presented; kept on screen for two seconds".to_string()
+                } else {
+                    "SwapBuffers refused the swap".to_string()
+                },
+            });
+            if shown {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
+    }
     Ok(report)
 }
 
@@ -351,7 +389,7 @@ unsafe fn draw_triangle(gl: &glow::Context, program: glow::Program) -> Outcome {
 
 /// Gate G1: the offscreen frame with the textured quad. Needs OpenGL 2.1 and GLSL 1.20, so a
 /// driver below 2.1 gets a check that is not required; the floor mode still passes.
-fn frame_check(gl: &glow::Context, report: &mut Report, frame_out: Option<&str>) {
+fn frame_check(gl: &glow::Context, report: &mut Report, frame_out: Option<&str>, on_screen: bool) {
     if matches!(parse_version(&report.gl_version), Some(found) if found < (2, 1)) {
         report.checks.push(Check {
             name: "gate_g1_frame",
@@ -361,7 +399,7 @@ fn frame_check(gl: &glow::Context, report: &mut Report, frame_out: Option<&str>)
         });
         return;
     }
-    match render::render(gl) {
+    match render::render(gl, on_screen) {
         Err(error) => report.checks.push(Check {
             name: "gate_g1_frame",
             required: true,

@@ -62,8 +62,9 @@ impl Frame {
     }
 }
 
-/// Draws the quad over the sky into the offscreen target and reads it back.
-pub fn render(gl: &glow::Context) -> Result<Frame, String> {
+/// Draws the quad over the sky and reads it back. `on_screen` draws into the back buffer of the
+/// current window instead of the offscreen target; the caller presents it afterwards.
+pub fn render(gl: &glow::Context, on_screen: bool) -> Result<Frame, String> {
     // SAFETY: the caller has made a context current, and it outlives this call.
     unsafe {
         let program = build_program(gl)?;
@@ -87,33 +88,38 @@ pub fn render(gl: &glow::Context) -> Result<Frame, String> {
             glow::PixelUnpackData::Slice(Some(atlas.as_slice())),
         );
 
-        let target = gl.create_texture()?;
-        gl.bind_texture(glow::TEXTURE_2D, Some(target));
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-        gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            glow::RGBA as i32,
-            SIZE,
-            SIZE,
-            0,
-            glow::RGBA,
-            glow::UNSIGNED_BYTE,
-            glow::PixelUnpackData::Slice(None),
-        );
-        let framebuffer = gl.create_framebuffer()?;
-        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-        gl.framebuffer_texture_2d(
-            glow::FRAMEBUFFER,
-            glow::COLOR_ATTACHMENT0,
-            glow::TEXTURE_2D,
-            Some(target),
-            0,
-        );
-        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-        if status != glow::FRAMEBUFFER_COMPLETE {
-            return Err(format!("framebuffer incomplete: 0x{status:04x}"));
+        if on_screen {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.read_buffer(glow::BACK);
+        } else {
+            let target = gl.create_texture()?;
+            gl.bind_texture(glow::TEXTURE_2D, Some(target));
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                SIZE,
+                SIZE,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(None),
+            );
+            let framebuffer = gl.create_framebuffer()?;
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(target),
+                0,
+            );
+            let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            if status != glow::FRAMEBUFFER_COMPLETE {
+                return Err(format!("framebuffer incomplete: 0x{status:04x}"));
+            }
         }
 
         // The quad in clip space: the window rectangle [96, 160) on both axes, as NDC.

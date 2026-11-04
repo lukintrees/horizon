@@ -149,6 +149,14 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "120"
         run: .\target\release\gl2-probe.exe --out out\gl21.json --frame out\gl21-frame.png
 
+      # The same frame, drawn into a visible window and presented for two seconds: the window part of gate G1.
+      - name: "Window, capped to OpenGL 2.1 and GLSL 1.20 (the frame on screen)"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.1"
+          MESA_GLSL_VERSION_OVERRIDE: "120"
+        run: .\target\release\gl2-probe.exe --window --out out\window.json --frame out\window-frame.png
+
       - name: "Probe, the floor: OpenGL 2.0 and GLSL 1.10"
         continue-on-error: true
         env:
@@ -160,7 +168,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $status = 0
-          foreach ($name in 'native', 'gl21', 'gl20') {
+          foreach ($name in 'native', 'gl21', 'window', 'gl20') {
             $path = "out/$name.json"
             if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
               Write-Output "::error title=$name::no report written"

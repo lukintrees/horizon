@@ -23,8 +23,10 @@ type WndProc = unsafe extern "system" fn(Hwnd, u32, usize, isize) -> isize;
 type CreateContextAttribs = unsafe extern "system" fn(Hdc, Hglrc, *const i32) -> Hglrc;
 
 const WS_POPUP: u32 = 0x8000_0000;
+const WS_VISIBLE: u32 = 0x1000_0000;
 const PFD_DRAW_TO_WINDOW: u32 = 0x0000_0004;
 const PFD_SUPPORT_OPENGL: u32 = 0x0000_0020;
+const PFD_DOUBLEBUFFER: u32 = 0x0000_0001;
 const PFD_TYPE_RGBA: u8 = 0;
 const PFD_MAIN_PLANE: u8 = 0;
 
@@ -101,6 +103,7 @@ extern "system" {
         param: *mut c_void,
     ) -> Hwnd;
     fn DestroyWindow(hwnd: Hwnd) -> i32;
+    fn SetProcessDPIAware() -> i32;
     fn GetDC(hwnd: Hwnd) -> Hdc;
     fn ReleaseDC(hwnd: Hwnd, hdc: Hdc) -> i32;
     fn DefWindowProcW(hwnd: Hwnd, msg: u32, wparam: usize, lparam: isize) -> isize;
@@ -110,6 +113,7 @@ extern "system" {
 extern "system" {
     fn ChoosePixelFormat(hdc: Hdc, pfd: *const PixelFormatDescriptor) -> i32;
     fn SetPixelFormat(hdc: Hdc, format: i32, pfd: *const PixelFormatDescriptor) -> i32;
+    fn SwapBuffers(hdc: Hdc) -> i32;
 }
 
 #[link(name = "opengl32")]
@@ -157,7 +161,28 @@ impl Context {
     /// Creates the window, the pixel format and a 2.1 compatibility context, and makes it current.
     /// Falls back to the legacy context when `wglCreateContextAttribsARB` refuses 2.1; the reason
     /// is kept in `fallback` so the report can say so.
+    /// A hidden window: for the probe and the CI runs.
     pub fn new() -> Result<Self, String> {
+        Self::create(None)
+    }
+
+    /// A visible window whose client area is `width` x `height`, with no border, so the default
+    /// framebuffer is exactly that size. The process is made DPI-aware first; otherwise Windows
+    /// scales the window and the default framebuffer no longer matches the pixels the probe
+    /// expects.
+    pub fn new_window(width: i32, height: i32) -> Result<Self, String> {
+        Self::create(Some((width, height)))
+    }
+
+    fn create(window: Option<(i32, i32)>) -> Result<Self, String> {
+        let (style, width, height) = match window {
+            Some((width, height)) => (WS_POPUP | WS_VISIBLE, width, height),
+            None => (WS_POPUP, 1, 1),
+        };
+        if window.is_some() {
+            // Failure only means the call was not needed (already aware, or not supported).
+            unsafe { SetProcessDPIAware() };
+        }
         let instance = unsafe { GetModuleHandleW(ptr::null()) };
         let class_name = wide("HorizonGl2Probe");
         let class = WndClassExW {
@@ -183,11 +208,11 @@ impl Context {
                 0,
                 class_name.as_ptr(),
                 title.as_ptr(),
-                WS_POPUP,
+                style,
                 0,
                 0,
-                1,
-                1,
+                width,
+                height,
                 ptr::null_mut(),
                 ptr::null_mut(),
                 instance,
@@ -207,7 +232,7 @@ impl Context {
         let pfd = PixelFormatDescriptor {
             n_size: size_of::<PixelFormatDescriptor>() as u16,
             n_version: 1,
-            dw_flags: PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL,
+            dw_flags: PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
             i_pixel_type: PFD_TYPE_RGBA,
             c_color_bits: 32,
             c_depth_bits: 24,
@@ -267,6 +292,11 @@ impl Context {
             return Err(last_error("wglMakeCurrent (2.1)"));
         }
         Ok(ctx)
+    }
+
+    /// Presents the back buffer. False when the system refuses the swap.
+    pub fn swap(&self) -> bool {
+        unsafe { SwapBuffers(self.hdc) != 0 }
     }
 
     /// Looks up a GL function. Core and 1.1 functions are not returned by wglGetProcAddress,
