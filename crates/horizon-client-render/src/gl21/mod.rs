@@ -41,6 +41,7 @@ pub mod frame;
 pub mod hud;
 mod profile;
 pub mod program;
+pub mod state;
 pub mod vertex;
 
 pub use arena::{Arena, Slot, Upload};
@@ -52,6 +53,7 @@ pub use frame::{Draw, Frame, Run, Section};
 pub use hud::{GlHudVertex, HudDraws, HudRun};
 pub use profile::Profile;
 pub use program::{Attribute, AttributeKind, Uniform};
+pub use state::State;
 pub use vertex::{Batches, GlVertex};
 
 /// The profile named by `HORIZON_GL_PROFILE`, if the variable is set and names one. `x1650` is

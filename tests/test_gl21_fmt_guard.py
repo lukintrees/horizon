@@ -35,12 +35,20 @@ class ChainTests(unittest.TestCase):
 
 class TypedBindingTests(unittest.TestCase):
     def test_a_chain_after_a_written_out_type_is_one_method_a_line(self):
-        # CI broke this one after a `--changed` run said nothing about it.
+        # CI broke this one, a 98-column line whose chain is 62 columns: past `chain_width`, so
+        # rustfmt gives every method its own line.
         line = (
             "        let runs: Vec<(u32, u32)> = draws.runs.iter()"
             ".map(|run| (run.begin, run.count)).collect();\n"
         )
         self.assertTrue(any("chain" in message for message in found(line)))
+
+    def test_a_typed_let_that_fits_is_left_alone(self):
+        line = (
+            "        let vertices: Vec<GlHudVertex> ="
+            " batch.vertices.iter().map(GlHudVertex::of).collect();\n"
+        )
+        self.assertEqual(found(line), [])
 
     def test_a_binding_without_a_type_is_left_to_max_width(self):
         line = "        let x = some.long_call_here(1, 1, 1).collect();\n"

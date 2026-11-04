@@ -119,7 +119,11 @@ def call_widths(line):
         if close is None:
             continue
         width = close - match.end()
-        if width > CHAIN_WIDTH:
+        # `assert!(x.contains(".."))` is 64 columns of arguments and rustfmt keeps it: one method
+        # call is not a chain. Two calls, or a comparison of two chains, it breaks.
+        body = code[match.end():close]
+        calls = len(re.findall(r"\.[a-z_][\w:]*\s*\(", body))
+        if width > CHAIN_WIDTH and calls >= 2:
             out.append((match.group(1), width))
     return out
 
@@ -129,31 +133,37 @@ def chain_width(line):
 
     Two shapes, both seen in CI:
 
-    - a chain inside an `assert!`-family macro (`assert!(problems.iter().any(..))` came back five
-      lines long): rustfmt measures it against `chain_width` (60);
-    - a chain that starts with a let whose type is written out
-      (`let runs: Vec<(u32, u32)> = draws.runs.iter()..`): the chain is broken one method a line
-      however few columns it has, because the binding's type makes the line long.
+    - a chain inside an `assert!`-family macro that is not a single method call
+      (`assert!(problems.iter().any(..))` came back five lines long): rustfmt measures it against
+      `chain_width` (60), while `assert!(x.contains(a))` it keeps on one line;
+    - a chain under a written-out binding type (`let runs: Vec<(u32, u32)> = draws.runs.iter()..`):
+      that one is broken one method a line however few columns it has.
 
-    What is *not* judged, on purpose: a chain that is a plain statement (`self.a().b();`, 75 columns
-    in `gfx.rs`) and a chain without a type annotation on the left of its `=`, which rustfmt keeps
-    when the whole line fits. Guessing those wrong sends someone to reformat code CI accepts.
+    What is *not* judged, on purpose: a chain that is a plain statement (`self.a().b();`, 75
+    columns in `gfx.rs`), and a chain of one call. Guessing those wrong sends someone to reformat
+    code CI accepts.
     """
     code = code_of(line).rstrip()
-    macro = MACRO.search(code)
-    if macro:
-        body = code[macro.end():]
+
+    def chain_of(body):
         first = None
         for match in re.finditer(r"\.\w", body):
             first = match.start()
             break
-        if first is None:
+        return None if first is None else len(body) - first
+
+    macro = MACRO.search(code)
+    if macro:
+        body = code[macro.end():]
+        if len(re.findall(r"\.[a-z_][\w:]*\s*\(", body)) < 2:
             return None
-        return len(body) - first
+        return chain_of(body)
     binding = TYPED_LET.match(code)
     if binding:
         body = code[binding.end():]
         if len(re.findall(r"\.[a-z_][\w:]*\s*\(", body)) >= 3:
+            # From the receiver: `draws.runs.iter()..` is a chain 62 columns wide, not 57 from its
+            # second method.
             return len(body)
     return None
 

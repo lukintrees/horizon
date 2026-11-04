@@ -186,6 +186,43 @@ impl Atlas {
         Ok(())
     }
 
+    /// Copy `patch`'s RGBA8 pixels into the atlas at `(x, y)`, the three `glTexSubImage2D`
+    /// arguments a glyph upload needs: a text run's glyphs are drawn into the font atlas a few
+    /// hundred pixels at a time (`font::Patch`), not re-uploaded as a whole texture.
+    ///
+    /// A patch that runs off the atlas's edge is an error rather than a clamped copy: it means the
+    /// font atlas and the packing disagree, and half a glyph in the wrong place is harder to see
+    /// than a line in the log.
+    pub fn sub_image(
+        &mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), String> {
+        let expected = (width * height * 4) as usize;
+        if rgba.len() != expected {
+            return Err(format!(
+                "a {width}x{height} patch is {expected} bytes, {} given",
+                rgba.len()
+            ));
+        }
+        if x + width > self.size || y + height > self.size {
+            return Err(format!(
+                "a {width}x{height} patch at ({x}, {y}) runs off a {}-texel atlas",
+                self.size
+            ));
+        }
+        for row in 0..height {
+            let from = (row * width) as usize * 4;
+            let to = ((y + row) * self.size + x) as usize * 4;
+            let end = to + width as usize * 4;
+            self.pixels[to..end].copy_from_slice(&rgba[from..from + width as usize * 4]);
+        }
+        Ok(())
+    }
+
     /// The atlas's pixels, RGBA8 rows.
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
