@@ -118,7 +118,7 @@ jobs:
         run: cargo run --locked -p horizon-legacy-gl --features window-context --target i686-pc-windows-msvc --example wgl_probe
   win7-i686:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       RUSTFLAGS: "-C target-feature=+crt-static"
     steps:
@@ -144,3 +144,21 @@ jobs:
             target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
             wgl-static-imports.txt
           retention-days: 7
+      - name: Check the actual game for the Win7 target
+        shell: bash
+        env:
+          CARGO_TERM_COLOR: never
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -o pipefail
+          if cargo +nightly check -Z build-std=std,panic_abort --locked -p horizon-client --no-default-features --bin horizon-client --target i686-win7-windows-msvc 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
+            exit 0
+          fi
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          text = Path(os.environ['RUNNER_TEMP'], 'win7-client-check.log').read_text(errors='replace')[-2500:]
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + text)
+          PY
+          exit 1
