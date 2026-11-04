@@ -230,12 +230,12 @@ mod app {
                     }
                 }
                 WindowEvent::RedrawRequested => {
-                    if let Some(state) = &mut self.state {
-                        if let Err(error) = draw(state) {
-                            self.error = Some(error);
-                            self.state.take();
-                            event_loop.exit();
-                        }
+                    if let Some(state) = &mut self.state
+                        && let Err(error) = draw(state)
+                    {
+                        self.error = Some(error);
+                        self.state.take();
+                        event_loop.exit();
                     }
                 }
                 _ => {}
