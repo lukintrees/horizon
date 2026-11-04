@@ -15,6 +15,7 @@ on:
       - 'crates/horizon-client-render/examples/legacy_scene_replay.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
+      - 'tools/win7_coarse_time.py'
       - 'tools/pe_import_references.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
@@ -37,6 +38,7 @@ on:
       - 'crates/horizon-client-render/examples/legacy_scene_replay.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
+      - 'tools/win7_coarse_time.py'
       - 'tools/pe_import_references.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
@@ -189,7 +191,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if pwsh -NoProfile -File tools/build_win7_x86.ps1 -AllowKnownIncompatibleImports 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
+          if pwsh -NoProfile -File tools/build_win7_x86.ps1 -CoarseTimeFallback 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
             exit 0
           fi
           python - <<'PY'
@@ -203,6 +205,11 @@ jobs:
           print('::error::' + text)
           PY
           exit 1
+      - name: Audit coarse-time Win7 executable
+        shell: pwsh
+        run: |
+          python tools/pe_imports.py target/i686-win7-windows-msvc/debug/horizon-client-win7-coarse-time.exe --github-annotations --check-win7
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compile captured-scene GL replay for Win7 x86
         shell: bash
         env:

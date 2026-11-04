@@ -6,6 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import pe_import_references as refs
+import win7_coarse_time as coarse
 
 spec = importlib.util.spec_from_file_location('pe_imports', Path(__file__).resolve().parents[1] / 'tools/pe_imports.py')
 pe = importlib.util.module_from_spec(spec)
@@ -21,6 +22,7 @@ def fixture(bits):
     opt_size = 0xe0 if bits == 32 else 0xf0
     struct.pack_into('<H', data, coff + 2, 1)
     struct.pack_into('<H', data, coff + 16, opt_size)
+    struct.pack_into('<H', data, coff + 18, 2)  # executable image
     opt = coff + 20
     struct.pack_into('<H', data, opt, 0x10b if bits == 32 else 0x20b)
     struct.pack_into('<I', data, opt + 60, 0x200)
@@ -70,6 +72,45 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(pe.win7_findings(result), [('KERNEL32.dll', 'GetSystemTimePreciseAsFileTime'),
                                                     ('USER32.dll', 'GetDpiForWindow')])
         self.assertEqual(pe.win7_findings([('KERNEL32.dll', ['ExitTest'])]), [])
+
+    def test_coarse_time_copy_rewrites_only_the_x86_kernel_import(self):
+        data = bytearray(fixture(32))
+        struct.pack_into('<H', data, 0x84, 0x14c)
+        struct.pack_into('<H', data, 0x2a0, 1234)
+        data[0x2a2:0x2a2 + len(coarse.PRECISE) + 1] = coarse.PRECISE.encode() + b'\0'
+        original = bytes(data)
+        patched, count = coarse.patch(original)
+        self.assertEqual(count, 1)
+        self.assertEqual(bytes(data), original)
+        self.assertEqual(pe.imports(patched), [('KERNEL32.dll', [coarse.COARSE, 'ordinal:7'])])
+        self.assertEqual(struct.unpack_from('<H', patched, 0x2a0)[0], 0)
+        self.assertEqual(pe.win7_findings(pe.imports(patched)), [])
+        self.assertIn(coarse.PRECISE, pe.imports(original)[0][1])
+        self.assertEqual(len(original), len(patched))
+        self.assertTrue(all(a == b for i, (a, b) in enumerate(zip(original, patched))
+                            if not (0x2a0 <= i < 0x2a2 + len(coarse.PRECISE) + 1
+                                    or 0xd8 <= i < 0xdc)))
+
+    def test_coarse_time_rejects_signed_bound_wrong_arch_and_unrelated_dll(self):
+        data = bytearray(fixture(32))
+        struct.pack_into('<H', data, 0x84, 0x14c)
+        data[0x2a2:0x2a2 + len(coarse.PRECISE) + 1] = coarse.PRECISE.encode() + b'\0'
+        for offset, fmt, value in [(0x84, '<H', 0x8664), (0x204, '<I', 1),
+                                   (0x98 + 96 + 8 * 4, '<I', 0x500)]:
+            bad = bytearray(data)
+            struct.pack_into(fmt, bad, offset, value)
+            with self.assertRaises(ValueError):
+                coarse.patch(bad)
+        shared = bytearray(data)
+        struct.pack_into('<IIIII', shared, 0x214, 0x1040, 0, 0, 0x10e0, 0x1040)
+        shared[0x2e0:0x2ed] = b'OTHERXXX.dll\0'
+        with self.assertRaises(ValueError):
+            coarse.patch(shared)
+        data[0x280:0x28d] = b'OTHERXXX.dll\0'
+        with self.assertRaises(ValueError):
+            coarse.patch(data)
+        with self.assertRaises(ValueError):
+            coarse.patch(fixture(64))
 
     def test_rejects_malformed_input(self):
         for data in (b'', b'MZ', fixture(32)[:0x210]):

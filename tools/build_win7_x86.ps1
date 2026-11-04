@@ -5,7 +5,8 @@
 # import audit proves that the binary will run on Windows 7.
 param(
     [switch]$Release,
-    [switch]$AllowKnownIncompatibleImports
+    [switch]$AllowKnownIncompatibleImports,
+    [switch]$CoarseTimeFallback
 )
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
@@ -24,6 +25,17 @@ if ($Release) { $cargoArgs += '--release'; $buildProfile = 'release' }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $binary = "target/i686-win7-windows-msvc/$buildProfile/horizon-client.exe"
+# Keep the unmodified linked EXE for diagnostics. The opt-in fallback writes a
+# separate unsigned copy and trades sub-millisecond wall-clock precision for a
+# Win7 API with the same ABI. It does not fix wgpu or other compatibility gaps.
+if ($CoarseTimeFallback) {
+    & python tools/pe_imports.py $binary
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $coarseBinary = "target/i686-win7-windows-msvc/$buildProfile/horizon-client-win7-coarse-time.exe"
+    & python tools/win7_coarse_time.py $binary $coarseBinary
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $binary = $coarseBinary
+}
 $audit = @('tools/pe_imports.py', $binary)
 if (-not $AllowKnownIncompatibleImports) { $audit += '--check-win7' }
 & python @audit
