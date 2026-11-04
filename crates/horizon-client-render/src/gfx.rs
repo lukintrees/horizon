@@ -6557,7 +6557,20 @@ impl Renderer {
             self.queue.submit([copies]);
         }
         // A scaled screenshot's frame never reached the window.
-        rendered.map(|drawn| legacy_presented.unwrap_or(drawn && scaled.is_none()))
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        {
+            rendered.map(|drawn| legacy_presented.unwrap_or(drawn && scaled.is_none()))
+        }
+        #[cfg(not(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        )))]
+        {
+            rendered.map(|drawn| drawn && scaled.is_none())
+        }
     }
     /// Whether the device's loss callback has fired. A surface reconfigure
     /// alone cannot restore resources belonging to a lost device.
