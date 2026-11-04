@@ -24,6 +24,16 @@ mod mesher {
     pub const UV_STEPS: f32 = 32768.0;
     pub const TILED_UV_STEPS: f32 = 32.0;
     #[derive(Clone, Copy)]
+    pub struct Vertex {
+        pub pos: [f32; 3],
+        pub uv: [f32; 2],
+        pub layer: u32,
+        pub color: u32,
+        pub light: u32,
+        pub normal: [i8; 4],
+        pub glint_uv: [f32; 2],
+    }
+    #[derive(Clone, Copy)]
     pub struct TerrainVertex {
         pub pos: [f32; 3],
         uv: [f32; 2],
@@ -617,6 +627,58 @@ fn main() {
             })
             .collect();
         gui.upload_pages(&pages).unwrap();
+        // Feed real-shaped entity quads through page clipping and face passes.
+        let entity_quad = [
+            ([-0.9, -0.9, 0.0], [0.0, 0.0]),
+            ([0.9, -0.9, 0.0], [1.0, 0.0]),
+            ([0.9, 0.9, 0.0], [1.0, 1.0]),
+            ([-0.9, 0.9, 0.0], [0.0, 1.0]),
+        ]
+        .map(|(pos, uv)| mesher::Vertex {
+            pos,
+            uv,
+            layer: 0,
+            color: u32::MAX,
+            light: 0,
+            normal: [0, 127, 0, -127],
+            glint_uv: [0.0; 2],
+        });
+        let front = legacy::entity::build(&gui_atlas, &entity_quad, &[255; 1024], false).unwrap();
+        clear_color(0., 0., 0., 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&front.vertices, &front.draws, &identity)
+            .unwrap();
+        assert_eq!(
+            rgb(sample(5)),
+            [200, 0, 0],
+            "front-facing entity left atlas page"
+        );
+        assert_eq!(
+            rgb(sample(26)),
+            [0, 200, 0],
+            "front-facing entity right atlas page"
+        );
+        let back_quad = [
+            entity_quad[3],
+            entity_quad[2],
+            entity_quad[1],
+            entity_quad[0],
+        ];
+        let back = legacy::entity::build(&gui_atlas, &back_quad, &[255; 1024], false).unwrap();
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&back.vertices, &back.draws, &identity)
+            .unwrap();
+        assert_eq!(rgb(sample(5)), [80, 0, 0], "back-face directional shading");
+        assert_eq!(rgb(sample(26)), [0, 80, 0], "back-face clipping");
+        let mut culled_quad = back_quad;
+        for v in &mut culled_quad {
+            v.normal[3] = 1;
+        }
+        let culled = legacy::entity::build(&gui_atlas, &culled_quad, &[255; 1024], false).unwrap();
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&culled.vertices, &culled.draws, &identity)
+            .unwrap();
+        assert_eq!(rgb(sample(5)), [0, 0, 0], "back-face culling");
         let mut gui_batch = hud::HudBatch::new([32, 32]);
         gui_batch.quad(
             [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],

@@ -1,6 +1,10 @@
 //! Adapts the game's real frame camera, fog and lightmap to the partial GL
 //! world draw planner. This does not yet install the backend in the game loop.
-use super::world::{PlanError, SectionDraw, SectionKey, World};
+use super::{
+    entity,
+    hud::Atlas,
+    world::{PlanError, SectionDraw, SectionKey, World},
+};
 use crate::gfx::{Frame, View};
 use glam::{Mat4, Vec4};
 use horizon_legacy_gl::Fog;
@@ -32,7 +36,9 @@ pub fn gl_view_projection(view: View, pose: Mat4) -> Mat4 {
     depth * view.view_proj(pose)
 }
 
-fn frame_fog(frame: &Frame<'_>) -> Fog {
+/// Fog for camera-relative entities, or the base fog that the world planner
+/// offsets per section.
+pub fn frame_fog(frame: &Frame<'_>) -> Fog {
     let (color, ranges) = if let Some(fog) = frame.fog {
         (
             fog.color,
@@ -73,16 +79,22 @@ fn frame_fog(frame: &Frame<'_>) -> Fog {
     }
 }
 
-/// Plan the world's solid and translucent passes from an actual game frame.
-/// This is flat-screen only, uses externally supplied visibility, and leaves
-/// entities, hand, sky, far terrain and HUD to subsequent passes.
-pub fn plan<'a>(
-    world: &'a mut World,
+/// Convert the ordinary entity quads actually supplied by the game. Special
+/// materials are rejected by the adapter; this does not yet render the hand,
+/// static block-entity cache, particles, or other separate `Frame` arrays.
+pub fn entities(
+    atlas: &Atlas,
+    frame: &Frame<'_>,
+    lightmap: &[u8; 1024],
+) -> Result<entity::Mesh, entity::Error> {
+    entity::build(atlas, frame.entities, lightmap, frame.nether_lighting)
+}
+
+/// Camera-relative world/entity transform for a flat-screen game frame.
+pub fn frame_view_projection(
     frame: &Frame<'_>,
     viewport: [u32; 2],
-    min_y: i32,
-    visible: &[SectionKey],
-) -> Result<Vec<SectionDraw<'a>>, PlanError> {
+) -> Result<[f32; 16], PlanError> {
     if viewport.contains(&0)
         || !frame.fov_degrees.is_finite()
         || !(0.0..180.0).contains(&frame.fov_degrees)
@@ -103,6 +115,23 @@ pub fn plan<'a>(
         frame.depth_far,
     );
     let matrix = gl_view_projection(view, frame.bob * frame.spin).to_cols_array();
+    if matrix.iter().any(|v| !v.is_finite()) {
+        return Err(PlanError::InvalidTransform);
+    }
+    Ok(matrix)
+}
+
+/// Plan the world's solid and translucent passes from an actual game frame.
+/// This is flat-screen only, uses externally supplied visibility, and leaves
+/// entities, hand, sky, far terrain and HUD to subsequent passes.
+pub fn plan<'a>(
+    world: &'a mut World,
+    frame: &Frame<'_>,
+    viewport: [u32; 2],
+    min_y: i32,
+    visible: &[SectionKey],
+) -> Result<Vec<SectionDraw<'a>>, PlanError> {
+    let matrix = frame_view_projection(frame, viewport)?;
     world.plan(
         visible,
         frame.camera.to_array(),

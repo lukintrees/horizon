@@ -84,7 +84,7 @@ pub fn build_tiled_with_lightmap(
 }
 
 /// Sample linearly like the existing terrain shader's lightmap sampler.
-fn lightmap_rgb(light: u16, pixels: &[u8; 16 * 16 * 4]) -> [f32; 3] {
+pub(super) fn lightmap_rgb(light: u16, pixels: &[u8; 16 * 16 * 4]) -> [f32; 3] {
     let sky = f32::from(light as u8).min(240.0) / 16.0;
     let block = f32::from((light >> 8) as u8).min(240.0) / 16.0;
     let x = block as usize;

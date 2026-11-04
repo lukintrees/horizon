@@ -4,6 +4,7 @@
 //! remains the only selectable renderer. Keep these CPU structures independent
 //! of either graphics API so they can also be tested without a GPU.
 pub mod atlas;
+pub mod entity;
 pub mod hud;
 #[cfg(feature = "legacy-scene")]
 pub mod scene;

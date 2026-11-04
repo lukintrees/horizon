@@ -73,6 +73,11 @@ pub enum Pass {
     Translucent {
         alpha_cutoff: f32,
     },
+    /// Ordinary entity cutout: alpha blending with depth writes and LEQUAL.
+    /// Face selection lets the CPU supply different colors for the two sides.
+    Entity {
+        faces: Faces,
+    },
     /// GUI drawn over the world, with no depth test or depth writes.
     HudAlpha,
     HudInvert,
@@ -87,6 +92,14 @@ pub enum Pass {
         scissor: [i32; 4],
         clear: bool,
     },
+}
+
+/// Which winding of a primitive is drawn by an entity pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Faces {
+    Both,
+    Front,
+    Back,
 }
 
 /// Terrain fog parameters, matching the existing renderer's spherical and
@@ -168,6 +181,8 @@ gl_functions! {
     tex_sub_image: "glTexSubImage2D" => (u32, i32, i32, i32, i32, i32, u32, u32, *const c_void) -> (),
     enable: "glEnable" => (u32) -> (),
     disable: "glDisable" => (u32) -> (),
+    cull_face: "glCullFace" => (u32) -> (),
+    front_face: "glFrontFace" => (u32) -> (),
     depth_func: "glDepthFunc" => (u32) -> (),
     depth_mask: "glDepthMask" => (u8) -> (),
     depth_range: "glDepthRange" => (f64, f64) -> (),
@@ -635,8 +650,10 @@ impl Renderer {
                     || matches!(draw.pass, Pass::HudDepth { clear: true, .. })
                 {
                     set_pass(gl, self.alpha_cutoff, draw.pass);
-                    let terrain =
-                        matches!(draw.pass, Pass::Solid { .. } | Pass::Translucent { .. });
+                    let terrain = matches!(
+                        draw.pass,
+                        Pass::Solid { .. } | Pass::Translucent { .. } | Pass::Entity { .. }
+                    );
                     (gl.uniform_1f)(
                         self.fog_enabled,
                         if fog.is_some() && terrain { 1.0 } else { 0.0 },
@@ -663,6 +680,7 @@ impl Renderer {
                 (gl.disable_attrib)(index);
             }
             (gl.disable)(0x0c11); // do not leak the HUD preview scissor
+            (gl.disable)(0x0b44); // do not leak entity face culling
             (gl.depth_mask)(1); // subsequent clears must write depth
             let error = (gl.get_error)();
             if error != 0 {
@@ -695,14 +713,33 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
         let cutoff = match pass {
             Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
             Pass::HudInvert => 0.0001,
+            Pass::Entity { .. } => 0.1,
             Pass::HudVignette => 0.0,
             Pass::HudAlpha | Pass::HudAdditive | Pass::HudDepth { .. } => 0.004,
         };
         (gl.uniform_1f)(uniform, cutoff);
+        (gl.disable)(0x0b44); // culling is selected explicitly for entity draws
         if !matches!(pass, Pass::HudDepth { .. }) {
             (gl.disable)(0x0c11);
         }
         match pass {
+            Pass::Entity { faces } => {
+                (gl.depth_func)(0x0203); // LEQUAL in the conventional GL depth range
+                (gl.enable)(0x0b71);
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
+                (gl.depth_mask)(1);
+                if faces != Faces::Both {
+                    (gl.enable)(0x0b44);
+                    (gl.front_face)(0x0901); // CCW, like wgpu's default front face
+                    (gl.cull_face)(if faces == Faces::Front {
+                        0x0405
+                    } else {
+                        0x0404
+                    });
+                }
+            }
             Pass::Solid { .. } => {
                 (gl.depth_func)(0x0201);
                 (gl.enable)(0x0b71);

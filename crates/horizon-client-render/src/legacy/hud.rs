@@ -29,11 +29,11 @@ pub struct Page {
 /// Tightly packed square pages, padded with zeros at the outer atlas edges.
 /// Use nearest sampling and no mipmaps, matching the basic HUD sampler.
 pub struct Atlas {
-    width: u32,
-    height: u32,
-    side: u32,
-    columns: u32,
-    rows: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) side: u32,
+    pub(super) columns: u32,
+    pub(super) rows: u32,
     pages: Vec<Page>,
 }
 
