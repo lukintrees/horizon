@@ -535,6 +535,8 @@ impl RenderBackend for Renderer<'_> {
         self.check()
     }
     fn render(&mut self, frame: &Frame<'_>) -> Result<(), String> {
+        crate::validate_size(self.gl.context.size())
+            .map_err(|_| "surface suspended or exceeds size limit".to_string())?;
         if frame.view_projection.iter().any(|v| !v.is_finite())
             || frame.camera.iter().any(|v| !v.is_finite())
             || matches!(frame.clear, Clear::ColorDepth(color) if color.iter().any(|v| !v.is_finite()))

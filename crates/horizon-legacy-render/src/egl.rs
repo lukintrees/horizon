@@ -1,5 +1,6 @@
 //! Owns an EGL desktop OpenGL pbuffer. Every call stays on the creating thread.
 //! No EGL/GL headers or link-time Mesa installation are required.
+use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::marker::PhantomData;
 use std::ptr;
@@ -72,7 +73,11 @@ pub struct Context {
     // Library must outlive every function pointer and context teardown.
     _library: Library,
     display: Handle,
-    surface: Handle,
+    surface: Cell<Handle>,
+    size: Cell<[u32; 2]>,
+    config: Handle,
+    create_surface: CreateSurface,
+    retired: RefCell<Vec<Handle>>,
     context: Handle,
     make_current: MakeCurrent,
     destroy_surface: Destroy,
@@ -108,7 +113,11 @@ impl Context {
             get_proc_address: load!(c"eglGetProcAddress", GetProcAddress),
             _library: library,
             display: ptr::null_mut(),
-            surface: ptr::null_mut(),
+            surface: Cell::new(ptr::null_mut()),
+            size: Cell::new(size),
+            config: ptr::null_mut(),
+            create_surface,
+            retired: RefCell::new(Vec::new()),
             context: ptr::null_mut(),
             _thread: PhantomData,
         };
@@ -146,8 +155,10 @@ impl Context {
                 return Err(format!("no desktop GL pbuffer config: {:#x}", get_error()));
             }
             let size = [0x3057, size[0] as i32, 0x3056, size[1] as i32, 0x3038]; // WIDTH, HEIGHT, NONE
-            this.surface = create_surface(display, config, size.as_ptr());
-            if this.surface.is_null() {
+            this.config = config;
+            this.surface
+                .set(create_surface(display, config, size.as_ptr()));
+            if this.surface.get().is_null() {
                 return Err(format!(
                     "eglCreatePbufferSurface failed: {:#x}",
                     get_error()
@@ -155,7 +166,12 @@ impl Context {
             }
             this.context = create_context(display, config, ptr::null_mut(), [0x3038].as_ptr());
             if this.context.is_null()
-                || (this.make_current)(display, this.surface, this.surface, this.context) == 0
+                || (this.make_current)(
+                    display,
+                    this.surface.get(),
+                    this.surface.get(),
+                    this.context,
+                ) == 0
             {
                 return Err(format!(
                     "creating/current desktop GL context failed: {:#x}",
@@ -168,10 +184,56 @@ impl Context {
 }
 
 impl crate::ContextImpl for Context {
+    fn drawable_size(&self) -> Option<[u32; 2]> {
+        Some(self.size.get())
+    }
+    fn resize(&self, size: [u32; 2]) -> Result<(), String> {
+        // Bound deferred surfaces to one failed retirement: do not stage another
+        // allocation until the previous cleanup succeeds.
+        loop {
+            let Some(surface) = self.retired.borrow().last().copied() else {
+                break;
+            };
+            // SAFETY: non-current owned surface on this initialized display.
+            if unsafe { (self.destroy_surface)(self.display, surface) } == 0 {
+                return Err("eglDestroySurface retirement failed".into());
+            }
+            self.retired.borrow_mut().pop();
+        }
+        let attributes = [0x3057, size[0] as i32, 0x3056, size[1] as i32, 0x3038];
+        // SAFETY: retained matching config, validated dimensions, terminated list.
+        let surface =
+            unsafe { (self.create_surface)(self.display, self.config, attributes.as_ptr()) };
+        if surface.is_null() {
+            return Err("EGL resize surface allocation failed".into());
+        }
+        // SAFETY: live context/new surface from the same config/display.
+        if unsafe { (self.make_current)(self.display, surface, surface, self.context) } == 0 {
+            // A failed MakeCurrent leaves the old binding valid.
+            if unsafe { (self.destroy_surface)(self.display, surface) } == 0 {
+                self.retired.borrow_mut().push(surface);
+            }
+            return Err("EGL resize MakeCurrent failed".into());
+        }
+        let old = self.surface.replace(surface);
+        self.size.set(size);
+        // Native cleanup failure is retained and blocks the next resize, but the
+        // new drawable is live and its actual dimensions are already observable.
+        if unsafe { (self.destroy_surface)(self.display, old) } == 0 {
+            self.retired.borrow_mut().push(old);
+        }
+        Ok(())
+    }
     fn make_current(&self) -> Result<(), String> {
         // SAFETY: owned EGL handles on the creating thread.
-        if unsafe { (self.make_current)(self.display, self.surface, self.surface, self.context) }
-            == 0
+        if unsafe {
+            (self.make_current)(
+                self.display,
+                self.surface.get(),
+                self.surface.get(),
+                self.context,
+            )
+        } == 0
         {
             Err("eglMakeCurrent failed".into())
         } else {
@@ -209,8 +271,11 @@ impl Drop for Context {
                 if !self.context.is_null() {
                     (self.destroy_context)(self.display, self.context);
                 }
-                if !self.surface.is_null() {
-                    (self.destroy_surface)(self.display, self.surface);
+                if !self.surface.get().is_null() {
+                    (self.destroy_surface)(self.display, self.surface.get());
+                }
+                for surface in self.retired.get_mut().drain(..) {
+                    (self.destroy_surface)(self.display, surface);
                 }
                 (self.terminate)(self.display);
             }

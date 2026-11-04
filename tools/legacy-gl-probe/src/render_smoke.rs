@@ -385,6 +385,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_entity_glint");
     gui_glint(context)?;
     checks.push("backend_gui_glint");
+    surface_lifecycle(context)?;
+    checks.push("backend_surface_lifecycle");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -1900,5 +1902,114 @@ fn gui_glint(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "GUI foil resources not reclaimed",
+    )
+}
+
+fn surface_lifecycle(context: &Context) -> Result<(), String> {
+    // Keep every GPU ID alive through non-square, odd and single-pixel sizes.
+    // No second renderer/context is created to disguise invalidated resources.
+    let mut renderer = Renderer::new(
+        context,
+        Budget {
+            texture_bytes: 20,
+            mesh_bytes: 188,
+        },
+    )?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let pattern = renderer.create_texture(Image {
+        width: 2,
+        height: 2,
+        rgba: &[
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ],
+    })?;
+    let mesh = renderer.create_mesh(&quad([1.; 4], 0., 1.), &[0, 1, 2, 0, 2, 3])?;
+    let draw = Draw {
+        mesh,
+        texture: pattern,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Opaque,
+        scissor: None,
+    };
+    let expected = renderer.stats();
+    for size in [[96, 48], [31, 79], [1, 1], [128, 32], [64, 64]] {
+        context.resize(size)?;
+        require(context.size() == size, "resize dimensions not published")?;
+        renderer.render(&frame(&[draw]))?;
+        if size == [1; 2] {
+            pixel(&mut renderer, [0, 0], [255; 3])?;
+        } else {
+            for (at, color) in [
+                ([size[0] / 4, size[1] / 4], [255, 0, 0]),
+                ([size[0] * 3 / 4, size[1] / 4], [0, 255, 0]),
+                ([size[0] / 4, size[1] * 3 / 4], [0, 0, 255]),
+                ([size[0] * 3 / 4, size[1] * 3 / 4], [255; 3]),
+            ] {
+                pixel(&mut renderer, at, color)?;
+            }
+        }
+        require(
+            renderer.stats() == expected,
+            "resize discarded/reuploaded resources",
+        )?;
+        require(
+            renderer.read_rgba([size[0], 0, 1, 1]).is_err(),
+            "stale readback surface bounds",
+        )?;
+        let events = context.poll_events()?;
+        require(
+            !events.close_requested,
+            "unexpected window close during resize",
+        )?;
+        let before = renderer.read_rgba([0, 0, 1, 1])?;
+        for bad in [[0, 48], [48, 0], [4097, 1], [u32::MAX; 2]] {
+            require(context.resize(bad).is_err(), "unbounded surface accepted")?;
+            require(context.size() == size, "failed resize changed dimensions")?;
+            require(
+                renderer.read_rgba([0, 0, 1, 1])? == before,
+                "failed resize cleared colour",
+            )?;
+        }
+        context.resize(size)?;
+        require(
+            renderer.read_rgba([0, 0, 1, 1])? == before,
+            "same-size resize cleared colour",
+        )?;
+        // Update the retained ID and immediately sample it after each resize.
+        renderer.update_texture(
+            pattern,
+            [0, 0],
+            Image {
+                width: 1,
+                height: 1,
+                rgba: &[64, 128, 192, 255],
+            },
+        )?;
+        renderer.render(&frame(&[draw]))?;
+        if size != [1; 2] {
+            pixel(&mut renderer, [size[0] / 4, size[1] / 4], [64, 128, 192])?;
+        }
+        renderer.update_texture(
+            pattern,
+            [0, 0],
+            Image {
+                width: 1,
+                height: 1,
+                rgba: &[255, 0, 0, 255],
+            },
+        )?;
+        context.present()?;
+    }
+    renderer.remove_mesh(mesh)?;
+    renderer.remove_texture(pattern)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "resize leaked GPU IDs",
     )
 }

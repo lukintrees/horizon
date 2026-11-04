@@ -1,5 +1,6 @@
 //! OSMesa is an alternative Linux test fixture, not a target GPU emulation.
 use crate::egl::Library;
+use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::ptr;
@@ -11,14 +12,17 @@ type MakeCurrent = unsafe extern "C" fn(Handle, *mut c_void, u32, i32, i32) -> u
 type Destroy = unsafe extern "C" fn(Handle);
 type GetProcAddress = unsafe extern "C" fn(*const c_char) -> *const c_void;
 
+struct Buffer {
+    pixels: Vec<u8>,
+    size: [u32; 2],
+}
 pub struct Context {
     _library: Library,
     handle: Handle,
-    _pixels: Vec<u8>,
+    buffer: RefCell<Buffer>,
     destroy: Destroy,
     make_current: MakeCurrent,
-    size: [u32; 2],
-    pixels: *mut c_void,
+
     get_proc_address: GetProcAddress,
     _thread: PhantomData<Rc<()>>,
 }
@@ -40,14 +44,14 @@ impl Context {
             destroy: load!(c"OSMesaDestroyContext", Destroy),
             get_proc_address: load!(c"OSMesaGetProcAddress", GetProcAddress),
             make_current,
-            size,
-            pixels: ptr::null_mut(),
             _library: library,
             handle: ptr::null_mut(),
-            _pixels: vec![0; size[0] as usize * size[1] as usize * 4],
+            buffer: RefCell::new(Buffer {
+                size,
+                pixels: vec![0; size[0] as usize * size[1] as usize * 4],
+            }),
             _thread: PhantomData,
         };
-        this.pixels = this._pixels.as_mut_ptr().cast();
         // SAFETY: RGBA format, 24 depth bits, no shared context; framebuffer owns
         // width*height*4 bytes and stays allocated until after context destruction.
         unsafe {
@@ -57,7 +61,7 @@ impl Context {
             }
             if make_current(
                 this.handle,
-                this._pixels.as_mut_ptr().cast(),
+                this.buffer.get_mut().pixels.as_mut_ptr().cast(),
                 0x1401,
                 size[0] as i32,
                 size[1] as i32,
@@ -71,15 +75,16 @@ impl Context {
 }
 impl crate::ContextImpl for Context {
     fn make_current(&self) -> Result<(), String> {
-        // SAFETY: framebuffer allocation never moves/resizes and is not exposed;
-        // only the driver accesses these bytes until context destruction.
+        let mut buffer = self.buffer.borrow_mut();
+        // SAFETY: owned storage is not exposed to Rust readers. Only the driver
+        // accesses its payload, and resize finishes prior work before replacing it.
         if unsafe {
             (self.make_current)(
                 self.handle,
-                self.pixels,
+                buffer.pixels.as_mut_ptr().cast(),
                 0x1401,
-                self.size[0] as i32,
-                self.size[1] as i32,
+                buffer.size[0] as i32,
+                buffer.size[1] as i32,
             )
         } == 0
         {
@@ -87,6 +92,30 @@ impl crate::ContextImpl for Context {
         } else {
             Ok(())
         }
+    }
+    fn resize(&self, size: [u32; 2]) -> Result<(), String> {
+        let mut pixels = Vec::new();
+        let bytes = size[0] as usize * size[1] as usize * 4;
+        pixels
+            .try_reserve_exact(bytes)
+            .map_err(|e| format!("OSMesa resize allocation: {e}"))?;
+        pixels.resize(bytes, 0);
+        // SAFETY: caller validated size and completed GL work on old storage.
+        // Failed MakeCurrent does not establish the new buffer binding.
+        if unsafe {
+            (self.make_current)(
+                self.handle,
+                pixels.as_mut_ptr().cast(),
+                0x1401,
+                size[0] as i32,
+                size[1] as i32,
+            )
+        } == 0
+        {
+            return Err("OSMesa resize MakeCurrent failed".into());
+        }
+        *self.buffer.borrow_mut() = Buffer { pixels, size };
+        Ok(())
     }
 
     fn description(&self) -> &str {

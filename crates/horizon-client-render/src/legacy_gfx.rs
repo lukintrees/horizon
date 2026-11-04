@@ -212,14 +212,14 @@ impl TerrainHudRenderer {
         self.world.backend_mut().context().size()
     }
 
-    /// Convert all CPU GUI data first, so unsupported glint/portal materials do
+    /// Convert all CPU GUI data first, so missing glint assets/unsupported portal materials do
     /// not clear the previous world image. This does not silently hide entities:
     /// callers have not yet switched the full game's gfx::Frame to this subset.
     pub fn render(&mut self, world: &SceneFrame<'_>, hud: &HudBatch) -> Result<(), String> {
         self.render_with_entities(world, hud, &[], false)
     }
-    /// Classic camera-relative entity stream; special glint/portal
-    /// materials remain explicit errors. Particles follow translucent terrain.
+    /// Classic camera-relative entity stream; missing glint assets and unsupported
+    /// special materials remain explicit errors. Particles follow translucent terrain.
     pub fn render_with_entities(
         &mut self,
         world: &SceneFrame<'_>,
@@ -455,6 +455,19 @@ impl TerrainHudRenderer {
             self.retired_hud.pop();
         }
         Ok(())
+    }
+    pub fn set_title(&mut self, title: &str) -> Result<(), String> {
+        self.world.backend_mut().context().set_title(title)
+    }
+    /// Pump native window events before computing view/HUD input for the frame.
+    /// Zero drawable dimensions mean minimized: suspend rendering until restored.
+    pub fn poll_events(&mut self) -> Result<horizon_legacy_render::WindowEvents, String> {
+        self.world.backend_mut().context().poll_events()
+    }
+    /// Resize in-place: resident terrain, atlas pages and foil images survive.
+    /// The caller must rebuild projection and HudBatch for the new dimensions.
+    pub fn resize(&mut self, size: [u32; 2]) -> Result<(), String> {
+        self.world.backend_mut().context().resize(size)
     }
     pub fn present(&mut self) -> Result<bool, String> {
         self.world.backend_mut().context().present()
@@ -1375,5 +1388,110 @@ mod tests {
         assert_eq!(stats.textures, 6);
         assert_eq!(stats.mesh_bytes, 0);
         assert_eq!(stats.meshes, 0);
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_resize_retains_world_pages_glint_and_rebuilds_hud_at_new_dimensions() {
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 3;
+        atlas.height = 1;
+        atlas.pixels = [255; 12].to_vec();
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[64, 128, 192, 255]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[255; 1024],
+            &atlas,
+            Limits {
+                gpu: Budget {
+                    texture_bytes: 1164,
+                    mesh_bytes: 512,
+                },
+                hud_page_size: 4,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let mut mesh = SectionMesh::default();
+        mesh.solid.extend(
+            [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]]
+                .map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, u32::MAX, 0xf0f0)),
+        );
+        renderer.upload_section([0; 3], &mesh).unwrap();
+        renderer
+            .set_glint_textures(
+                Image {
+                    width: 1,
+                    height: 1,
+                    rgba: &[0, 128, 0, 0],
+                },
+                Image {
+                    width: 1,
+                    height: 1,
+                    rgba: &[0; 4],
+                },
+            )
+            .unwrap();
+        let item_id = renderer.glint_textures.as_ref().unwrap().item;
+        let frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: None,
+            solid: &[[0; 3]],
+            translucent: &[],
+        };
+        for size in [[64; 2], [96, 48], [40, 96], [128, 32], [64; 2]] {
+            renderer.resize(size).unwrap();
+            assert_eq!(renderer.size(), size);
+            let events = renderer.poll_events().unwrap();
+            assert!(events.events.is_empty());
+            assert!(!events.close_requested);
+            let mut hud = HudBatch::new(size);
+            hud.glint_alpha = 1.;
+            let p = [
+                [2., 2.],
+                [size[0] as f32 / 2., 2.],
+                [size[0] as f32 / 2., size[1] as f32 / 2.],
+                [2., size[1] as f32 / 2.],
+            ];
+            hud.quad(p, [[0.5 / 3., 0.5]; 4], 0xff302010);
+            hud.quad_glint(p, [[2. + 0.5 / 3., 0.5]; 4], [[0.; 2]; 4], 0);
+            hud.blend_since(6, crate::hud::Blend::Additive);
+            renderer.render(&frame, &hud).unwrap();
+            let inside = renderer.read_rgba([8, size[1] - 8, 1, 1]).unwrap();
+            for (a, b) in inside[..3].iter().zip([16u8, 96, 48]) {
+                assert!(a.abs_diff(b) <= 2, "{inside:?}");
+            }
+            assert_eq!(
+                renderer.read_rgba([size[0] - 2, 2, 1, 1]).unwrap(),
+                [64, 128, 192, 255]
+            );
+            assert!(!renderer.present().unwrap());
+            assert_eq!(renderer.resident_sections(), 1);
+            assert_eq!(renderer.glint_textures.as_ref().unwrap().item, item_id);
+            let stats = renderer.world.backend_mut().stats();
+            assert_eq!(stats.texture_bytes, 1164);
+            assert_eq!(stats.mesh_bytes, 188);
+            assert!(renderer.resize([0, 1]).is_err());
+            assert_eq!(renderer.size(), size);
+            assert_eq!(
+                renderer.read_rgba([size[0] - 2, 2, 1, 1]).unwrap(),
+                [64, 128, 192, 255]
+            );
+        }
+        assert!(renderer.unload_section([0; 3]).unwrap());
+        assert_eq!(renderer.world.backend_mut().stats().mesh_bytes, 0);
     }
 }

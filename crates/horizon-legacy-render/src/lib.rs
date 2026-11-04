@@ -6,6 +6,9 @@ mod egl;
 mod osmesa;
 mod raw;
 mod renderer;
+mod window;
+use std::cell::Cell;
+pub use window::{MouseButton, WindowEvent, WindowEvents};
 #[cfg(windows)]
 mod wgl;
 #[cfg(any(windows, test))]
@@ -17,6 +20,18 @@ trait ContextImpl {
     fn address(&self, name: &CStr) -> Result<*const c_void, String>;
     fn description(&self) -> &str;
     fn make_current(&self) -> Result<(), String>;
+    fn set_title(&self, _title: &str) -> Result<(), String> {
+        Err("context has no window title".into())
+    }
+    fn resize(&self, _size: [u32; 2]) -> Result<(), String> {
+        Err("resize unsupported by this context".into())
+    }
+    fn drawable_size(&self) -> Option<[u32; 2]> {
+        None
+    }
+    fn poll_events(&self) -> Result<WindowEvents, String> {
+        Ok(WindowEvents::default())
+    }
     fn present(&self) -> Result<bool, String> {
         Ok(false)
     }
@@ -26,13 +41,11 @@ trait ContextImpl {
 /// multiple contexts on the same thread cannot silently target one another.
 pub struct Context {
     inner: Box<dyn ContextImpl>,
-    size: [u32; 2],
+    size: Cell<[u32; 2]>,
 }
 impl Context {
     pub fn new(kind: &str, size: [u32; 2]) -> Result<Self, String> {
-        if size.iter().any(|&v| v == 0 || v > 4096) {
-            return Err("context dimensions must be 1..=4096".into());
-        }
+        validate_size(size)?;
         let inner: Box<dyn ContextImpl> = match kind {
             #[cfg(target_os = "linux")]
             "egl" => Box::new(egl::Context::new(size)?),
@@ -47,10 +60,45 @@ impl Context {
                 ));
             }
         };
-        Ok(Self { inner, size })
+        Ok(Self {
+            inner,
+            size: Cell::new(size),
+        })
     }
     pub fn size(&self) -> [u32; 2] {
-        self.size
+        self.inner.drawable_size().unwrap_or(self.size.get())
+    }
+    /// Caller-supplied (localised) window title; offscreen contexts reject this.
+    pub fn set_title(&self, title: &str) -> Result<(), String> {
+        if title.contains('\0') {
+            return Err("window title contains NUL".into());
+        }
+        self.inner.set_title(title)
+    }
+    /// Resize the drawable without replacing the GL context or GPU resources.
+    /// Colour/depth contents are unspecified afterwards; redraw the whole frame.
+    /// Invalid sizes leave the old surface untouched. Native failures propagate.
+    pub fn resize(&self, size: [u32; 2]) -> Result<(), String> {
+        validate_size(size)?;
+        if self.size() == size {
+            return Ok(());
+        }
+        self.make_current()?;
+        let address = self.address(c"glFinish")?;
+        // SAFETY: fixed GL1 ABI and current live context. Complete old-buffer
+        // work before an offscreen backing allocation can be released.
+        unsafe {
+            std::mem::transmute::<*const c_void, unsafe extern "system" fn()>(address)();
+        }
+        self.inner.resize(size)?;
+        self.size.set(size);
+        Ok(())
+    }
+    /// Bounded own-window pump; offscreen contexts report no events. Native
+    /// modal moving/sizing may temporarily block inside DispatchMessage.
+    /// On overflow/focus loss the game must release its held input state.
+    pub fn poll_events(&self) -> Result<WindowEvents, String> {
+        self.inner.poll_events()
     }
     pub fn description(&self) -> &str {
         self.inner.description()
@@ -64,10 +112,32 @@ impl Context {
         self.inner.address(name)
     }
     pub fn present(&self) -> Result<bool, String> {
+        validate_size(self.size())
+            .map_err(|_| "surface suspended or exceeds size limit".to_string())?;
         self.make_current()?;
         self.inner.present()
     }
     pub fn qualify(version: &str, renderer: &str) -> Result<(), String> {
         driver::qualify(version, renderer)
+    }
+}
+
+fn validate_size(size: [u32; 2]) -> Result<(), String> {
+    if size.iter().any(|&n| n == 0 || n > 4096) {
+        Err("context dimensions must be 1..=4096".into())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod surface_tests {
+    #[test]
+    fn rejects_empty_and_unbounded_surfaces_before_native_allocation() {
+        for size in [[0, 1], [1, 0], [4097, 1], [1, u32::MAX]] {
+            assert!(super::validate_size(size).is_err());
+        }
+        for size in [[1; 2], [4096; 2], [96, 48]] {
+            assert!(super::validate_size(size).is_ok());
+        }
     }
 }

@@ -139,6 +139,8 @@ jobs:
           toolchain: '1.88.0'
           targets: i686-pc-windows-msvc
           components: clippy
+      - name: Execute x86 CPU and native event-contract tests (not Win7 runtime)
+        run: cargo test --offline --locked --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace --target i686-pc-windows-msvc
       - name: Compile and link the native x86 probe (not Win7 qualification)
         run: |
           cargo clippy --offline --locked --manifest-path tools/legacy-gl-probe/Cargo.toml --target i686-pc-windows-msvc --all-targets -- -D warnings
