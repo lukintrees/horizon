@@ -240,7 +240,7 @@ impl TerrainHudRenderer {
             || !hand.is_empty())
             && remaining.meshes == 0)
         {
-            return Err("no transient mesh capacity for paged HUD".into());
+            return Err("no transient mesh capacity for legacy frame".into());
         }
         self.world
             .render_phase(world, Phase::Solid)
@@ -554,6 +554,26 @@ mod tests {
         frame.clear = [1., 0., 0., 1.];
         hud.fill(&atlas, 0., 0., 64., 64., u32::MAX);
         assert!(renderer.render(&frame, &hud).is_err());
+        assert_eq!(
+            renderer.read_rgba([32, 32, 1, 1]).unwrap(),
+            [64, 128, 192, 255]
+        );
+        let entity = [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]].map(|pos| {
+            crate::mesher::Vertex {
+                pos,
+                uv: [0.; 2],
+                layer: 0,
+                color: u32::MAX,
+                light: 0xf0f0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            }
+        });
+        assert!(
+            renderer
+                .render_with_entities(&frame, &HudBatch::new([64; 2]), &entity, false)
+                .is_err()
+        );
         assert_eq!(
             renderer.read_rgba([32, 32, 1, 1]).unwrap(),
             [64, 128, 192, 255]

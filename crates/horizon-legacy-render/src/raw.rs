@@ -78,6 +78,7 @@ entry_points! {
     uniform1i: c"glUniform1i" (i32, i32) -> ();
     uniform3f: c"glUniform3f" (i32, f32, f32, f32) -> ();
     uniform_matrix: c"glUniformMatrix4fv" (i32, i32, u8, *const f32) -> ();
+    attribute4f: c"glVertexAttrib4f" (u32, f32, f32, f32, f32) -> ();
     disable_attribute: c"glDisableVertexAttribArray" (u32) -> ();
     cull_face: c"glCullFace" (u32) -> ();
     front_face: c"glFrontFace" (u32) -> ();

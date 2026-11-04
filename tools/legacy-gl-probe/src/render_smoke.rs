@@ -1082,6 +1082,67 @@ fn paged_entities(context: &Context) -> Result<(), String> {
             .map_err(error)?;
         pixel(&mut renderer, [32, 32], expected)?;
     }
+    // Wrong mesh types and malformed uniforms must fail before the clear, not
+    // reinterpret 44-byte terrain as a 76-byte entity buffer on the GPU.
+    let base = horizon_render_api::Vertex {
+        pos: [0.; 3],
+        uv: [0.5; 2],
+        light_uv: [0.5; 2],
+        color: [1.; 4],
+    };
+    let mesh = renderer.create_mesh(&[base; 3], &[0, 1, 2])?;
+    let material = entity::Material {
+        overlay: entity::Overlay::None,
+        cull: false,
+        particle: false,
+    };
+    let mut bad = frame(&[]);
+    bad.clear = Clear::ColorDepth([1., 1., 0., 1.]);
+    let draw = Draw {
+        mesh,
+        texture: white,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Entity(material),
+        scissor: None,
+    };
+    bad.draws = std::slice::from_ref(&draw);
+    require(
+        renderer.render(&bad).is_err(),
+        "entity pass accepted a terrain buffer",
+    )?;
+    pixel(&mut renderer, [32, 32], [64, 0, 128])?;
+    renderer.remove_mesh(mesh)?;
+    let mut vertex = entity::LitVertex {
+        base,
+        back_color: [1.; 4],
+        light_color: [1.; 4],
+    };
+    vertex.light_color[0] = f32::NAN;
+    require(
+        renderer
+            .create_entity_mesh(&[vertex; 3], &[0, 1, 2])
+            .is_err(),
+        "nonfinite entity light accepted",
+    )?;
+    vertex.light_color = [1.; 4];
+    let mesh = renderer.create_entity_mesh(&[vertex; 3], &[0, 1, 2])?;
+    let draw = Draw {
+        mesh,
+        pass: Pass::Entity(entity::Material {
+            overlay: entity::Overlay::White(16),
+            ..material
+        }),
+        ..draw
+    };
+    let mut bad = frame(std::slice::from_ref(&draw));
+    bad.clear = Clear::ColorDepth([1., 1., 0., 1.]);
+    require(
+        renderer.render(&bad).is_err(),
+        "invalid entity overlay accepted",
+    )?;
+    pixel(&mut renderer, [32, 32], [64, 0, 128])?;
+    renderer.remove_mesh(mesh)?;
     require(
         renderer.stats().mesh_bytes == 0 && renderer.stats().texture_bytes == 68,
         "entity stream exceeded capacity or retained transient meshes",

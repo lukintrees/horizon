@@ -246,8 +246,8 @@ impl<'a> Renderer<'a> {
         let id = MeshId(id()?);
         self.gl.context.make_current()?;
         let mut buffers = [0; 2];
-        // SAFETY: repr(C) Vertex contains only floats, no padding; checked byte sizes
-        // match live arrays. GL copies client storage during BufferData.
+        // SAFETY: the only callers instantiate T as repr(C) Vertex/LitVertex,
+        // containing only floats and no padding. Checked sizes match live arrays. GL copies client storage during BufferData.
         unsafe {
             (self.gl.gen_buffers)(2, buffers.as_mut_ptr());
             (self.gl.bind_buffer)(0x8892, buffers[0]);
@@ -619,6 +619,8 @@ impl RenderBackend for Renderer<'_> {
                         (self.gl.enable_attribute)(index);
                     } else {
                         (self.gl.disable_attribute)(index);
+                        // Array draws leave generic attribute values unspecified.
+                        (self.gl.attribute4f)(index, 1., 1., 1., 1.);
                     }
                 }
                 (self.gl.draw_elements)(0x0004, mesh.count, 0x1403, ptr::null());
