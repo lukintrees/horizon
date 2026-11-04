@@ -110,3 +110,31 @@ jobs:
           $status = $LASTEXITCODE
           Get-Content out\game.log | Select-String -CaseSensitive -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=game build::$($_.Line)" }
           exit $status
+
+  # Temporary, with the rest of this file's diagnostics: rustfmt's fix goes out as gzip+base64
+  # annotations (the sandbox cannot run rustfmt). Apply it with `git apply` after decoding.
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - name: Formatting diff as base64 annotations (gzip)
+        run: |
+          set +e
+          cargo +stable fmt --all -- --check > /dev/null 2>&1
+          fmt_code=$?
+          echo "::error title=fmt::fmt exit=${fmt_code}"
+          if [ "$fmt_code" != "0" ]; then
+            cargo +stable fmt --all
+            git diff --stat | tail -1
+            git diff | gzip -9 | base64 -w0 | fold -w 3800 | sed -e '$a\' > fmt.b64
+            n=$(wc -l < fmt.b64)
+            echo "::error title=fmt-chunks::chunks=${n}"
+            i=0
+            while read -r chunk; do
+              i=$((i+1))
+              echo "::error title=fmt-patch::${i}/${n} ${chunk}"
+            done < fmt.b64
+          fi
