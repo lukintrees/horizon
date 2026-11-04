@@ -540,7 +540,7 @@ mod tests {
             .collect();
         let bytes = to_bytes(&run, Uv::Sprite, &placed(8)).unwrap();
         assert_eq!(bytes.len(), run.len() * VERTEX_BYTES);
-        for (i, vertex) in run.iter().enumerate() {
+        for (i, _) in run.iter().enumerate() {
             let at = i * VERTEX_BYTES;
             assert_eq!(
                 f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()),

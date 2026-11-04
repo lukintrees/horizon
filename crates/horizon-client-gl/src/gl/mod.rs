@@ -144,7 +144,9 @@ impl Context {
         if options.strict {
             caps = caps.strict_over();
         }
-        caps.meets_minimum()?;
+        // `meets_minimum` answers with the sentence a player should see, and `Error::Unsupported`
+        // is where such a sentence lives: `?` cannot convert a `String` on its own.
+        caps.meets_minimum().map_err(Error::Unsupported)?;
         log::info!("Horizon GL 2.1: {}", caps.summary());
 
         Ok(Self {

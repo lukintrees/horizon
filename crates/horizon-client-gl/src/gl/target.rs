@@ -364,7 +364,11 @@ impl MultisampleTarget {
 
     /// Resolves into `destination` with `glBlitFramebufferEXT`: the only way a multisampled
     /// image reaches a texture on this driver.
-    pub fn resolve(&self, ctx: &Context, destination: &Texture) -> Result<()> {
+    ///
+    /// The destination is a [`Target`], not a [`Texture`]: a blit binds framebuffers on both
+    /// sides, and a texture on its own is not one — passing the texture and looking up its
+    /// framebuffer would be a second table to keep in step with `Resources`.
+    pub fn resolve(&self, ctx: &Context, destination: &Target) -> Result<()> {
         if !ctx.has(Feature::FramebufferBlit) {
             return Err(Error::Missing(Feature::FramebufferBlit));
         }
@@ -380,7 +384,7 @@ impl MultisampleTarget {
                 ),
             ));
         }
-        let (Some(read), Some(write)) = (self.framebuffer, destination.raw()) else {
+        let (Some(read), Some(write)) = (self.framebuffer, destination.framebuffer) else {
             return Err(Error::DeviceLost);
         };
         let gl = ctx.gl();

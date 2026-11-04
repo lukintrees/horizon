@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn triangles_count_instances() {
         let mut list = DrawList::new();
-        let mut pass = list.begin_pass(Target::Screen, Viewport::full(8, 8), Clear::NONE, "p");
+        let pass = list.begin_pass(Target::Screen, Viewport::full(8, 8), Clear::NONE, "p");
         let mut draw = Draw::new(0, geometry(), "d");
         draw.instances = 3;
         pass.draws.push(draw);

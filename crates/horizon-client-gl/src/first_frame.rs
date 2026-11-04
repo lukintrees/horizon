@@ -22,7 +22,7 @@ use crate::draw::{
     Value, Viewport,
 };
 use crate::gl::buffer::VertexFormat;
-use crate::mesh::{self, AtlasPlacement, TerrainVertex, Uv, OPAQUE_LAYER};
+use crate::mesh::{self, AtlasPlacement, TerrainVertex, Uv};
 use crate::multi_draw::MultiDrawElements;
 
 /// The pipeline id the first frame's terrain draw uses. The renderer's table maps it to a
@@ -163,6 +163,7 @@ pub fn quad_run() -> MultiDrawElements {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mesh::OPAQUE_LAYER;
 
     fn placement() -> AtlasPlacement {
         let mut placement = AtlasPlacement::with_capacity(1);
