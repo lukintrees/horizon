@@ -3,7 +3,7 @@
 use super::{
     entity,
     hud::{self, Atlas, PatchAtlas},
-    screen,
+    screen, sky,
     world::{PlanError, SectionDraw, SectionKey, World},
 };
 use crate::gfx::{Frame, View};
@@ -180,6 +180,7 @@ pub enum FrameError {
     World(PlanError),
     Entity(entity::Error),
     Screen(screen::Error),
+    Sky(&'static str),
     Hud(hud::Error),
 }
 
@@ -193,6 +194,7 @@ pub struct StaticEntityDraw {
 /// CPU data for a partial frame: solid terrain, static and ordinary entities,
 /// translucent terrain, hand, then HUD. Many other game passes are missing.
 pub struct FramePlan<'a> {
+    pub sky: Option<sky::Sky>,
     pub terrain: Vec<SectionDraw<'a>>,
     pub solid_count: usize,
     pub entities: entity::Mesh,
@@ -264,6 +266,7 @@ fn prepare_frame_inner<'a>(
     gui.apply(&frame.hud.patches).map_err(FrameError::Hud)?;
     let view_projection = frame_view_projection(frame, viewport).map_err(FrameError::World)?;
     let lights = lightmap(frame, gamma, fullbright);
+    let sky = sky::build(frame, frame_fog(frame).color).map_err(FrameError::Sky)?;
     let entities = if frame.title {
         entity::BuildReport::default()
     } else if skip_unsupported {
@@ -389,6 +392,7 @@ fn prepare_frame_inner<'a>(
         .position(|draw| draw.translucent)
         .unwrap_or(terrain.len());
     Ok(FramePlan {
+        sky,
         terrain,
         solid_count,
         entities: entities.mesh,

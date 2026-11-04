@@ -17,6 +17,8 @@ pub mod renderer;
 pub mod scene;
 #[cfg(feature = "legacy-scene")]
 pub mod screen;
+#[cfg(feature = "legacy-scene")]
+pub mod sky;
 pub mod terrain;
 pub mod world;
 

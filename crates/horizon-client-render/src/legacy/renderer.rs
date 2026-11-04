@@ -26,6 +26,7 @@ pub struct Textures<'a> {
 pub struct FrameReport {
     pub presented: bool,
     pub terrain_draws: usize,
+    pub sky_vertices: usize,
     pub entity_vertices: usize,
     pub static_entity_draws: usize,
     pub hand_vertices: usize,
@@ -198,7 +199,11 @@ impl Renderer {
                 .uploaded(change.page)
                 .map_err(|e| format!("GUI upload acknowledgement: {e:?}"))?;
         }
-        let color = plan.fog.color;
+        let color = if frame.title || (frame.end_sky && !frame.underwater && !frame.sky_blocked) {
+            [0., 0., 0., 1.]
+        } else {
+            plan.fog.color
+        };
         if !self
             .surface
             .begin_frame([color[0], color[1], color[2], 1.0])
@@ -210,6 +215,16 @@ impl Renderer {
         self.surface
             .select_atlas(self.terrain_atlas)
             .map_err(|e| e.to_string())?;
+        if let Some(sky) = &plan.sky {
+            self.surface
+                .draw_ordered(
+                    &sky.vertices,
+                    &sky.draws,
+                    &plan.view_projection,
+                    Some(sky.fog),
+                )
+                .map_err(|e| format!("sky: {e}"))?;
+        }
         for draw in solid {
             self.surface
                 .draw_ordered(draw.vertices, &draw.draws, &draw.transform, draw.fog)
@@ -282,6 +297,7 @@ impl Renderer {
         Ok(FrameReport {
             presented: true,
             terrain_draws: plan.terrain.len(),
+            sky_vertices: plan.sky.as_ref().map_or(0, |sky| sky.vertices.len()),
             entity_vertices: plan.entities.vertices.len(),
             static_entity_draws: plan.static_entities.len(),
             hand_vertices: plan.hand.vertices.len(),
@@ -366,6 +382,8 @@ mod tests {
                 glint_uv: [0.; 2],
             });
             let mut frame = test_frame(&hud);
+            frame.skybox = true;
+            frame.dark_disc = true;
             frame.hand = &hand;
             let snapshots = [crate::block_entity_render::StaticSectionSnapshot {
                 section: [0, 0, 0],
@@ -396,6 +414,7 @@ mod tests {
                 .unwrap();
             assert!(report.presented);
             assert_eq!(report.terrain_draws, 2);
+            assert_eq!(report.sky_vertices, 48);
             assert_ne!(report.hand_vertices, 0);
             assert_eq!(report.static_entity_draws, 1);
             assert_eq!(report.screen_vertices, 6);

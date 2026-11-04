@@ -103,6 +103,8 @@ pub enum Pass {
     HudAdditive,
     /// Multiply destination RGB by one minus source RGB, preserving alpha.
     HudVignette,
+    /// Opaque untextured sky fan drawn behind the world, without depth writes.
+    Sky,
     /// A camera overlay sampled as an independent atlas sprite.
     Screen {
         blur: bool,
@@ -796,6 +798,7 @@ impl Renderer {
                     (gl.uniform_1f)(
                         self.screen_uv_mode,
                         match draw.pass {
+                            Pass::Sky => 3.0,
                             Pass::Screen { clamp: true, .. } => 2.0,
                             Pass::Screen { clamp: false, .. } => 1.0,
                             _ => 0.0,
@@ -810,7 +813,10 @@ impl Renderer {
                     );
                     let terrain = matches!(
                         draw.pass,
-                        Pass::Solid { .. } | Pass::Translucent { .. } | Pass::Entity { .. }
+                        Pass::Solid { .. }
+                            | Pass::Translucent { .. }
+                            | Pass::Entity { .. }
+                            | Pass::Sky
                     );
                     (gl.uniform_1f)(
                         self.fog_enabled,
@@ -881,7 +887,7 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
             Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
             Pass::HudInvert => 0.0001,
             Pass::Entity { .. } => 0.1,
-            Pass::HudVignette | Pass::Screen { vignette: true, .. } => 0.0,
+            Pass::Sky | Pass::HudVignette | Pass::Screen { vignette: true, .. } => 0.0,
             Pass::HudAlpha | Pass::HudAdditive | Pass::HudDepth { .. } => 0.004,
             Pass::Screen {
                 vignette: false, ..
@@ -893,6 +899,11 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
             (gl.disable)(0x0c11);
         }
         match pass {
+            Pass::Sky => {
+                (gl.disable)(0x0b71);
+                (gl.disable)(0x0be2);
+                (gl.depth_mask)(0);
+            }
             Pass::Entity { faces, .. } => {
                 (gl.depth_func)(0x0203); // LEQUAL in the conventional GL depth range
                 (gl.enable)(0x0b71);

@@ -1023,6 +1023,27 @@ fn main() {
             .unwrap();
         assert_eq!(rgb(sample(4)), [200, 0, 0], "scissor leaked");
 
+        // The untextured sky fan survives the far clip plane, does not sample
+        // the atlas, and does not write depth over later world geometry.
+        let sky_v = |x, y| horizon_legacy_gl::Vertex {
+            position: [x, y, 10.], sprite_uv: [0.; 2], atlas_rect: [0.; 4], color: [0.2, 0.4, 0.8, 1.],
+        };
+        let sky = [sky_v(-1., -1.), sky_v(1., -1.), sky_v(1., 1.), sky_v(-1., -1.), sky_v(1., 1.), sky_v(-1., 1.)];
+        let sky_draw = horizon_legacy_gl::Draw { batch: horizon_legacy_gl::Batch { page: 0, first: 0, count: 6 }, pass: horizon_legacy_gl::Pass::Sky };
+        clear_color(0., 0., 0., 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered_with_fog(&sky, &[sky_draw], &identity, horizon_legacy_gl::Fog { color: [1.;4], ranges: [100.,101.,100.,101.], section_offset: [0.;3] }).unwrap();
+        assert_eq!(rgb(sample(16)), [51, 102, 204], "untextured far sky");
+        let mut foreground = sky;
+        for vertex in &mut foreground {
+            vertex.position[2] = 0.;
+            vertex.sprite_uv = [0.125, 0.125];
+            vertex.atlas_rect = [0., 0., 1., 1.];
+            vertex.color = [1.; 4];
+        }
+        gui.draw(&foreground, &[sky_draw.batch], &identity, horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 }).unwrap();
+        assert_eq!(rgb(sample(16)), [255, 255, 255], "world must draw over sky");
+
         // Screen overlays repeat or clamp within a sprite, not across the
         // complete atlas page. Negative coordinates must repeat as fract().
         let striped: Vec<u8> = (0..16).flat_map(|i| if i % 4 < 2 { [200,0,0,255] } else { [0,200,0,255] }).collect();

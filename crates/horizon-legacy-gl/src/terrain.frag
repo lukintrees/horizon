@@ -29,7 +29,9 @@ void main() {
     } else if (screen_uv_mode > 0.5) {
         sample_uv = rect.xy + fract(uv) * rect.zw;
     }
-    vec4 color = texture2D(atlas, sample_uv) * tint;
+    vec4 color;
+    if (screen_uv_mode > 2.5) color = tint;
+    else color = texture2D(atlas, sample_uv) * tint;
     if (color.a < alpha_cutoff) discard;
     if (entity_mode > 0.5) {
         color.rgb = mix(entity_overlay.rgb, color.rgb, entity_overlay.a) * entity_light;
