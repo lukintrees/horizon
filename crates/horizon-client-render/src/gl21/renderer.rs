@@ -365,9 +365,25 @@ mod tests {
         }
     }
 
+    /// How many ranges of the vertex buffer the device was sent.
+    fn uploads(device: &Recording) -> usize {
+        device
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("upload "))
+            .count()
+    }
+
     /// `renderer.draw` for a frame of sections only: every test below wants that shape.
     fn draw_world(renderer: &mut Renderer, device: &mut Recording, sections: &[Section<'_>]) {
-        renderer.draw(device, Viewport::new(320, 240), [0.0; 4], sections, None, None);
+        renderer.draw(
+            device,
+            Viewport::new(320, 240),
+            [0.0; 4],
+            sections,
+            None,
+            None,
+        );
     }
 
     fn hud_batch(verts: usize, blend: Blend) -> HudDraws {
@@ -504,9 +520,6 @@ mod tests {
         let mut device = Recording::default();
         let sections = [section(1, &solid, &[])];
         draw_world(&mut renderer, &mut device, &sections);
-        let uploads = |device: &Recording| {
-            device.calls.iter().filter(|c| c.starts_with("upload ")).count()
-        };
         assert_eq!(uploads(&device), 1);
         device.calls.clear();
         draw_world(&mut renderer, &mut device, &sections);
