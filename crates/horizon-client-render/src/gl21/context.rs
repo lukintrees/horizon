@@ -150,7 +150,8 @@ impl Capabilities {
             wanted.push(line.to_string());
         }
         if !self.texture_lod_bias && self.gl < (1, 4) {
-            wanted.push("no texture LOD bias (GL_EXT_texture_lod_bias)".to_string());
+            let line = "no texture LOD bias (GL_EXT_texture_lod_bias)";
+            wanted.push(line.to_string());
         }
         // Nothing warns about non-power-of-two textures: the atlases are powers of two (§5.2).
         let _ = self.non_power_of_two;

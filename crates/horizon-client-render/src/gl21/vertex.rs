@@ -29,8 +29,7 @@ pub const LAYER_MASK: u16 = 0x7fff;
 pub const STRIDE: u32 = 28;
 
 /// One vertex, 28 bytes.
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod)]
-#[derive(bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct GlVertex {
     pub pos: [f32; 3],

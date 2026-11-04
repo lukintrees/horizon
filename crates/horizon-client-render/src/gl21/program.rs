@@ -358,7 +358,10 @@ mod tests {
             .chain(declarations(SOURCES[1].1).uniforms)
             .map(|(_, name)| name)
             .collect();
-        let mut listed: Vec<String> = TERRAIN_UNIFORMS.iter().map(|u| u.name.to_string()).collect();
+        let mut listed: Vec<String> = TERRAIN_UNIFORMS
+            .iter()
+            .map(|u| u.name.to_string())
+            .collect();
         declared.sort();
         listed.sort();
         assert_eq!(declared, listed);
@@ -395,7 +398,9 @@ mod tests {
             "#version 120\nattribute vec3 a_pos;\nattribute vec3 a_uv;\n",
         )];
         let problems = mismatches(&narrow, &TERRAIN, &TERRAIN_UNIFORMS);
-        let width = problems.iter().any(|p| p.contains("a_uv") && p.contains("vec2"));
+        let width = problems
+            .iter()
+            .any(|p| p.contains("a_uv") && p.contains("vec2"));
         assert!(width, "{problems:?}");
     }
 

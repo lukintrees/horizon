@@ -68,10 +68,7 @@ impl SectionRuns {
     }
 
     pub const fn new(first_run: u32, runs: u32) -> Self {
-        SectionRuns {
-            first_run,
-            runs,
-        }
+        SectionRuns { first_run, runs }
     }
 }
 
@@ -107,11 +104,7 @@ pub const SKY: u32 = u32::MAX;
 
 /// `plan` from the sections in view: their solid faces in the order given, then their see-through
 /// faces farthest first. `sky`'s runs, when the frame draws any, come first.
-pub fn plan(
-    sections: &[SectionDraw],
-    sky: Option<SectionRuns>,
-    present: bool,
-) -> Plan {
+pub fn plan(sections: &[SectionDraw], sky: Option<SectionRuns>, present: bool) -> Plan {
     let mut plan = Plan::default();
     if let Some(sky) = sky {
         for run in sky.runs() {
