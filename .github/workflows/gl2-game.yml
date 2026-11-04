@@ -1,7 +1,8 @@
 # The game's OpenGL 2.1 backend (crates/horizon-client-render/src/gl2, docs/plans/opengl21-radeon-x1650.md).
-#   windows-game  Windows x64: builds the game, then runs the renderer's unit tests, and the GPU test that
-#                 starts the OpenGL 2 renderer on the window the game gets and draws a section on Mesa
-#                 llvmpipe capped to OpenGL 2.1 and GLSL 1.20.
+#   windows-tests  Windows x64: the unit tests of the OpenGL 2 renderer (`gl2`), and the GPU test that
+#                  starts it on the window the game gets and draws a section on Mesa llvmpipe capped to
+#                  OpenGL 2.1 and GLSL 1.20.
+#   windows-game   Windows x64: builds the game (a release build takes most of an hour).
 # llvmpipe is a CPU rasteriser: these check what the API allows, not speed and not the X1650's driver.
 name: GL 2.1 game backend
 
@@ -18,7 +19,7 @@ permissions:
   contents: read
 
 jobs:
-  windows-game:
+  windows-tests:
     runs-on: windows-latest
     timeout-minutes: 90
     defaults:
@@ -75,31 +76,37 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "120"
         run: |
           $ErrorActionPreference = 'Continue'
-          cargo test --release -p horizon-client-render --no-fail-fast 2>&1 | Out-File -FilePath out\tests.log -Encoding utf8
+          cargo test --release -p horizon-client-render gl2:: --no-fail-fast 2>&1 | Out-File -FilePath out\tests.log -Encoding utf8
           $status = $LASTEXITCODE
           Get-Content out\tests.log | Select-String -CaseSensitive -Pattern '^error|panicked|FAILED|test result' | Select-Object -First 60 | ForEach-Object { Write-Output "::error title=renderer tests::$($_.Line)" }
-          exit $status
-
-      - name: Build the game (x64)
-        id: game
-        continue-on-error: true
-        run: |
-          $ErrorActionPreference = 'Continue'
-          cargo build --release -p horizon-client 2>&1 | Out-File -FilePath out\game.log -Encoding utf8
-          $status = $LASTEXITCODE
-          Get-Content out\game.log | Select-String -CaseSensitive -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=game build::$($_.Line)" }
           exit $status
 
       - name: Every step must pass
         env:
           BUILD_OUTCOME: ${{ steps.build_tests.outcome }}
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
-          GAME_OUTCOME: ${{ steps.game.outcome }}
         run: |
           $ErrorActionPreference = 'Stop'
           $failed = $false
           if ($env:BUILD_OUTCOME -ne 'success') { Write-Output "::error title=test build::the renderer's tests do not build"; $failed = $true }
-          if ($env:TESTS_OUTCOME -ne 'success') { Write-Output "::error title=renderer tests::the renderer's tests did not pass (see the annotations above)"; $failed = $true }
-          if ($env:GAME_OUTCOME -ne 'success') { Write-Output "::error title=game build::the game does not build (see the annotations above)"; $failed = $true }
+          if ($env:TESTS_OUTCOME -ne 'success') { Write-Output "::error title=renderer tests::the OpenGL 2 renderer's tests did not pass (see the annotations above)"; $failed = $true }
           if ($failed) { exit 1 }
-          Write-Output "::notice title=gl2-game::the game builds and the OpenGL 2 renderer draws a section on llvmpipe"
+          Write-Output "::notice title=gl2-game::the OpenGL 2 renderer's tests pass, and the GPU test draws a section on llvmpipe"
+
+  windows-game:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the game (x64)
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force out | Out-Null
+          cargo build --release -p horizon-client 2>&1 | Out-File -FilePath out\game.log -Encoding utf8
+          $status = $LASTEXITCODE
+          Get-Content out\game.log | Select-String -CaseSensitive -Pattern '^error|-->' | Select-Object -First 40 | ForEach-Object { Write-Output "::error title=game build::$($_.Line)" }
+          exit $status
