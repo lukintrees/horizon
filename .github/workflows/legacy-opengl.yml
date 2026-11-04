@@ -121,6 +121,7 @@ jobs:
     timeout-minutes: 45
     env:
       RUSTFLAGS: "-C target-feature=+crt-static"
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -144,14 +145,14 @@ jobs:
             target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
             wgl-static-imports.txt
           retention-days: 7
-      - name: Check the actual game for the Win7 target
+      - name: Build the actual game for the Win7 target
         shell: bash
         env:
           CARGO_TERM_COLOR: never
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo +nightly check -Z build-std=std,panic_abort --locked -p horizon-client --no-default-features --bin horizon-client --target i686-win7-windows-msvc 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
+          if cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-client --no-default-features --bin horizon-client --target i686-win7-windows-msvc 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
             exit 0
           fi
           python - <<'PY'
@@ -162,3 +163,13 @@ jobs:
           print('::error::' + text)
           PY
           exit 1
+      - name: Inventory game static imports (not a compatibility verdict)
+        shell: pwsh
+        run: |
+          python tools/pe_imports.py target/i686-win7-windows-msvc/debug/horizon-client.exe --github-annotations | Tee-Object -FilePath win7-client-static-imports.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-win7-x86-client-imports
+          path: win7-client-static-imports.txt
+          retention-days: 7
