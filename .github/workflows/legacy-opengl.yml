@@ -154,7 +154,7 @@ jobs:
           CARGO_BUILD_JOBS: 2
         run: |
           set -o pipefail
-          if cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-client --no-default-features --bin horizon-client --target i686-win7-windows-msvc 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
+          if pwsh -NoProfile -File tools/build_win7_x86.ps1 -AllowKnownIncompatibleImports 2>&1 | tee "$RUNNER_TEMP/win7-client-check.log"; then
             exit 0
           fi
           python - <<'PY'
