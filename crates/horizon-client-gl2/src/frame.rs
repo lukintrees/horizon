@@ -177,11 +177,16 @@ pub fn checks(pixels: &Pixels) -> Vec<Check> {
         return checks;
     }
 
+    let quad_start = QUAD_ORIGIN as u32;
+    let quad_end = (QUAD_ORIGIN + QUAD_SIZE) as u32;
+    let in_quad = |x: u32, y: u32| (quad_start..quad_end).contains(&x) && (quad_start..quad_end).contains(&y);
+
+    // The corners that the quad does not cover: in a window of 160x160 or less the far corner is inside it.
     let (last_x, last_y) = (w - 1, h - 1);
     let corners = [(0, 0), (last_x, 0), (0, last_y), (last_x, last_y)];
     let sky_bad: Vec<String> = corners
         .iter()
-        .filter(|&&(x, y)| !close(pixels.at_bottom_up(x, y), SKY))
+        .filter(|&&(x, y)| !in_quad(x, y) && !close(pixels.at_bottom_up(x, y), SKY))
         .map(|&(x, y)| format!("({x},{y})={:?}", pixels.at_bottom_up(x, y)))
         .collect();
     checks.push(Check {
@@ -189,13 +194,12 @@ pub fn checks(pixels: &Pixels) -> Vec<Check> {
         required: true,
         ok: sky_bad.is_empty(),
         detail: if sky_bad.is_empty() {
-            format!("the four corners of the {w}x{h} window equal the sky {SKY:?}")
+            format!("the corners of the {w}x{h} window outside the quad equal the sky {SKY:?}")
         } else {
             format!("corners off the sky colour: {}", sky_bad.join(" "))
         },
     });
 
-    let quad_end = (QUAD_ORIGIN + QUAD_SIZE) as u32;
     if w < quad_end || h < quad_end {
         checks.push(failed(
             "gate_g1_quad_texels",
