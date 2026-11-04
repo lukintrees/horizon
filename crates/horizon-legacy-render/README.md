@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-19 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+20 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, fog, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 19 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 20 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -60,9 +60,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 25 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 29 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 19 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 20 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -83,7 +83,7 @@ No generated data, downloads or runtime libraries are checked into the repositor
 The game's `gfx::Renderer` is still concrete and wgpu-owned. Device/queue accesses,
 settings/capability policy, creation/surface recovery and game frame construction
 are not switched to `RenderBackend`. There is no legacy gameplay executable,
-playable title/world/inventory path, full GUI glint/portal/CIT support, all special
+playable title/world/inventory path, GUI portal/CIT shaders, all special
 entity materials, gameplay CPU-pose/frame wiring, resource animation/reload
 integration, streaming upload scheduler,
 resize/event-loop integration, mipmapped/repeating sprite UVs, or final culling.
@@ -153,7 +153,7 @@ requirements for storing this coordinator in a Game. Borrowed backends still wor
 through `RenderBackend for &mut B`. Every native operation remains thread-confined.
 
 This is an explicit terrain/HUD subset, **not the normal game renderer selection**.
-Portal, vanilla/CIT glint and pack-text shaders are not silently drawn as plain
+Portal, CIT glint and pack-text shaders are not silently drawn as plain
 atlas quads. Large HUD atlases now use bounded POT pages rather than a single
 oversized texture; the upstream full-image CPU atlas construction still needs
 Win7 address-space qualification.
@@ -236,7 +236,8 @@ they are in classic SDR. Glint flags require configured images (see below). Othe
 materials are rejected, not flattened into a normal textured quad.
 
 Entity meshes have a checked 84-byte layout (base vertex, back colour, light
-colour, independent glint UV); ordinary terrain/GUI meshes stay 44 bytes. Typed mesh/pass mismatches
+colour, independent glint UV); ordinary terrain meshes stay 44 bytes.
+The foil-aware GUI uses a separate compact 52-byte layout (below). Typed mesh/pass mismatches
 and malformed overlays are rejected before clears. Seven attributes and GLSL110
 varyings fit desktop GL2 minima. Back-face culling, LEQUAL depth and alpha blending
 are selected per material. Ordinary entities and translucent items write depth;
@@ -348,4 +349,51 @@ and an exact 1164-byte texture / 516-byte transient mesh budget. Own run
 at `1ba6133` passed all three jobs: eight actual-game GPU fixtures, full-client
 check/game Clippy, independent matrix and modern Windows x86 probe link. Full
 Python regression suite: **642 tests, 1 skipped**. No Win7 execution is claimed.
-GUI/CIT glint and portal/crumbling/energy/dissolve remain unsupported.
+CIT glint and portal/crumbling/energy/dissolve remain unsupported; vanilla GUI
+glint is covered by the next continuation.
+
+
+## Vanilla inventory/GUI foil, separate from entity composition
+
+The real `HudVertex` marker (`uv.x >= 2`) is decoded by
+`gui_bridge::glint_runs` before atlas clipping. The coordinator uses typed
+`gui::GuiVertex` (52 bytes: ordinary 44-byte base + independent foil UV), not the
+84-byte world-lighting layout. `Pass::Gui` keeps the original alpha/additive,
+invert/vignette or depth/scissor pipeline state. Native upload/draw validation
+rejects Basic/Entity/Gui layout mismatches before clearing. Ordinary legacy
+`gui::runs` / `gui::render` remain compatible and explicitly reject foil data.
+
+Foil has the **GUI** shader contract from `hud.wgsl::fs_main`, not entity
+`glint_over`: sample the original item's alpha mask, discard below .1, output
+`(HudBatch::glint_alpha * foil.rgb)^2` with **mask alpha**. Ignore vertex tint,
+lightmap and foil alpha. Additive is ONE/ONE, not SRC_ALPHA/ONE; half-alpha masks
+therefore still add the full RGB. Alpha/depth pipelines retain normal source-alpha
+blending. Neither model depth clears nor GL shader mode may be reset merely
+because a batch changes from ordinary to foil vertices or crosses a u16/page
+boundary. A pending clear survives an entirely degenerate material prefix until
+the first visible triangle; it never leaks into a later non-depth overlay.
+
+`paged_gui::split_gui` interpolates foil UV independently across page seams and
+`Cache::render_gui` streams the resulting runs through the same bounded page
+cache as terrain entities/hand/HUD. Existing staged texture reload also supplies
+the GUI item image; the HUD strength is independent of world `Geometry::glint`.
+Bad strengths/coordinates, mixed triangle markers, missing assets, unsupported
+CIT/portal blends and input/expanded geometry-budget errors are rejected during
+CPU preparation before the world colour clear. Driver/load errors during streaming
+still do not have a full-frame rollback guarantee.
+
+Required outcome `backend_gui_glint` tests a 60-pixel reference gradient across
+three pages with a one-page cache, alpha cutoff/half masks, squared half/zero
+strength, both depth/material orders, degenerate prefixes, isolated model scissors,
+normal-overlay state reset, typed buffer/alias rejection before clear and cleanup.
+Local tests: **31 standalone Rust**, host Clippy, **3x20 Mesa outcomes** and
+**642 Python tests, 1 skipped**. The ninth actual-game GPU fixture uses the real
+HudBatch, masks, dynamic patches, atlas + foil reload, invalid-input preservation
+and an exact **1164-byte texture / 324-byte GUI mesh** budget. Own run
+[41791059747](https://github.com/lukintrees/horizon/actions/runs/41791059747)
+at `6c87c53` passed all three jobs: nine actual-game GPU fixtures, full-client
+check/game Clippy, independent GL2 matrix and modern Windows x86 probe link.
+
+Vanilla GUI foil is implemented in the opt-in coordinator; CIT remains rejected.
+Normal Game startup/frame/asset scheduling is still wgpu. No playable Win7 build,
+X1650 hardware run, new FPS figure or full resource-pack shader support is claimed.

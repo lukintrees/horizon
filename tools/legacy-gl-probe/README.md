@@ -234,7 +234,7 @@ path pattern; previous crate-wide globs also matched READMEs.
 
 ### Animated entity glint continuation
 
-The current validator requires **19 backend outcomes** in each GL2.0/GL2.1/native
+The entity-glint stage required **19 backend outcomes** in each GL2.0/GL2.1/native
 llvmpipe process. `backend_entity_glint` runs the production renderer with an
 independently repeating/linear third sampler and 84-byte entity vertices. It
 compares bilinear/wrap colours and a 60-pixel UV gradient across atlas page seams,
@@ -251,3 +251,29 @@ at `1ba6133` passed all three jobs, including all eight actual-game GPU fixtures
 full-client check/game Clippy and ordinary Windows x86 probe linking. Full local
 Python regression: **642 tests, 1 skipped**. Startup is
 still wgpu; GUI glint and Win7/X1650 runtime qualification are not complete.
+
+
+### Inventory/GUI foil continuation
+
+Current validation requires **20 backend outcomes per mode**, including
+`backend_gui_glint`. The production GUI path uses a distinct checked 52-byte
+vertex layout. Its fragment output follows `hud.wgsl`, not world glint: original
+item alpha mask, .1 cutoff, squared strength/sample RGB, mask alpha, no tint/light.
+It preserves ONE/ONE additive versus source-alpha blending and original model
+depth groups across plain/foil changes, u16 chunks and atlas pages.
+
+The fixture compares a 60-pixel repeating reference gradient across three pages
+with only one resident page. It tests half/zero strength, half masks and cutout,
+GUI/model scissor and shader-state transitions, both depth-material orders,
+degenerate prefixes preserving pending clears, typed/alias rejection without
+clearing, nonfinite UV rejection and final resource reclamation. The real-game
+coordinator adds a ninth GPU fixture with dynamic patches, atlas/image reload,
+invalid-input preservation and exact **1164 texture / 324 mesh bytes**.
+
+Local results: **31 Rust tests**, host Clippy, **3x20 llvmpipe checks** and
+**642 Python tests (1 skipped)**. Own run
+[41791059747](https://github.com/lukintrees/horizon/actions/runs/41791059747)
+at `6c87c53` passed all three jobs: nine actual-game GPU fixtures, full-client
+check/game Clippy, GL2 runtime matrix and modern Windows x86 probe linking.
+This remains an opt-in coordinator; startup and Win7/X1650 runtime
+qualification are unfinished. CIT/portal are explicit errors, not plain quads.

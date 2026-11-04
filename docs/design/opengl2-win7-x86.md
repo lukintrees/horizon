@@ -628,3 +628,39 @@ check/game Clippy, independent runtime matrix и modern Windows x86 probe link.
 Это не готовая Win7 игра: startup/frame/resource adapter остаётся wgpu, GUI/CIT
 блеск и portal/crumbling/energy/dissolve ещё не реализованы, sky/input/resize и
 реальный Win7/x86/X1650 runtime не квалифицированы.
+
+
+## 17. Vanilla GUI glint: инвентарь, маски и depth-группы
+
+Добавлен путь `gui_bridge::glint_runs` из настоящего `HudBatch/HudVertex`:
+marker `uv.x >= 2` отделяется до atlas clipping, а независимый `glint_uv`
+интерполируется без перепривязки к странице. GUI имеет собственный компактный
+layout **52 bytes**, не 84-byte entity lighting. Backend проверяет Basic/Entity/Gui
+mesh/pass соответствие до clear; обычный старый GUI API остаётся совместимым.
+
+Шейдер следует существующему `hud.wgsl::fs_main`: item alpha mask, discard <.1,
+RGB `(HudBatch::glint_alpha * foil.rgb)^2`, alpha = mask. Tint, world lightmap и
+foil alpha не участвуют. Additive использует ONE/ONE, поэтому half mask не
+умножает RGB; alpha/depth pipeline по-прежнему использует source-alpha blending.
+GUI strength независима от world strength, та же managed item image обслуживает
+обе системы. CIT/portal остаются явными ошибками.
+
+Один clear на исходную model depth-группу сохраняется при plain/foil/u16/page
+split. Исправлен отдельный крайний случай: entirely degenerate prefix больше не
+теряет pending depth clear при смене материала; clear не протекает в следующий
+обычный overlay. GPU проверяет оба порядка depth-материалов, новую model group,
+scissor и восстановление состояния после glint.
+
+Локально: **31 standalone Rust tests**, host Clippy, **3×20 Mesa outcomes**,
+**642 Python tests (1 skipped)**. Новый обязательный `backend_gui_glint`
+сравнивает 60 repeat/linear samples через три страницы при resident cache=1,
+проверяет mask/cutout/half/zero strength, reset, alias/layout rejection до clear
+и cleanup. Девятый actual-game GPU fixture охватывает dynamic patches, atlas +
+foil reload, сохранение кадра при неверных данных/лимитах и точный budget
+**1164 bytes texture / 324 bytes mesh**. Собственный
+[run 41791059747](https://github.com/lukintrees/horizon/actions/runs/41791059747)
+на `6c87c53` прошёл все три jobs: девять actual-game GPU fixtures, full-client
+check/game Clippy, runtime matrix и modern Windows x86 probe linking.
+
+Это ещё не запуск полноценной игры: startup/frame adapter и scheduling/input/
+resize остаются незавершёнными, Win7/PE32/CRT/ISA/ICD и реальный X1650 не проверены.
