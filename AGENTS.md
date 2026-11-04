@@ -45,7 +45,9 @@ wiring, and legacy-related Cargo manifests/lockfiles (including new ones). Other
 in agreed modules/adapters/tests and request central changes; they must not independently patch,
 clone or bypass those interfaces, even to fix a build. The protocol lists protected shared zones,
 base/merge rules and the CI01 plan. Existing maintainers/CODEOWNERS retain their authority.
-CI01 enforcement is planned, not already installed; scope review is manual until then.
+CI01 now has executable scope/matrix gates. Task PR metadata must include `Task-ID`, `Variant`,
+`Depends-on`, `Scope`, and `Contract-Version: 1`. Required branch protection is not installed;
+trusted-target bootstrap limitations and human review remain documented in the protocol.
 
 ## Crates
 

@@ -26,6 +26,9 @@ trait ContextImpl {
     fn resize(&self, _size: [u32; 2]) -> Result<(), String> {
         Err("resize unsupported by this context".into())
     }
+    fn is_windowed(&self) -> bool {
+        false
+    }
     fn drawable_size(&self) -> Option<[u32; 2]> {
         None
     }
@@ -64,6 +67,10 @@ impl Context {
             inner,
             size: Cell::new(size),
         })
+    }
+    /// Offscreen completion must not be reported as window presentation.
+    pub fn is_windowed(&self) -> bool {
+        self.inner.is_windowed()
     }
     pub fn size(&self) -> [u32; 2] {
         self.inner.drawable_size().unwrap_or(self.size.get())

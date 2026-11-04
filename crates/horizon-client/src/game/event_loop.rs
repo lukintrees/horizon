@@ -5,8 +5,9 @@
 //! (#4951) has no display, so it cannot have that loop: it runs its own, and hands the same
 //! methods this trait instead. winit's loop implements it, so a window's game is unchanged.
 
+use horizon_client::platform_contract::WakePolicy as ControlFlow;
 use std::time::{Duration, Instant};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::ActiveEventLoop;
 
 /// A successful frame only permits polling until the next idle iteration. If
 /// the compositor stops delivering redraws, the old result must not keep the
@@ -32,6 +33,11 @@ impl EventLoopCtl for ActiveEventLoop {
         ActiveEventLoop::exit(self);
     }
     fn set_control_flow(&self, flow: ControlFlow) {
+        let flow = match flow {
+            ControlFlow::Poll => winit::event_loop::ControlFlow::Poll,
+            ControlFlow::Wait => winit::event_loop::ControlFlow::Wait,
+            ControlFlow::WaitUntil(at) => winit::event_loop::ControlFlow::WaitUntil(at),
+        };
         ActiveEventLoop::set_control_flow(self, flow);
     }
 }

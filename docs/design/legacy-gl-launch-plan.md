@@ -9,6 +9,10 @@
 Общий facade/contracts и центральные manifests/lockfiles пишет **только интегратор**;
 другие исполнители направляют запросы и работают в согласованных modules.
 
+**Начальный кодовый baseline C01/CI01:** [C01 v1](legacy-gl-c01.md). Submission/scheduling wiring
+и CI01a/b/c уже добавлены; owning facade, общий CPU Frame и настоящий legacy startup ещё не завершены.
+CI01d/branch protection/main-side trusted gate bootstrap не выдаются за выполненные.
+
 ## 1. Главное решение
 
 **Следующий приоритет — вертикальный запуск настоящего `Game`, а не завершение всех эффектов по очереди.**
@@ -99,12 +103,13 @@
 | **Capabilities/profile** | Реальные capabilities отдельно от выбранной policy; negotiation до geometry generation; explicit errors и локализованные настройки | Не заменять producer fields пустыми внутри renderer; не выдавать обычный wgpu OpenGL за GL2 |
 | **Streaming** | Section key + world/resource generation, mesh revision, visible order, replace/unload, bounded upload queue | Не принимать stale job после teleport/reload/unload; не отключать CPU simulation при GPU backpressure |
 
-Предлагаемые новые модули — **планируемые имена**, не существующие API: `render_contract`,
-`renderer_facade`, `legacy_resources`, `platform_contract`. C01 утверждает имена/владение; исполнители
+Начальные `render_contract`, `resource_contract`, `platform_contract` и borrowed `renderer_facade`
+уже добавлены в [C01 v1](legacy-gl-c01.md); `legacy_resources` и полная Frame/owning facade миграция
+ещё не реализованы. C01 утверждает имена/владение; исполнители
 не должны независимо придумывать несовместимые версии этих типов.
 
-Уже есть зацепка: `game/event_loop.rs::EventLoopCtl`, но она всё ещё принимает winit `ControlFlow`.
-Её нужно постепенно сделать нейтральной, а не писать новую симуляцию. Из `gfx::Frame`/связанных CPU типов
+Зацепка `game/event_loop.rs::EventLoopCtl` уже принимает нейтральный `WakePolicy` вместо winit
+`ControlFlow`; native handlers/window ownership ещё требуют P01–P04. Новая симуляция не нужна. Из `gfx::Frame`/связанных CPU типов
 необходимо убрать зависимость общего слоя от modern `entity_skin`, `pack_draw`, `pack_uniforms` и т. п.,
 оставив modern-only данные в отдельном пути. `Frame` уже CPU-ориентирован, но одного переноса объявления
 для legacy-only dependency graph недостаточно.
@@ -125,7 +130,7 @@ PR `a/b/c`, сохраняя критерий приёмки строки и з�
 | ID | Приоритет | Работа и основной участок | Зависит от | Проверяемая приёмка |
 |---|---|---|---|---|
 | **C01** | P0 | Инвентаризация всех вызовов/полей renderer в Game; контракты §4, минимальные типы/скелеты, список запрещённых прямых доступов | — | Согласованный API и карта call sites; не осталось «потом решим», кто владеет окном/ресурсами/sections; default build не меняет поведения |
-| **CI01** | P0 | PR-triggered/reusable и aggregate CI, scope/ownership gate, modern/legacy/GL2/x86 matrix; [спецификация](legacy-gl-integration.md#6-ci01--praggregate-ci-для-параллельной-разработки) | design сразу; C01 для policy/contract paths | Task diff с facade/manifest/lockfile/workflow блокируется; exact base/head/merge SHA и expected jobs проверены; Win7 hardware gate отдельно; required checks не пропускаются. Пока запланирован, не реализован |
+| **CI01** | P0 | PR-triggered/reusable и aggregate CI, scope/ownership gate, modern/legacy/GL2/x86 matrix; [спецификация](legacy-gl-integration.md#6-ci01--praggregate-ci-для-параллельной-разработки) | design сразу; C01 для policy/contract paths | Task diff с facade/manifest/lockfile/workflow блокируется; exact base/head/merge SHA и expected jobs проверены; Win7 hardware gate отдельно; required checks не пропускаются. CI01a/b/c добавлены; CI01d и admin/bootstrap gates остаются открыты |
 | **R01** | P0 | Вынести CPU Frame/visibility/resource descriptors из monolithic gfx; совместимые re-exports | C01 | Общий слой компилируется без wgpu handle types; старые CPU/GPU тесты и public call sites сохраняются |
 | **R02** | P0 | Adapter существующего modern Renderer за facade; заменить прямые поля getter/commands | R01 | Обычный modern loading/menu/world/reload продолжает работать; новый API проверен на существующем backend |
 | **R03** | P0 | Adapter `TerrainHudRenderer` за тем же facade, native factory, render/present outcomes, budgets | R01, A01 | Общий вызов создаёт legacy, принимает resources/frame/sections; не вызывает wgpu initialization; ошибки не маскируются |
@@ -258,14 +263,18 @@ frame-time p50/p95, memory peaks и upload pressure; затем утвердит
 - Существующий `.github/workflows/legacy-gl-branch.yml` привязан к текущей ветке. Он **не обеспечивает**
   CI будущих параллельных PR автоматически. Эту проблему закрывает **CI01 (P0)**: reusable/PR-triggered
   matrix для согласованных task PR и aggregate integration head; scope/ownership gate и проверки
-  точного кандидата. Пока CI01 не реализован, enforcement ручной; широкую волну не объявлять merge-ready.
+  точного кандидата. Scope/matrix теперь исполняются в CI01a/b/c; human dependency review и bootstrap/protection
+  остаются обязательными. CI01d будет подключён после реального Game bring-up.
 - App/asset preparation не публикует Mojang assets/jars/decompiled files; fixtures — собственные synthetic
   данные либо разрешённая локальная подготовка. Пользовательские строки — через существующую локализацию.
 
 Шаблон work item / PR:
 
 ```text
-ID / цель / рубеж:
+Task-ID: M01a
+Variant: A
+Contract-Version: 1
+Цель / рубеж:
 Depends-on:
 Owner + reviewer:
 Base / head / exact tested SHA / contract version:
