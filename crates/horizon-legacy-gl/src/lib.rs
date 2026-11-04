@@ -50,6 +50,8 @@ pub enum Error {
     Program(String),
     MissingUniform(&'static str),
     InvalidPage,
+    InvalidAtlas,
+    AllocationFailed,
     InvalidBatch,
     InvalidScissor,
     TooManyVertices,
@@ -255,14 +257,25 @@ fn validate_batches(
     Ok(())
 }
 
+/// Handle for an independent page set belonging to one renderer. Do not use it
+/// with another renderer, even if the two share a GL context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtlasId(usize);
+
+#[derive(Default)]
+struct TextureGroup {
+    textures: Vec<u32>,
+    sides: Vec<u32>,
+}
+
 /// Context-bound objects; deliberately !Send and !Sync. Explicit destruction is
 /// required: Drop cannot safely assume that a GL context is still current.
 pub struct Renderer {
     gl: Gl,
     program: u32,
     buffer: u32,
-    textures: Vec<u32>,
-    texture_sides: Vec<u32>,
+    atlases: Vec<TextureGroup>,
+    active_atlas: AtlasId,
     unpack_buffer: bool,
     max_texture_size: u32,
     view_projection: i32,
@@ -390,8 +403,8 @@ impl Renderer {
                 gl,
                 program,
                 buffer,
-                textures: Vec::new(),
-                texture_sides: Vec::new(),
+                atlases: vec![TextureGroup::default()],
+                active_atlas: AtlasId(0),
                 unpack_buffer,
                 max_texture_size: max_texture as u32,
                 view_projection,
@@ -412,7 +425,35 @@ impl Renderer {
         self.max_texture_size
     }
 
-    /// Replace all atlas pages. On failure the previous pages are retained.
+    /// The page set used by subsequent uploads, updates, and draw calls. The
+    /// renderer starts with an empty default set; retain this handle before
+    /// switching to another set.
+    pub fn active_atlas(&self) -> AtlasId {
+        self.active_atlas
+    }
+
+    /// Add an empty independent page set (for example, the shared GUI/entity
+    /// atlas alongside terrain). All page sets are freed by `destroy`. Creating
+    /// a set does not change the active set or call OpenGL.
+    pub fn create_atlas(&mut self) -> Result<AtlasId, Error> {
+        self.atlases
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        let id = AtlasId(self.atlases.len());
+        self.atlases.push(TextureGroup::default());
+        Ok(id)
+    }
+
+    /// Select a handle obtained from this renderer. Selection does not call GL.
+    pub fn select_atlas(&mut self, id: AtlasId) -> Result<(), Error> {
+        if id.0 >= self.atlases.len() {
+            return Err(Error::InvalidAtlas);
+        }
+        self.active_atlas = id;
+        Ok(())
+    }
+
+    /// Replace all pages in the active set. On failure the previous pages are retained.
     ///
     /// # Safety
     /// The same context used for `new` must be current on this thread.
@@ -471,11 +512,12 @@ impl Renderer {
                     Error::ObjectCreation("texture")
                 });
             }
-            if !self.textures.is_empty() {
-                (self.gl.delete_textures)(self.textures.len() as i32, self.textures.as_ptr());
+            let group = &mut self.atlases[self.active_atlas.0];
+            if !group.textures.is_empty() {
+                (self.gl.delete_textures)(group.textures.len() as i32, group.textures.as_ptr());
             }
-            self.textures = textures;
-            self.texture_sides = pages.iter().map(|page| page.side).collect();
+            group.textures = textures;
+            group.sides = pages.iter().map(|page| page.side).collect();
             Ok(())
         }
     }
@@ -513,7 +555,8 @@ impl Renderer {
         let expected = (page.side as usize)
             .checked_mul(page.side as usize)
             .and_then(|n| n.checked_mul(4));
-        if self.texture_sides.get(index).copied() != Some(page.side)
+        let group = &self.atlases[self.active_atlas.0];
+        if group.sides.get(index).copied() != Some(page.side)
             || expected != Some(page.pixels.len())
             || region
                 .x
@@ -539,7 +582,7 @@ impl Renderer {
                 return Err(Error::Gl(preexisting));
             }
             prepare_unpack(gl, self.unpack_buffer);
-            (gl.bind_texture)(GL_TEXTURE_2D, self.textures[index]);
+            (gl.bind_texture)(GL_TEXTURE_2D, group.textures[index]);
             (gl.pixel_store)(0x0cf2, page.side as i32); // GL_UNPACK_ROW_LENGTH
             (gl.tex_sub_image)(
                 GL_TEXTURE_2D,
@@ -650,17 +693,14 @@ impl Renderer {
         transform: &[f32; 16],
         fog: Option<Fog>,
     ) -> Result<(), Error> {
-        validate_batches(vertices, &[], self.textures.len())?;
+        let textures = &self.atlases[self.active_atlas.0].textures;
+        validate_batches(vertices, &[], textures.len())?;
         for draw in draws.clone() {
             if matches!(draw.pass, Pass::HudDepth { scissor: [_, _, w, h], .. } if w <= 0 || h <= 0)
             {
                 return Err(Error::InvalidScissor);
             }
-            validate_batches(
-                vertices,
-                std::slice::from_ref(&draw.batch),
-                self.textures.len(),
-            )?;
+            validate_batches(vertices, std::slice::from_ref(&draw.batch), textures.len())?;
         }
         // SAFETY: the owning context is current; slice pointers and byte sizes
         // are validated and remain live for each call.
@@ -754,7 +794,7 @@ impl Renderer {
                     current_page = None;
                 }
                 if current_page != Some(draw.batch.page) {
-                    (gl.bind_texture)(GL_TEXTURE_2D, self.textures[draw.batch.page]);
+                    (gl.bind_texture)(GL_TEXTURE_2D, textures[draw.batch.page]);
                     let filter = if matches!(draw.pass, Pass::HudVignette) {
                         0x2601
                     } else {
@@ -788,8 +828,10 @@ impl Renderer {
     pub unsafe fn destroy(self) {
         // SAFETY: caller guarantees the owning context is current.
         unsafe {
-            if !self.textures.is_empty() {
-                (self.gl.delete_textures)(self.textures.len() as i32, self.textures.as_ptr());
+            for group in &self.atlases {
+                if !group.textures.is_empty() {
+                    (self.gl.delete_textures)(group.textures.len() as i32, group.textures.as_ptr());
+                }
             }
             (self.gl.delete_buffers)(1, &self.buffer);
             (self.gl.delete_program)(self.program);

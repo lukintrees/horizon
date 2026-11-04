@@ -11,12 +11,14 @@ on:
       - 'crates/horizon-client-lib/Cargo.toml'
       - 'tools/build_win7_x86.ps1'
       - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
+      - 'crates/horizon-client-render/examples/legacy_scene_replay.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
       - 'tools/win7_link_inputs.py'
       - 'tests/test_pe_imports.py'
+      - 'tests/test_win7_link_inputs.py'
       - '.github/workflows/legacy-opengl.yml'
   pull_request:
     paths:
@@ -29,12 +31,14 @@ on:
       - 'crates/horizon-client-lib/Cargo.toml'
       - 'tools/build_win7_x86.ps1'
       - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
+      - 'crates/horizon-client-render/examples/legacy_scene_replay.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
       - 'tools/win7_link_inputs.py'
       - 'tests/test_pe_imports.py'
+      - 'tests/test_win7_link_inputs.py'
       - '.github/workflows/legacy-opengl.yml'
   workflow_dispatch:
     inputs:

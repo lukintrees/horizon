@@ -494,6 +494,58 @@ fn main() {
         );
         assert_eq!(rgb(sample(16)), [100, 100, 0]);
 
+        // Terrain and GUI/entity page sets share one shader/VBO but remain
+        // resident and independent while alternating passes.
+        let terrain_set = gpu.active_atlas();
+        let gui_set = gpu.create_atlas().unwrap();
+        gpu.select_atlas(gui_set).unwrap();
+        let blue_page = [0, 0, 200, 255].repeat(16);
+        gpu.upload_pages(&[horizon_legacy_gl::Page {
+            side: 4,
+            pixels: &blue_page,
+        }])
+        .unwrap();
+        clear(0x4000 | 0x0100);
+        gpu.draw(
+            &ordered.vertices,
+            &ordered.batches[..1],
+            &identity,
+            horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+        )
+        .unwrap();
+        assert_eq!(rgb(sample(5)), [0, 0, 200]);
+        gpu.select_atlas(terrain_set).unwrap();
+        clear(0x4000 | 0x0100);
+        draw(
+            &mut gpu,
+            &ordered,
+            horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+        );
+        assert_eq!(rgb(sample(5)), [200, 0, 0]);
+        assert_eq!(rgb(sample(16)), [100, 100, 0]);
+        gpu.select_atlas(gui_set).unwrap();
+        assert!(
+            gpu.upload_pages(&[horizon_legacy_gl::Page {
+                side: 3,
+                pixels: &[0; 36]
+            }])
+            .is_err()
+        );
+        clear(0x4000 | 0x0100);
+        gpu.draw(
+            &ordered.vertices,
+            &ordered.batches[..1],
+            &identity,
+            horizon_legacy_gl::Pass::Solid { alpha_cutoff: 0.1 },
+        )
+        .unwrap();
+        assert_eq!(
+            rgb(sample(5)),
+            [0, 0, 200],
+            "failed replacement retains selected atlas"
+        );
+        gpu.select_atlas(terrain_set).unwrap();
+
         // Near translucent blue blends over red; a later far solid stays hidden.
         // Exercise the same resident-section plan that accepts the game's
         // SectionMesh: opaque leaves bypass alpha cutout, ordinary cutout does not.
