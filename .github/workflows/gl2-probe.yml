@@ -114,7 +114,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # Failures are printed as annotations: the logs of this sandbox's runs cannot be read.
           try {
-            $url = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z'
+            $url = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-mingw.7z'
             Invoke-WebRequest -Uri $url -OutFile mesa.7z -UseBasicParsing
             $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
             if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
