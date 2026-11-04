@@ -15,7 +15,8 @@
 //! in CI that do not have the card. Nothing here is reachable from a shader.
 //!
 //! The pieces of the renderer itself are pure data so that they can be tested without a GPU, and so
-//! that CI — which has no OpenGL 2.1 driver — still holds them: `atlas` packs the sprites into a
+//! that CI — which has no OpenGL 2.1 driver — still holds them: `context` is the checklist a driver
+//! has to pass and the sentences to show a player whose does not, `atlas` packs the sprites into a
 //! power-of-two texture GL 2.1 can clamp, `vertex` inlines the sprite layer into a per-sprite run
 //! and lays a vertex out in what GLSL 1.20 can read, `draws` works out the frame's calls and their
 //! order. `*.vert` and `*.frag` here are that renderer's shaders.
@@ -29,11 +30,13 @@
 //! one that needs a newer OpenGL is a test failure, not a surprise on a player's 2006 driver.
 
 pub mod atlas;
+pub mod context;
 pub mod draws;
 mod profile;
 pub mod vertex;
 
 pub use atlas::Atlas;
+pub use context::{glsl_name, Capabilities};
 pub use draws::{draw_calls, plan, section_runs, Pass, Plan, SectionDraw, SectionRuns};
 pub use profile::Profile;
 pub use vertex::{Batches, GlVertex};
