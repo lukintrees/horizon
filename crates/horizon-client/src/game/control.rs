@@ -1409,6 +1409,20 @@ impl Game<'_> {
         status["lod"]["detail_target_columns"] = wanted.into();
         status["lod"]["refined_target_columns"] = refined.into();
         status["pending_uploads"] = self.pending_uploads.len().into();
+        // The legacy GL2 launch hook (T01a; docs/design/legacy-gl-launch-plan.md):
+        // the E2E runner demands an explicit legacy confirmation instead of
+        // inferring the backend from a probe or a log. While the modern wgpu
+        // renderer still owns the window this honestly reports `confirmed=false`
+        // with no GL strings; the legacy wiring (G01) fills them from the real
+        // context and flips the flag.
+        status["legacy"] = json!({
+            "confirmed": false,
+            "backend": null,
+            "gl_version": null,
+            "glsl_version": null,
+            "vendor": null,
+            "renderer": null,
+        });
         status["destroying"] = json!(destroying);
         status["physical_keys"] = json!(physical_keys);
         status["heard"] = json!(self.audio.heard);

@@ -82,6 +82,15 @@ resource reload completion API, owning factory/renderer selection, screenshot re
 platform adapter и Game legacy startup. Их точные новые signatures согласует и внесёт интегратор;
 нельзя самостоятельно добавлять конкурирующие common types в task PR.
 
+## 5. `status.legacy` — хук подтверждения запускаемого legacy (G01/T01a)
+
+`Game::status` (control) всегда публикует объект `legacy`: `confirmed`, `backend`,
+`gl_version`, `glsl_version`, `vendor`, `renderer`. Пока окно владеет modern wgpu renderer,
+значение честно `confirmed=false` с пустыми GL-полями; runner T01a трактует это как
+unconfirmed/blocked, а не как успех. Когда G01/R03 подключит настоящий legacy путь, те же поля
+заполняются из реального контекста (`glGetString`), и `status.legacy.confirmed` меняет значение.
+`wgpu`-бэкенд `renderer.backend` (включая `Gl`) никогда не является legacy-подтверждением.
+
 Это начальная C01 v1 реализация и рабочий submission wiring, не закрытие всех критериев C01/R01–G01.
 Для четырёх подготовительных задач достаточно этой границы и scopes из промптов. Перед основной
 adapter-волной требуется следующий интеграционный шаг C01/R01 с объявлениями готовых operations.
