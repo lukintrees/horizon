@@ -103,6 +103,20 @@ def fetch_head(root, number):
     git(root, "fetch", "--no-tags", "--no-recurse-submodules", "origin", f"refs/pull/{number}/head", env=env)
 
 
+def verify_current_pr(context, pr):
+    if (pr["head"]["sha"] != context["head"] or pr["base"]["sha"] != context["base"]):
+        raise Rejected("PR base/head moved; rerun trusted scope")
+
+
+def current_pr(policy, context):
+    req = urllib.request.Request(
+        f'https://api.github.com/repos/{policy["repository"]}/pulls/{context["number"]}',
+        headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.load(response)
+
+
 def publish_status(policy, context, passed, description):
     # Endpoint and head come only from validated trusted policy/event, not PR text.
     data = json.dumps({"state": "success" if passed else "failure", "context": "legacy/scope",
@@ -142,16 +156,21 @@ def main():
             if context["role"] == "task":
                 metadata(event["pull_request"].get("body") or "", policy)
         report = dict(context, status="passed", mode=mode,
-                      candidate=git(args.repo_dir, "rev-parse", "HEAD").decode().strip())
+                      candidate=(None if args.event_name == "pull_request_target" else
+                                 git(args.repo_dir, "rev-parse", "HEAD").decode().strip()))
         if args.publish:
+            verify_current_pr(context, current_pr(policy, context))
             publish_status(policy, context, True, "C01 scope accepted; base " + context["base"][:12])
     except (Rejected, KeyError, ValueError, subprocess.CalledProcessError) as error:
         # Never echo subprocess environment/headers. Git failure stderr may be
         # attacker-influenced, so keep it out of workflow command annotations.
         reason = str(error) if not isinstance(error, subprocess.CalledProcessError) else "git object/diff check failed"
         report = dict(context or {}, status="failed", error=reason)
-        if args.publish and context and context.get("head"):
-            publish_status(policy, context, False, "Scope/metadata rejected; see trusted scope run")
+        if args.publish and event.get("repository", {}).get("full_name") == policy["repository"]:
+            # Even a fork spoofing the integration name gets an explicit failed
+            # head status, not a missing check. Endpoint never comes from PR text.
+            rejected = context or {"head": sha(event["pull_request"]["head"]["sha"])}
+            publish_status(policy, rejected, False, "Scope/metadata rejected; see trusted scope run")
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, ensure_ascii=True))

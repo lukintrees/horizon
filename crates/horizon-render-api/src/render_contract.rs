@@ -115,3 +115,24 @@ impl Capabilities {
         Ok(())
     }
 }
+
+/// CPU visibility order; translucent quads within each section must already be
+/// sorted by the producer. No backend discovers or silently reorders sections.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VisibleSections<'a> {
+    pub solid: &'a [crate::scene::SectionKey],
+    pub translucent: &'a [crate::scene::SectionKey],
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameOptions {
+    pub gamma: f32,
+    pub fullbright: bool,
+}
+
+/// CPU request; encoding/readback completion belongs to the selected adapter.
+/// Game retains outstanding requests across device recreation.
+pub struct ScreenshotRequest {
+    pub path: std::path::PathBuf,
+    pub size: Option<[u32; 2]>,
+    pub scaled: bool,
+}

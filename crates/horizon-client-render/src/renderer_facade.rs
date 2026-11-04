@@ -46,6 +46,13 @@ impl<'a> RendererFacade<'a> {
             Adapter::Legacy { .. } => Backend::LegacyGl,
         }
     }
+    pub fn size(&mut self) -> [u32; 2] {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => [renderer.config.width, renderer.config.height],
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer.size(),
+        }
+    }
     pub fn capabilities(&self) -> Capabilities {
         let backend = self.backend();
         Capabilities {

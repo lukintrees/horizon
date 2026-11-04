@@ -79,6 +79,14 @@ class ScopeTests(unittest.TestCase):
         with self.assertRaises(scope.Rejected):
             scope.inspect_paths(["Cargo.toml"], "task", POLICY)
 
+    def test_late_scope_result_cannot_certify_an_updated_base(self):
+        context = scope.classify(event(), "pull_request", POLICY)
+        pr = event()["pull_request"]
+        scope.verify_current_pr(context, pr)
+        pr["base"]["sha"] = "9" * 40
+        with self.assertRaises(scope.Rejected):
+            scope.verify_current_pr(context, pr)
+
     def test_actual_diff_detects_rename_out_of_protected_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
