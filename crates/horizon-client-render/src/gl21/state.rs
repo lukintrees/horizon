@@ -177,7 +177,9 @@ mod tests {
         assert!(states.contains(&State::AlphaTest(Some(0.5))));
         assert!(states.contains(&State::CullFace(true)));
         // And no `glBlendFunc` at all when blending is off: it would be state set for nothing.
-        let blend_func = states.iter().any(|state| matches!(state, State::BlendFunc(..)));
+        let blend_func = states
+            .iter()
+            .any(|state| matches!(state, State::BlendFunc(..)));
         assert!(!blend_func);
     }
 
@@ -186,7 +188,9 @@ mod tests {
         let states = setup(Pass::Translucent);
         assert_eq!(states[0], State::DepthTest(true));
         assert_eq!(states[1], State::DepthWrite(false), "sorted back to front");
-        let blend = states.iter().find(|state| matches!(state, State::BlendFunc(..)));
+        let blend = states
+            .iter()
+            .find(|state| matches!(state, State::BlendFunc(..)));
         let expected = State::BlendFunc(Factor::SrcAlpha, Factor::OneMinusSrcAlpha);
         assert_eq!(blend, Some(&expected));
         assert!(states.contains(&State::AlphaTest(Some(0.01))));
@@ -198,7 +202,8 @@ mod tests {
         assert!(states.contains(&State::DepthTest(false)));
         assert!(states.contains(&State::DepthWrite(false)));
         assert!(states.contains(&State::Blend(true)));
-        assert!(states.contains(&State::CullFace(false)), "seen from the inside");
+        let seen_from_inside = states.contains(&State::CullFace(false));
+        assert!(seen_from_inside, "seen from the inside");
         assert!(states.contains(&State::AlphaTest(None)), "no test at 0");
     }
 
@@ -247,7 +252,8 @@ mod tests {
         let line = describe(&setup(Pass::Translucent));
         assert!(line.contains("glEnable(DEPTH_TEST)"), "{line}");
         assert!(line.contains("glDepthMask(0)"), "{line}");
-        assert!(line.contains("glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)"), "{line}");
+        let blend = line.contains("glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)");
+        assert!(blend, "{line}");
         assert!(line.contains("glAlphaFunc(GL_GREATER, 0.01)"), "{line}");
         let sky = describe(&setup(Pass::Sky));
         assert!(sky.contains("glDisable(DEPTH_TEST)"), "{sky}");
