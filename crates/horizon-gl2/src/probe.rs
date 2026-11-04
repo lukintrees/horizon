@@ -97,14 +97,16 @@ unsafe fn gather(gl: &glow::Context, report: &mut Report) {
     let glsl_version = parse_version(&report.glsl_version);
     report.checks.push(version_check("gl_2_0", (2, 0), gl_version, true));
     report.checks.push(version_check("gl_2_1", (2, 1), gl_version, false));
-    report.checks.push(version_check("glsl_1_10", (1, 10), glsl_version, true));
+    // The version string is informational for GLSL 1.10: some drivers do not report it under an
+    // override (Mesa with MESA_GLSL_VERSION_OVERRIDE=110 on GL 2.0). The compile check decides.
+    report.checks.push(version_check("glsl_1_10", (1, 10), glsl_version, false));
     report.checks.push(version_check("glsl_1_20", (1, 20), glsl_version, false));
 }
 
 fn version_check(name: &'static str, wanted: (u32, u32), found: Option<(u32, u32)>, required: bool) -> Check {
     let (ok, detail) = match found {
         Some(found) => (found >= wanted, format!("driver {}.{}, wanted {}.{}", found.0, found.1, wanted.0, wanted.1)),
-        None => (false, "version string not understood".to_string()),
+        None => (false, "version string not reported; shaders_glsl_110 decides".to_string()),
     };
     Check { name, required, ok, detail }
 }
