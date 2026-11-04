@@ -153,7 +153,8 @@ jobs:
             }
             if ($r.terrain) {
               $t = $r.terrain
-              Write-Output "::notice title=$name::terrain: $($t.sections) sections, $($t.empty) empty, $($t.culled) culled, $($t.drawn) drawn in $($t.draw_calls) draw calls, $($t.triangles) triangles in the last frame"
+              $mb = [math]::Round($t.buffer_bytes / 1MB, 1)
+              Write-Output "::notice title=$name::terrain: $($t.sections) sections, $($t.empty) empty, $($t.culled) culled, $($t.drawn) drawn in $($t.draw_calls) draw calls, $($t.triangles) triangles in the last frame; draw calls over the run $($r.draw_calls_min)-$($r.draw_calls_max); vertex buffers $mb MB"
             }
             foreach ($check in $checks) {
               if (-not $check.ok) { Write-Output "::error title=$name::$($check.name): $($check.detail)" }
