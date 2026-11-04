@@ -23,7 +23,7 @@ pub struct Atlas {
 /// Repacks `layers` square RGBA8 sprites of `sprite` texels a side, stored layer after layer as
 /// `pixels`. The sprite must divide `PAGE`, so that no sprite straddles a page.
 pub fn pack(pixels: &[u8], sprite: u32, layers: u32) -> Result<Atlas, String> {
-    if sprite == 0 || sprite > PAGE || PAGE % sprite != 0 {
+    if sprite == 0 || sprite > PAGE || !PAGE.is_multiple_of(sprite) {
         return Err(format!("a sprite of {sprite} texels does not divide the {PAGE}-texel page"));
     }
     let row = (sprite * 4) as usize;

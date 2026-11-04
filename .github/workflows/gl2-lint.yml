@@ -27,6 +27,9 @@ jobs:
         run: |
           set +e
           cargo +stable fmt --all -- --check > fmt.txt 2>&1
+          cargo +stable fmt --all
+          git diff -- crates/horizon-client-render/src/gl2 > fmt.diff
+          git checkout -- crates/horizon-client-render/src/gl2
           fmt_exit=$?
           cargo +stable clippy -p horizon-client-render --all-targets --message-format=json -- -D warnings > clippy.json 2> clippy.err
           clippy_exit=$?
@@ -35,6 +38,8 @@ jobs:
           fmt_exit, clippy_exit = sys.argv[1], sys.argv[2]
           out = [f"fmt exit={fmt_exit} clippy exit={clippy_exit}"]
           out += [l.rstrip() for l in open("fmt.txt", errors="replace") if l.startswith("Diff in ")]
+          out.append("--- rustfmt diff of gl2 ---")
+          out += open("fmt.diff", errors="replace").read().splitlines()
           for line in open("clippy.json", errors="replace"):
               try:
                   m = json.loads(line)
