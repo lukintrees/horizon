@@ -4,7 +4,8 @@
 //
 //  * `#version 120`: `attribute`/`varying` instead of `@location`, no `uint`, no `in`/`out`,
 //    no integer attributes at all. The mesher's `u16`/`u32` fields arrive as normalized
-//    floats (a_color, a_light) or as floats the shader scales (a_extra.x = sprite layer).
+//    floats (a_color, a_light) or as one float the mesh sets per vertex (a_extra = which
+//    atlas).
 //  * sprite arrays are gone: the mesher resolves the layer into an atlas UV, so this stage
 //    never samples and never needs the layer.
 //  * the per-section origin is a uniform (`u_chunk_origin`), because 2.1 has no instancing
@@ -18,7 +19,7 @@
 //    (dynamic lights, coloured lights, emissive layers, the sunrise fan) move to textures and
 //    belong to passes that read them, not to terrain.
 //
-// Measured by tools/gl21_glsl.py: 35 uniform components, 11 varying floats, 5
+// Measured by tools/gl21_glsl.py: 35 uniform components, 10 varying floats, 5
 // attributes, 0 samplers. Twelve times under the uniform budget, four times under varyings.
 
 uniform mat4 u_view_proj;
@@ -30,15 +31,17 @@ attribute vec3 a_position;   // section-local blocks, 0..16
 attribute vec2 a_texcoord;   // atlas UV
 attribute vec4 a_color;      // tint * shade * AO, RGBA8 normalized
 attribute vec2 a_light;      // sky, block, 0..1 normalized from the 0..15 levels
-attribute vec4 a_extra;      // x: sprite layer (kept for the fragment stage's atlas choice),
-                             // y: flags (bit 0: cutout), z, w: reserved for the pass
+// x: which of the two atlases the vertex samples (0 or 1). Not a sprite layer: the mesher
+// already turned the layer into a UV (texture.rs), so the shader has no array to index and
+// only needs the atlas the UV range belongs to. A cutout is a property of the pass and lives
+// in a uniform of the fragment stage, not here (gl/buffer.rs says what that saves).
+attribute float a_extra;
 
 varying vec2 v_uv;
 varying vec4 v_color;
 varying vec2 v_light;
 varying float v_cylindrical;
-varying float v_layer;
-varying float v_cutout;
+varying float v_atlas;
 
 void main() {
     // Integer-style subtraction before the float conversion: the origin is whole blocks, and
@@ -57,6 +60,5 @@ void main() {
     v_uv = a_texcoord;
     v_color = a_color;
     v_light = a_light;
-    v_layer = a_extra.x;
-    v_cutout = a_extra.y;
+    v_atlas = a_extra;
 }

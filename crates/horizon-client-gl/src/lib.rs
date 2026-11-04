@@ -42,6 +42,7 @@ pub mod error;
 pub mod exec;
 pub mod gl;
 pub mod loader;
+pub mod mesh;
 
 pub use error::{Error, Result};
 

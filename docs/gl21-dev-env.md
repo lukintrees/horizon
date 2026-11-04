@@ -177,3 +177,24 @@ Rust toolchain from `GL21_RUSTUP_DIST_SERVER` (default `https://rsproxy.cn`), th
 from `--mirror`, glow's source for the type check, and a `CARGO_HOME` registry replacement at
 `GL21_CARGO_REGISTRY`. On this sandbox every one of those downloads is refused; the script says
 so in one line each and points at the job above.
+
+## The budget gate has a floor, and it is a file
+
+`tools/gl21_budget.py --check` measures the *wgpu* shaders against the X1650's limits, so on a
+tree that still carries the modern renderer it is red by construction: 80 findings, every one of
+them a thing the GL path is being built to replace (`texture_2d_array`, SSBOs, compute loops).
+A gate that is red on a clean checkout is a gate people learn to ignore, so CI runs it against
+`tools/gl21-budget-baseline.json` — the 80 known rows — and fails only on a **new** finding:
+
+```sh
+python3 tools/gl21_budget.py --check --baseline tools/gl21-budget-baseline.json
+# against tools/gl21-budget-baseline.json: 0 fixed, 0 new
+```
+
+Two rules keep that honest:
+
+* **A ported shader lowers the file.** When a WGSL file's remaining work is done, delete its rows
+  from the baseline in the same commit. The gate prints `N fixed` for rows that no longer match,
+  so a stale baseline is visible rather than silent.
+* **The GLSL path has no floor.** `tools/gl21_glsl.py --check` runs on `src/shaders/terrain/`
+  with no baseline: those files are written for the target, and a finding there is a bug.

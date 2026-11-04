@@ -734,13 +734,14 @@ mod tests {
     }
 
     #[test]
-    fn the_vertex_format_the_executor_rebinds_is_the_32_byte_one() {
+    fn the_vertex_format_the_executor_rebinds_is_one_layout() {
         let format = VertexFormat::legacy();
-        assert_eq!(format.stride, 32);
         assert_eq!(format.attributes.len(), 5);
-        // Five attributes, four slots of 4 bytes after position and texcoord: 12 + 8 + 4 + 4 +
-        // 4 is 32, and the last attribute ends exactly at the stride.
+        // Spans are a bytes question, not an offsets question: 12 + 8 + 4 + 4 + 12 is 40, and
+        // the last attribute ends exactly at the stride (gl/buffer.rs explains the 12).
         let last = format.attributes.last().unwrap();
-        assert_eq!(last.offset + 16, format.stride);
+        assert_eq!(last.end(), format.stride);
+        // A merged pass does not get a second stride: same bytes, different meaning.
+        assert_eq!(VertexFormat::with_origin().stride, format.stride);
     }
 }

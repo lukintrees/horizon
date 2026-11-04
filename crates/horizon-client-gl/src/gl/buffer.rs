@@ -14,13 +14,27 @@
 //! offset 12  a_texcoord  vec2   GL_FLOAT            texture coordinates in the atlas
 //! offset 20  a_color     vec4   GL_UNSIGNED_BYTE    normalized: tint * shade * AO
 //! offset 24  a_light     vec2   GL_UNSIGNED_BYTE    normalized: sky, block (0..1 of 15)
-//! offset 28  a_extra     vec4   GL_FLOAT            layer/flags, or the section origin
+//! offset 28  a_extra     float  GL_FLOAT            atlas index: 0, or 1 for the second
+//! offset 32  (end)                                  stride
 //! ```
 //!
-//! 32 bytes against 16, and no instancing on the target to blame: a section's origin is a
-//! uniform per draw here (`a_extra` carries it only where a pass merges sections, see
-//! [`VertexFormat::with_origin`]). That is the trade the port makes and it is stated in one
-//! place rather than discovered in each pass.
+//! 32 bytes against 16. Three things make that up, and none of them is free:
+//!
+//!  1. **No integer attributes.** The mesher's `u16` UVs and `u32` colour cannot arrive as
+//!     integers in 1.20, so they travel as normalized bytes or as floats the shader scales.
+//!  2. **No instancing.** A section's origin is a uniform per draw
+//!     (`VertexFormat::with_origin` marks the merged passes where it rides in the vertex
+//!     instead), so nothing here is per-instance data.
+//!  3. **`a_extra` is one float, and the cutout flag is not in it.** A cutout is a property
+//!     of the *pass*, not of the vertex: applying it in the fragment stage costs one branch
+//!     on a uniform, which is free on this hardware, while carrying it in the vertex costs
+//!     four bytes per vertex on every section even when the pass has no cutout at all.
+//!     It is also what keeps the stride honest: a `vec4` attribute at offset 28 ends at 44,
+//!     not at 32, and a stride that does not cover an attribute makes the driver read the
+//!     next vertex's bytes as this one's. One float keeps the stride at 32.
+//!
+//! That is the trade the port makes and it is stated in one place rather than discovered in
+//! each pass.
 
 use glow::HasContext;
 
@@ -194,17 +208,48 @@ impl AttributeType {
     }
 }
 
+/// A stride's worth of every attribute, at run time.
+///
+/// The sizes here are the ones `glVertexAttribPointer` will actually read: a float attribute
+/// is four bytes a component and a normalized byte attribute is one, and a slot must fit
+/// inside [`Self::stride`] or the driver reads the next vertex's bytes as this one's.
+impl Attribute {
+    /// How many bytes this attribute reads, from its offset to its last component.
+    pub fn bytes(&self) -> u32 {
+        (self.components.max(0) as u32) * self.ty.width()
+    }
+
+    /// Where this attribute ends, which must not be past the stride.
+    pub fn end(&self) -> u32 {
+        self.offset + self.bytes()
+    }
+}
+
+impl AttributeType {
+    /// Bytes per component on the wire.
+    pub fn width(self) -> u32 {
+        match self {
+            AttributeType::Float => 4,
+            AttributeType::UnsignedByte => 1,
+            AttributeType::UnsignedShort => 2,
+        }
+    }
+}
+
 /// The vertex format of the whole legacy path. See the module docs for why it is 32 bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VertexFormat {
     pub attributes: Vec<Attribute>,
     pub stride: u32,
-    /// Whether `a_extra` carries the section origin (a merged pass) instead of layer/flags.
+    /// Whether `a_extra` carries part of the section origin (a merged pass) instead of the
+    /// atlas index.
     pub with_origin: bool,
 }
 
 impl VertexFormat {
     /// The terrain/entity format: 32 bytes, five attributes, no instancing needed.
+    /// `crate::mesh` writes exactly this layout, and the module docs say why `a_extra` is
+    /// one float rather than four.
     pub fn legacy() -> Self {
         use super::program::attribs;
         Self {
@@ -239,7 +284,7 @@ impl VertexFormat {
                 },
                 Attribute {
                     location: attribs::EXTRA,
-                    components: 4,
+                    components: 1,
                     ty: AttributeType::Float,
                     normalized: false,
                     offset: 28,
@@ -250,8 +295,10 @@ impl VertexFormat {
         }
     }
 
-    /// The same format with `a_extra` holding the origin: what a pass that merges sections
-    /// into one buffer uses to avoid a uniform per section.
+    /// The same bytes, with `a_extra` holding the section origin's X: what a pass that merges
+    /// sections into one buffer uses to avoid a uniform per section. It is a marker, not a
+    /// second layout: the stride and the attribute table cannot depend on what a pass means
+    /// by a float, or every buffer would need its own binding.
     pub fn with_origin() -> Self {
         Self {
             with_origin: true,
@@ -294,15 +341,40 @@ mod tests {
     fn the_legacy_format_is_32_bytes_with_five_packed_attributes() {
         let format = VertexFormat::legacy();
         assert_eq!(format.stride, 32);
-        // Every attribute starts inside the stride and ends inside it.
-        for a in &format.attributes {
-            assert!(a.offset < format.stride, "{a:?}");
-        }
-        let last = format.attributes.iter().max_by_key(|a| a.offset).unwrap();
-        assert_eq!(last.offset + 4 * 4, format.stride); // a_extra: four floats
         // Offsets are the ones the module documents.
         let offsets: Vec<u32> = format.attributes.iter().map(|a| a.offset).collect();
         assert_eq!(offsets, [0, 12, 20, 24, 28]);
+        // The last attribute ends exactly at the stride: no slack a writer has to know about.
+        let last = format.attributes.iter().max_by_key(|a| a.offset).unwrap();
+        assert_eq!(last.end(), format.stride);
+    }
+
+    /// The bug this format had: a `vec4` of floats at offset 28 reads to 44, which is past a
+    /// 32-byte stride, so every attribute after the first vertex would have been the previous
+    /// one's bytes. A stride too small for one attribute is not a tuning parameter.
+    #[test]
+    fn no_attribute_reads_past_the_stride() {
+        let format = VertexFormat::legacy();
+        for a in &format.attributes {
+            assert!(
+                a.end() <= format.stride,
+                "{a:?} ends at {} past the {} stride",
+                a.end(),
+                format.stride
+            );
+        }
+    }
+
+    /// Attributes must not overlap either: two floating-point attributes over one word read
+    /// the same bytes as different data, which looks like interpolation noise, not a bug.
+    #[test]
+    fn no_two_attributes_share_a_byte() {
+        let format = VertexFormat::legacy();
+        let mut spans: Vec<(u32, u32)> = format.attributes.iter().map(|a| (a.offset, a.end())).collect();
+        spans.sort_unstable();
+        for pair in spans.windows(2) {
+            assert!(pair[0].1 <= pair[1].0, "{:?} overlaps {:?}", pair[0], pair[1]);
+        }
     }
 
     #[test]
