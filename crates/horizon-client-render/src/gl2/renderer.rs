@@ -340,7 +340,6 @@ impl Renderer {
             free_placed(&self.terrain, &self.gl, placed);
         }
     }
-
 }
 
 impl Drop for Renderer {
