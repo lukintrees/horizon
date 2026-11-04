@@ -658,6 +658,7 @@ mod gpu_tests {
             bright > 1000,
             "the quad covers the frame: {bright} bright pixels"
         );
+        the_sky_is_drawn(&mut renderer);
     }
 
     /// A square of the sky's quads `z` blocks ahead, `half` blocks to each side, in the given layer.
@@ -717,13 +718,9 @@ mod gpu_tests {
             .count()
     }
 
-    #[test]
-    fn the_sun_the_rain_and_the_clouds_are_drawn_over_black() {
-        let (_event_loop, window) = window();
-        let sprite = vec![255u8; 16 * 16 * 4];
-        let hud = vec![255u8; 4 * 4 * 4];
-        let mut renderer = Renderer::new(&window, &sprite, 16, 1, (&hud, 4, 4))
-            .expect("the OpenGL 2 renderer starts on the window's context");
+    /// The sun, the rain and the clouds, drawn over black. Called by the test that makes the renderer:
+    /// winit allows one event loop per process, so the GPU checks share the one renderer.
+    fn the_sky_is_drawn(renderer: &mut Renderer) {
         let [width, height] = renderer.size;
         let view = View::screen(0.0, 0.0, 70.0, width as f32 / height as f32, 512.0);
         let view_proj = view.view_proj(Mat4::IDENTITY);
@@ -738,7 +735,7 @@ mod gpu_tests {
             ..SkyScene::nothing()
         };
         renderer.draw_world(view_proj, DVec3::ZERO, black, fog_range, scene);
-        let sun_pixels = bright_pixels(&renderer);
+        let sun_pixels = bright_pixels(renderer);
         assert!(sun_pixels > 1000, "the sun shows: {sun_pixels} pixels");
 
         // The rain: a white square 5 blocks across, 20 blocks ahead.
@@ -749,7 +746,7 @@ mod gpu_tests {
             ..SkyScene::nothing()
         };
         renderer.draw_world(view_proj, DVec3::ZERO, black, fog_range, scene);
-        let rain_pixels = bright_pixels(&renderer);
+        let rain_pixels = bright_pixels(renderer);
         assert!(rain_pixels > 1000, "the rain shows: {rain_pixels} pixels");
 
         // The clouds: a white quad 10 blocks across, 30 blocks ahead, blended over the black frame.
@@ -773,7 +770,7 @@ mod gpu_tests {
             2048.0,
             true,
         );
-        let cloud_pixels = bright_pixels(&renderer);
+        let cloud_pixels = bright_pixels(renderer);
         assert!(
             cloud_pixels > 1000,
             "the clouds show: {cloud_pixels} pixels"
