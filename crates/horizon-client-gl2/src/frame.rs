@@ -71,7 +71,7 @@ impl Renderer {
     pub fn new(gl: &glow::Context) -> Result<Self, String> {
         // SAFETY: the caller keeps the context current while the renderer lives.
         unsafe {
-            let program = build_program(gl)?;
+            let program = link(gl, VERTEX_SHADER, FRAGMENT_SHADER, &[(0, "a_pos"), (1, "a_uv")])?;
 
             let atlas = gl.create_texture()?;
             gl.bind_texture(glow::TEXTURE_2D, Some(atlas));
@@ -137,31 +137,8 @@ impl Renderer {
             gl.disable_vertex_attrib_array(0);
             gl.disable_vertex_attrib_array(1);
             gl.finish();
-
-            gl.read_buffer(glow::BACK);
-            let mut pixels = vec![0u8; (w * h * 4) as usize];
-            gl.read_pixels(
-                0,
-                0,
-                w,
-                h,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelPackData::Slice(Some(pixels.as_mut_slice())),
-            );
-            let error = gl.get_error();
-            if error != glow::NO_ERROR {
-                return Err(format!("glGetError after the frame: 0x{error:04x}"));
-            }
-
-            // GL reads the bottom row first; the checks use the top row first.
-            let row = (w * 4) as usize;
-            let mut rgba = Vec::with_capacity(pixels.len());
-            for y in (0..h as usize).rev() {
-                rgba.extend_from_slice(&pixels[y * row..(y + 1) * row]);
-            }
-            Ok(Pixels { width, height, rgba })
         }
+        read_back(gl, width, height)
     }
 }
 
@@ -248,20 +225,24 @@ fn atlas_bytes() -> Vec<u8> {
     bytes
 }
 
-/// Compiles and links the GLSL 1.20 program.
-///
-/// # Safety
-/// A context must be current on this thread.
-unsafe fn build_program(gl: &glow::Context) -> Result<glow::Program, String> {
+/// Compiles and links a program from GLSL sources, binding each attribute name to its location
+/// first. The error is the driver's log.
+pub fn link(
+    gl: &glow::Context,
+    vertex_source: &str,
+    fragment_source: &str,
+    attributes: &[(u32, &str)],
+) -> Result<glow::Program, String> {
+    // SAFETY: the caller has a context current on this thread.
     unsafe {
         let vertex = gl.create_shader(glow::VERTEX_SHADER)?;
-        gl.shader_source(vertex, VERTEX_SHADER);
+        gl.shader_source(vertex, vertex_source);
         gl.compile_shader(vertex);
         if !gl.get_shader_compile_status(vertex) {
             return Err(format!("vertex shader: {}", gl.get_shader_info_log(vertex)));
         }
         let fragment = gl.create_shader(glow::FRAGMENT_SHADER)?;
-        gl.shader_source(fragment, FRAGMENT_SHADER);
+        gl.shader_source(fragment, fragment_source);
         gl.compile_shader(fragment);
         if !gl.get_shader_compile_status(fragment) {
             return Err(format!("fragment shader: {}", gl.get_shader_info_log(fragment)));
@@ -269,8 +250,9 @@ unsafe fn build_program(gl: &glow::Context) -> Result<glow::Program, String> {
         let program = gl.create_program()?;
         gl.attach_shader(program, vertex);
         gl.attach_shader(program, fragment);
-        gl.bind_attrib_location(program, 0, "a_pos");
-        gl.bind_attrib_location(program, 1, "a_uv");
+        for &(index, name) in attributes {
+            gl.bind_attrib_location(program, index, name);
+        }
         gl.link_program(program);
         if !gl.get_program_link_status(program) {
             return Err(format!("link: {}", gl.get_program_info_log(program)));
@@ -281,6 +263,36 @@ unsafe fn build_program(gl: &glow::Context) -> Result<glow::Program, String> {
         gl.delete_shader(vertex);
         gl.delete_shader(fragment);
         Ok(program)
+    }
+}
+
+/// Reads the back buffer of the current window back as rows from the top, and checks GL's error flag.
+pub fn read_back(gl: &glow::Context, width: u32, height: u32) -> Result<Pixels, String> {
+    let (w, h) = (width as i32, height as i32);
+    // SAFETY: the context is current on this thread.
+    unsafe {
+        gl.read_buffer(glow::BACK);
+        let mut pixels = vec![0u8; (w * h * 4) as usize];
+        gl.read_pixels(
+            0,
+            0,
+            w,
+            h,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(pixels.as_mut_slice())),
+        );
+        let error = gl.get_error();
+        if error != glow::NO_ERROR {
+            return Err(format!("glGetError after the frame: 0x{error:04x}"));
+        }
+        // GL reads the bottom row first; the checks use the top row first.
+        let row = (w * 4) as usize;
+        let mut rgba = Vec::with_capacity(pixels.len());
+        for y in (0..h as usize).rev() {
+            rgba.extend_from_slice(&pixels[y * row..(y + 1) * row]);
+        }
+        Ok(Pixels { width, height, rgba })
     }
 }
 

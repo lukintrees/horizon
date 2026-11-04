@@ -78,44 +78,60 @@ jobs:
             exit 1
           }
 
-      # Runs for 120 frames, then closes. Each frame is checked and presented, and the report is written
-      # even when the run fails, so the annotation step can say why.
-      - name: "Window, capped to OpenGL 2.1 and GLSL 1.20 (120 frames)"
+      # Each run presents its frames, checks each one, and writes its report even when it fails, so the
+      # annotation step can say why. The flat scene is gate G1; the terrain is the GL2 terrain of phase 2.
+      - name: "Window, flat scene (gate G1), capped to OpenGL 2.1 and GLSL 1.20 (120 frames)"
         continue-on-error: true
         env:
           MESA_GL_VERSION_OVERRIDE: "2.1"
           MESA_GLSL_VERSION_OVERRIDE: "120"
-        run: .\target\release\horizon-client-gl2.exe --frames 120 --out out\window.json
+        run: .\target\release\horizon-client-gl2.exe --scene flat --frames 120 --out out\window.json
+
+      - name: "Window, terrain scene (60 frames, the last frame as PNG)"
+        continue-on-error: true
+        env:
+          MESA_GL_VERSION_OVERRIDE: "2.1"
+          MESA_GLSL_VERSION_OVERRIDE: "120"
+        run: .\target\release\horizon-client-gl2.exe --scene terrain --frames 60 --out out\terrain.json --png out\terrain.png
 
       - name: Every frame must pass
         env:
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $failed = $false
           if ($env:TESTS_OUTCOME -ne 'success') {
             Write-Output "::error title=unit tests::the unit tests did not pass (see the annotations above)"
-            $testsFailed = $true
+            $failed = $true
           }
-          $path = 'out/window.json'
-          if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
-            Write-Output "::error title=window::no report written: the window did not finish"
-            exit 1
+          foreach ($name in 'window', 'terrain') {
+            $path = "out/$name.json"
+            if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
+              Write-Output "::error title=$name::no report written: the run did not finish"
+              $failed = $true
+              continue
+            }
+            $r = Get-Content $path -Raw | ConvertFrom-Json
+            $checks = @($r.checks)
+            $summary = ($checks | ForEach-Object { if ($_.ok) { "$($_.name)=ok" } else { "$($_.name)=FAIL" } }) -join ' '
+            $avg = if ($null -ne $r.frame_ms_avg) { [math]::Round($r.frame_ms_avg, 1) } else { '-' }
+            Write-Output "::notice title=$name::scene $($r.scene) | GL $($r.gl_version) | $($r.renderer) | window $($r.window.width)x$($r.window.height) | frames $($r.frames) | cpu ms/frame (llvmpipe, not the X1650) $avg | error: $($r.error) | checks: $summary"
+            if ($r.terrain) {
+              $t = $r.terrain
+              Write-Output "::notice title=$name::terrain: $($t.sections) sections, $($t.empty) empty, $($t.culled) culled, $($t.drawn) drawn in $($t.draw_calls) draw calls, $($t.triangles) triangles in the last frame"
+            }
+            foreach ($check in $checks) {
+              if (-not $check.ok) { Write-Output "::error title=$name::$($check.name): $($check.detail)" }
+            }
+            if ($r.pass -ne $true) {
+              Write-Output "::error title=$name::did not pass"
+              $failed = $true
+            }
           }
-          $r = Get-Content $path -Raw | ConvertFrom-Json
-          $checks = @($r.checks)
-          $summary = ($checks | ForEach-Object { if ($_.ok) { "$($_.name)=ok" } else { "$($_.name)=FAIL" } }) -join ' '
-          Write-Output "::notice title=window::GL $($r.gl_version) | $($r.renderer) | window $($r.window.width)x$($r.window.height) | frames $($r.frames) | error: $($r.error) | checks: $summary"
-          foreach ($check in $checks) {
-            if (-not $check.ok) { Write-Output "::error title=window::$($check.name): $($check.detail)" }
-          }
-          if ($r.pass -ne $true) {
-            Write-Output "::error title=window::did not pass"
-            exit 1
-          }
-          if ($testsFailed) { exit 1 }
-          Write-Output "::notice title=window::the game window presented $($r.frames) frames and passed gate G1"
+          if ($failed) { exit 1 }
+          Write-Output "::notice title=window::both scenes presented their frames and passed their checks"
 
-      - name: Upload the report
+      - name: Upload the reports and the terrain frame
         if: always()
         uses: actions/upload-artifact@v4
         with:
