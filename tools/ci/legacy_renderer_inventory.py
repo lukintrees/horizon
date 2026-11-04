@@ -38,9 +38,14 @@ def inventory(root):
     sources = []
     for path in [game, *sorted(game.with_suffix("").rglob("*.rs"))]:
         data = path.read_bytes()
-        references = scan(data.decode(), members)
+        text = data.decode()
+        references = scan(text, members)
         if references:
-            sources.append(dict(path=str(path.relative_to(root)).replace("\\", "/"), sha256=hashlib.sha256(data).hexdigest(), references=references))
+            # Hash the LF form: core.autocrlf gives Windows workers CRLF files,
+            # while the index stores LF and a Linux regeneration must match.
+            sources.append(dict(path=str(path.relative_to(root)).replace("\\", "/"),
+                                sha256=hashlib.sha256(text.replace("\r\n", "\n").encode()).hexdigest(),
+                                references=references))
     return dict(contract_version=1, precision="syntactic candidates; review alias bindings", sources=sources)
 
 

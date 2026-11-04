@@ -4,7 +4,7 @@
   "sources": [
     {
       "path": "crates/horizon-client/src/game.rs",
-      "sha256": "1337bac0f01147d9ab8e2f9a6ac8a4cffc351a988cd602c3e5577b9911ce8cf0",
+      "sha256": "6426fe04aea8331ba823d0ff7e597f294b7389962751444b6248cfb66d5888d7",
       "references": [
         {
           "line": 374,
@@ -1241,7 +1241,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/agent.rs",
-      "sha256": "6a835b9c86710151c92adf2d54e632871622436710479d00c2bf5abd87939dfc",
+      "sha256": "f46e8a71b79629693136d6492c191f7a874f3b0a701d449965ce78ab28158fa2",
       "references": [
         {
           "line": 926,
@@ -1289,7 +1289,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/block_editor.rs",
-      "sha256": "098e8be711528dd8072ff627b32438a93fe850886f9dd6cd05480638371be5ca",
+      "sha256": "2df2a066c23c118c444518c64e38f5b21fa45bf7969734ad42f699d649312154",
       "references": [
         {
           "line": 342,
@@ -1323,7 +1323,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/block_entity_anims.rs",
-      "sha256": "9296aabdfd8550a4e4d7264457d16ca28cf84fdb626c41d0a3b55d2d4174f0b9",
+      "sha256": "e207e411224d0347370c08d83813491017d1a02dd7134ac978d40c53adbbf5ab",
       "references": [
         {
           "line": 299,
@@ -1343,7 +1343,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/chat.rs",
-      "sha256": "c0e917585f3688b4aa97f0f9ccb734f381886f7cb504edd5e2e8db3c4dfb79cc",
+      "sha256": "61020cb0b8de1a63c302991886c8224518474ce31d6f7c3a4be21f9256e56960",
       "references": [
         {
           "line": 689,
@@ -1420,7 +1420,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/command_blocks.rs",
-      "sha256": "f649732f7c1c86312cb01bc1617b9e529019e65222e4559f01d98a536bd82f38",
+      "sha256": "315a1604c9aa2dfc8988d67190402e22a94ed90617bd8d918fe13f7952f7c682",
       "references": [
         {
           "line": 752,
@@ -1440,7 +1440,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/control.rs",
-      "sha256": "eda47b072ea3db316ec989c4aaa63d1348cf0dbddf41f8eae23340263f3b1766",
+      "sha256": "6e5291c85ee7dd1d0e5b5c4e975b8b33fb72bb5190280898b689a5580fb73718",
       "references": [
         {
           "line": 34,
@@ -1799,7 +1799,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/creatures.rs",
-      "sha256": "acf3b4f09a531c922a95ab3ff90f3361d73331933b7cccab42503efa8910ddeb",
+      "sha256": "9612c19b347a112675c8879e03e2f443566724d9432223aa4806ca30ac6a12d2",
       "references": [
         {
           "line": 6611,
@@ -1843,7 +1843,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/debug_keys.rs",
-      "sha256": "9f359fa71db226440f5819c1eda615ca2afea1aac47c0bfc87bf01ffe0d0e36f",
+      "sha256": "b11e47bb3ca3667f5e94b8a3ba31c61e22ceb3794013c81f7e722e6ad46697f4",
       "references": [
         {
           "line": 333,
@@ -1927,7 +1927,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/debug_lines.rs",
-      "sha256": "29a4d96c322089178f3d79a75c801857fb8643ab7c913e405a9d6f541fad9ffe",
+      "sha256": "b3c7642dea26875338c19706e0711404884ee18f94c4bdd87b76900a0e4b6602",
       "references": [
         {
           "line": 164,
@@ -1975,7 +1975,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/debug_options.rs",
-      "sha256": "80bd7e519c95a3c81b658c9fe1d32d62bd81f4a115ea95234cca684f1070ff5a",
+      "sha256": "7dd05b47a1a459df149dcb2957bf880d9aeff6c9ca03285c02f34009a99a6646",
       "references": [
         {
           "line": 162,
@@ -2037,7 +2037,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/dedicated/report.rs",
-      "sha256": "7907d1165b2a000b272e8d89e3ab84809f6be7ec494be43e9582dfa31970e512",
+      "sha256": "3cc2bd46ddf544f1fde1c9a345f31e543d9ac9379cf4e40631959fee589f5e41",
       "references": [
         {
           "line": 71,
@@ -2092,7 +2092,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/dispenser.rs",
-      "sha256": "8d618757dc45bdd0daad76844a158aa39883f63927d7ba48c57e704b92bf9810",
+      "sha256": "34926e8279f3d0c0ebac691427f089e9488296ce5efa0e0633551c61b18de5ec",
       "references": [
         {
           "line": 1836,
@@ -2105,7 +2105,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/entity_culling.rs",
-      "sha256": "a9275366f3ebd26f49a3a4e7dbc115959746d8026275d9dc0560709272f40216",
+      "sha256": "36e9297cb2d7c783a97b8b4c12e97807fc6d9bda71ffd127273070f891fcd22b",
       "references": [
         {
           "line": 382,
@@ -2160,7 +2160,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/item_draw.rs",
-      "sha256": "7c971c95f6f524ef34bea2b23beadecbb29921e4466f8316c9387f10f64ae5f0",
+      "sha256": "a529bb5d80d27b2bd5dac552b1436aa972ae799e376ef9e8ac848cce8499b0ef",
       "references": [
         {
           "line": 330,
@@ -2216,7 +2216,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/loom.rs",
-      "sha256": "a49d4f0b47288e3a2b78935495637c3f2cfb603e596ef1dc06804cba58d5bb71",
+      "sha256": "de01b2c0aca503edbeba1944998f761916c0938f84eb3e1bcdf945b533d14830",
       "references": [
         {
           "line": 154,
@@ -2236,7 +2236,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/memory.rs",
-      "sha256": "c80d62dc02aa9d21e55c0b76ef8b5dcdd46d3a4bae44e2a95ba20617d1ada0ef",
+      "sha256": "7bf3807cc7e579b489d28cc759363a03abf21388ad60a9487ca51ed31d44b5b6",
       "references": [
         {
           "line": 126,
@@ -2263,7 +2263,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/minecarts.rs",
-      "sha256": "4413052ad4b98dc381ce2d1cf3f83a89580c9dfa9de6bf7e5abdcd9575df43a6",
+      "sha256": "b826da0e3fea59aba1f01b42a104b895181a240c01517410aacb1f884c6e39a0",
       "references": [
         {
           "line": 944,
@@ -2276,7 +2276,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/mount_menu.rs",
-      "sha256": "987fb9fae2654ec89a034ee8a45d20f84b60d7e687bc730e1d3b71bb9eaec174",
+      "sha256": "702dd7f086c2ced336e0fc225ed680880375c04a033e01595af7c0869b896f6d",
       "references": [
         {
           "line": 378,
@@ -2296,7 +2296,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_block_sprites.rs",
-      "sha256": "18701a17535174d200725eed16a8ea6216483590452dfe885c783d8c947f97e8",
+      "sha256": "d76dca8919455ea45b48aa6d04e266f0cb876188ff5e0fdc494b349b5b8d04b5",
       "references": [
         {
           "line": 35,
@@ -2316,7 +2316,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_hooks.rs",
-      "sha256": "abbdcab08cc1b72860d79f42d87e7b04ddc79a7c63cb037457dfaf247a506b8d",
+      "sha256": "aa0e93849c5284a912b49e0b58783f8f6ac4991d7411e2747517d7c3011b80fe",
       "references": [
         {
           "line": 992,
@@ -2380,7 +2380,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_panel.rs",
-      "sha256": "c931a663a4ae4f93c17714250ab2d7130d8ca990d0b46f1442c476d49b9d55bc",
+      "sha256": "90c2e95ad23514c7bc7146deca15008db27383c7410801bbc68ccb4e9b06459b",
       "references": [
         {
           "line": 165,
@@ -2400,7 +2400,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_shaders.rs",
-      "sha256": "a0d85c11ea45ab7d34932443f0a3ef5d964601aad7c965c6c19ae7bdd201330e",
+      "sha256": "7cde9404cf0425064731eb1ea9bf680ffbdf094e2d5a1bd031cd2d840dc3699d",
       "references": [
         {
           "line": 55,
@@ -2420,7 +2420,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_visuals.rs",
-      "sha256": "aed8ee25fa9269bc0aaf5d7d37dae9a5a2d729425fe15e2a57e4bd4311b1bf4a",
+      "sha256": "1bda17142aa740082a4c8ef425a922b8b4643118d77017e4cfb45aad8ffaa64d",
       "references": [
         {
           "line": 21,
@@ -2456,7 +2456,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/natural_spawning.rs",
-      "sha256": "feed0f206a3318e4e9fa609628146b62778af0e5ae83a784bf87efec6299424a",
+      "sha256": "2566b887e952b1d0341f0f7b5908ed3dcb5bd99f49f7f410657c0e1100ea7c5b",
       "references": [
         {
           "line": 640,
@@ -2476,7 +2476,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/no_resources.rs",
-      "sha256": "d3732c4ef57e2aa5ceacb57ee9f3566a0bdbef2a83dd6b52bd76641745791a2b",
+      "sha256": "c205e7ce39114d9694f9fa3e0d13d8f8ab9d9865a606df5233219de9f6444525",
       "references": [
         {
           "line": 11,
@@ -2566,7 +2566,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/options.rs",
-      "sha256": "c7b07a505a1911b3c0d2b1710c696f3f9299330b51b802cead739b891226b376",
+      "sha256": "608b2cdba997a693dac6bc79704920e80acf0a84b67fa01acca024cd63cde9a4",
       "references": [
         {
           "line": 110,
@@ -2740,7 +2740,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/packs.rs",
-      "sha256": "5353994f634b9ec09ddfc98d5d4c4ed6a96d2a0b172288e6785d5a0371473d2d",
+      "sha256": "ef2994cca8dba300fee038e80a199fc2723d4aee22e22504dd8ecfef5797a339",
       "references": [
         {
           "line": 342,
@@ -2826,7 +2826,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/pad_menu.rs",
-      "sha256": "474004f8464b65fe6924e4eda8471de757233418896431873f31892f2f0a13b2",
+      "sha256": "aa9340c9a13285f5c92f64d2b62815bde0e9607e74b868f626dd26dfb8366472",
       "references": [
         {
           "line": 137,
@@ -2846,7 +2846,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/perspective.rs",
-      "sha256": "e4cfa2855756e51a795224766944ca4bf7048decf82550b1f7129dae336434a4",
+      "sha256": "87a1cbc45fd209fafdbd89bd002ad0a58befe16408b83c92a8e58adf5a2cc38e",
       "references": [
         {
           "line": 236,
@@ -2859,7 +2859,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/recipe_book.rs",
-      "sha256": "a2343f44556b58cf350d8f84d084b65c98b408273c8242cd0b0d4357782dd6d9",
+      "sha256": "d3d8d8eb7a63e52ed53ff84a1ac492a4244ffa9ed709c4e7a9947028b9d97106",
       "references": [
         {
           "line": 604,
@@ -2879,7 +2879,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/remote.rs",
-      "sha256": "de54037713bfd09c7c563bb48fe8594084cdeb68b1bc9f0f2e33c9495435f256",
+      "sha256": "93202942c7e52ea07410fb83bc446276f80bb1fc7e89412b2601255e0c0156ba",
       "references": [
         {
           "line": 323,
@@ -3090,7 +3090,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/remote_camera.rs",
-      "sha256": "20657313c7e19c71f8b08b8d0a95e0dafaaa1c73fae0704e84c6e2c2f65543d8",
+      "sha256": "204ead4eaecc1f7d39737266830386995dfc766602877b18e9e156d4048d7072",
       "references": [
         {
           "line": 77,
@@ -3103,7 +3103,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/render_tick.rs",
-      "sha256": "e460db3f1fbd292c82f9e83659d099fe9067b9237b19a60d20d873a31eda66a8",
+      "sha256": "a8e85b7e6643d896fa2a71043ba3ba9cfda0eaee5c1f1ad9f990fe92edbaef4c",
       "references": [
         {
           "line": 92,
@@ -3137,7 +3137,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/saving.rs",
-      "sha256": "a35487c86e4681c186cfed4c6d0d603978740502052041f57fb5d387aa88cbcc",
+      "sha256": "a4d0be995171ded63be66ca6de96d7457d410cf48faccba27fb345b1f580593d",
       "references": [
         {
           "line": 261,
@@ -3166,7 +3166,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/screens.rs",
-      "sha256": "f1ccf74fcda18ec06ad2dbb4c8d5d2c24a51eeaa940d50bfc8667da59a1dc271",
+      "sha256": "137d5d88f2642f309a17b026f6f0cf95128c04c84e77f27a298222f36860fb6f",
       "references": [
         {
           "line": 393,
@@ -3214,7 +3214,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/shader_packs.rs",
-      "sha256": "92f72f38bdecb5be4754dbe6b47d77c52b86648475f57803d4be3b826b851b6b",
+      "sha256": "0d9712bfecf8f7203a33641a2f1b9731f574fda4a49fff3ff2610e0d0cceac36",
       "references": [
         {
           "line": 174,
@@ -3335,7 +3335,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/spawner.rs",
-      "sha256": "7dc447ecf46cf61e0bcb70cd42c3a2868d3c5abc3d31dab9cf3854e99f80609e",
+      "sha256": "a2abf2f8a556270ef5e2ac2f290844b632744571f6d95d6920f022ea33fcf101",
       "references": [
         {
           "line": 180,
@@ -3355,7 +3355,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/split/players.rs",
-      "sha256": "151eb3d53e88f8925f5c1fc27165010d269c968a40a4b6f9f6a9b2173ebada30",
+      "sha256": "af96f447028402f8514f7bfa0d306f78a89f7b76afe36396292f33022075f932",
       "references": [
         {
           "line": 409,
@@ -3375,7 +3375,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/split/windows.rs",
-      "sha256": "2557cbcb22a1a923d7b20729423ce85d9f73343a4723c0451183eed029e855e6",
+      "sha256": "0187855d0881d42b7db1334328a302cb108f23e207a3106d3cadf6196978c549",
       "references": [
         {
           "line": 573,
@@ -3395,7 +3395,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/split.rs",
-      "sha256": "41e9d05bfe5761de78b98d9cc1f320448ec818918136698b9f14fa6223dbaf84",
+      "sha256": "0b4af3afe618d77a0dad2dfcd3e5657f59f43599699e13506aea02414f3ecbc6",
       "references": [
         {
           "line": 387,
@@ -3543,7 +3543,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/startup_menu.rs",
-      "sha256": "b4e779e322b704f891728ce7ab168193aa3001cba772d8a9a7a4d131f08431f6",
+      "sha256": "ad262f7958ec1c70c06257098e41c996b3f337dc87ca97b140549063b136d5fd",
       "references": [
         {
           "line": 422,
@@ -3621,7 +3621,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/station_control.rs",
-      "sha256": "2042e07e1f17710a980b30f1d7526d5ec46539bcfbba70f4b19ebf64f8e0231c",
+      "sha256": "3b484334937c73e42c4b60f46f50afaf84d9206be77cbdbe74cf7ada96aa6fb2",
       "references": [
         {
           "line": 69,
@@ -3648,7 +3648,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/stations.rs",
-      "sha256": "7c1110380a9d8cea22b92ac45206e2e5fd62e5c2a1fca6dacc4d9701e271e587",
+      "sha256": "8cd1036e26afaf1e215ed5485688ef407d0b1cf48aa695f748afe95be4f18b14",
       "references": [
         {
           "line": 1100,
@@ -3682,7 +3682,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/trading.rs",
-      "sha256": "e3a2fa412061672707525f31da08d0e58dd968f12f9d7448075d45d7962f9297",
+      "sha256": "b417d936d9033ec5cb8bc877de753c049c7dbe4d3ff9a41b6f4583951c87a2a3",
       "references": [
         {
           "line": 571,
@@ -3702,7 +3702,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/tweaks.rs",
-      "sha256": "e9f33fbc5f58766f3c79ef04570846a3f2fc2ccd636cbf42f58c97d1e5175fd7",
+      "sha256": "c123ca4fc5348c40b424987656c0e18ac45187aa358481e8093df5f51f1aaa69",
       "references": [
         {
           "line": 428,
