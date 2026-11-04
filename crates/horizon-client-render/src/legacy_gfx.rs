@@ -887,6 +887,9 @@ mod tests {
                 .all(|(&a, b)| a.abs_diff(b) <= 2),
             "celestial {pixel:?}"
         );
+        // The prior full world-fog case intentionally left celestial un-fogged;
+        // disable its alpha before asserting the later terrain's red color.
+        f.fog = Some(fog([16. / 255., 32. / 255., 48. / 255., 0.], 0.));
         let mut solid = SectionMesh::default();
         solid.solid.extend(
             [[-20., -20.], [20., -20.], [20., 20.], [-20., 20.]].map(|p| {
@@ -1816,15 +1819,15 @@ mod tests {
         near(&mut renderer, [32, 32], [0, 0, 127]);
         near(&mut renderer, [8, 56], [16, 96, 48]);
         let stable = renderer.read_rgba([0, 0, 64, 64]).unwrap();
-        source.skybox = true;
+        source.title = true;
         assert!(
             renderer
                 .render_game_frame(&source, visible, frame::Options::default())
                 .unwrap_err()
-                .contains("sky")
+                .contains("panorama")
         );
         assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
-        source.skybox = false;
+        source.title = false;
         source.entities = &dynamic[..3];
         assert!(
             renderer
