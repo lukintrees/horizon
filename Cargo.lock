@@ -1475,6 +1475,7 @@ dependencies = [
  "horizon-narrator",
  "horizon-optifine",
  "horizon-protocol",
+ "horizon-render-api",
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
@@ -1699,6 +1700,10 @@ dependencies = [
  "base64",
  "ring",
 ]
+
+[[package]]
+name = "horizon-render-api"
+version = "0.1.0"
 
 [[package]]
 name = "horizon-server"

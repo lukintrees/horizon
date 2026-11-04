@@ -1,0 +1,184 @@
+# Legacy desktop OpenGL bootstrap probe
+
+Stage 0 of the [X1650 / Win7 x86 plan](../../docs/design/opengl2-win7-x86.md).
+This is **not a game renderer**. It needs no Minecraft resources, Java, wgpu,
+Cargo registry downloads or real player data. It has Linux EGL/OSMesa and native
+Windows WGL paths. **Only Linux runtime is verified**; Win7 PE32 linking/loading,
+WGL execution, window presentation, input and ATI driver compatibility remain unverified.
+
+The independent Cargo workspace avoids building the game's dependency graph. Unsafe
+FFI now lives in the reusable `horizon-legacy-render` crate; the game's `forbid(unsafe_code)` policy is unchanged. Contexts
+are thread-confined and outlive the loaded GL functions and framebuffer storage.
+The tool is a diagnostic fixture using the new reusable renderer; it is not a game.
+
+## Run
+
+Install Rust >= 1.85 and a C linker. Install Mesa desktop EGL plus the software DRI
+driver, or Mesa OSMesa (for example Debian's `libegl1-mesa`, `libgl1-mesa-dri`,
+`libosmesa6`). Runtime libraries are loaded dynamically; development headers and
+Xvfb are not required for these offscreen tests.
+
+From the repository root:
+
+```sh
+cargo test --offline --manifest-path tools/legacy-gl-probe/Cargo.toml \
+  --target-dir target/legacy-gl-probe
+cargo clippy --offline --manifest-path tools/legacy-gl-probe/Cargo.toml \
+  --target-dir target/legacy-gl-probe --all-targets -- -D warnings
+python3 -m unittest discover -s tests -p test_legacy_gl_smoke.py
+
+# Builds the probe, executes all three cases, writes an ignored JSON report.
+python3 tools/legacy_gl_smoke.py                  # surfaceless desktop EGL
+python3 tools/legacy_gl_smoke.py --context osmesa # in-memory desktop OSMesa
+```
+
+For a custom OSMesa installation, set `HORIZON_OSMESA_LIBRARY` to its library path
+(default `libOSMesa.so.8`) and use `LD_LIBRARY_PATH` for its dependencies.
+`--binary PATH` skips the build; `--output PATH` selects a report location;
+`--timeout SECONDS` limits each runtime case. Nonzero exit means blocked or failed,
+not passed. Default report: `target/legacy-gl-probe/report.json`.
+
+The probe can also be invoked directly with `--context egl|osmesa|wgl`,
+`--shader-version 110|120`, `--require-llvmpipe`, and `--expect-gl 2.0|2.1`.
+The runner supplies the required Mesa environment; a direct invocation must set it.
+
+## What is actually tested
+
+Each case creates a desktop GL context, compiles and links shaders, uploads a VBO
+and u16 EBO, draws an indexed green triangle, and reads pixels back. Independent
+expected colors verify the clear color outside the triangle, the center pixel,
+and depth rejection of a farther red triangle. A deliberately invalid shader must
+be rejected; unexpected GL errors fail the test. Readback permits 2/255 rounding.
+
+Before loading GL2 symbols, the probe rejects GLES, desktop GL below 2.0 and
+GDI Generic with driver-specific diagnostics. The report records target OS and
+pointer width, whether a window buffer swap succeeded, vendor/renderer, GL/GLSL
+versions, depth bits, texture size,
+texture units, attribute/uniform/varying limits, context type and binary SHA-256.
+The runner rejects software renderers other than llvmpipe and validates every
+mandatory check. It runs:
+
+| Case | GL override | Shader source | Reported GLSL override |
+| --- | --- | --- | --- |
+| gl20 | 2.0 | `#version 110` | 120 |
+| gl21 | 2.1 | `#version 120` | 120 |
+| native control | removed | `#version 110` | removed |
+
+**Why 120 for the first row?** Mesa 23.1.4 rejects
+`MESA_GLSL_VERSION_OVERRIDE=110`: querying the language version returns null with
+an implementation error. We observed this failure, not a successful GLSL110
+runtime. A 120 ceiling still compiles explicit GLSL110 source and avoids that Mesa
+bug. This is not proof of behavior on an old ATI GLSL compiler. Overrides also do
+not remove all extensions or reproduce X1650 limits. The probe intentionally uses
+only GL2 entry points, but full-game integration and ATI-specific limits remain future work.
+Texture/atlas/transparency checks are now executed by the reusable backend suite
+described below.
+
+## Recorded development run (2026-11-04)
+
+- Debian 12 x86_64, Mesa 23.1.4, `llvmpipe (LLVM 17.0.6, 256 bits)`, **OSMesa**.
+- GL 2.0 + GLSL110 source: passed; GL 2.1 + GLSL120 source: passed;
+  native GL 4.5 compatibility control + GLSL110 source: passed.
+- 2 Rust unit tests and 5 Python runner tests passed; Clippy passed with warnings
+  denied. No window/GLX/WGL or game was started. No X1650 FPS measurement was made.
+- EGL runtime did **not** pass here: the available EGL bundle lacked system
+  dependencies. OSMesa success must not be presented as EGL success.
+
+Sandbox bootstrap provenance (development tooling only): rustc/Cargo/Clippy
+`1.92.0-nightly` from npm's `@rusttonpm/*-linux-x64@0.92.20250925`; rustfmt from
+`@rustbin/rustfmt-1.88.0-x86_64-unknown-linux-gnu@1.8.0` with matching rustc shared
+libraries. npm tarball integrity was checked against registry SHA-512 metadata;
+this is **not** independent upstream authenticity verification or a production
+Win7 toolchain choice. Mesa runtime libraries came from the PyPI
+`lavavu-osmesa==1.9.10` CPython311 manylinux_2_28 x86_64 wheel (Mesa/LLVM libraries
+only, no application source used). Binaries/downloads stayed under ignored
+`.local/legacy-gl/`; reports/builds under ignored `target/`. Nothing is bundled
+into the game or copied into the public tree.
+
+## Windows WGL bootstrap (added, not runtime-verified)
+
+The WGL context owns a `CS_OWNDC` window, a double-buffered RGBA/depth pixel format
+and a legacy `wglCreateContext` context. No EGL, GL3 core profile, modern context
+extensions, winit, Vulkan or DX12 are involved. The window is briefly shown before
+readback (hidden windows have no reliable pixel-ownership guarantee). Keep it
+unobscured on the real test machine. No long-lived event loop or input test exists.
+
+`wglGetProcAddress` null/1/2/3/-1 results are never called. The loader falls back to
+`GetProcAddress` on the already loaded `opengl32.dll`, as required for GL1 exports
+such as `glGetString`. Missing symbols are errors. Generic GDI pixel formats are
+rejected with an ICD installation diagnostic. Context, DC, window and class are
+released in reverse order on success or failure, on the creating thread.
+After readback, `SwapBuffers` must succeed before a passed JSON report is emitted;
+`buffer_swap` is false for offscreen Linux contexts and true for successful WGL.
+
+Compile-only ABI check (also runnable on Linux with the corresponding target std):
+
+```sh
+cargo check --offline --manifest-path tools/legacy-gl-probe/Cargo.toml \
+  --target i686-pc-windows-msvc
+cargo clippy --offline --manifest-path tools/legacy-gl-probe/Cargo.toml \
+  --target i686-pc-windows-msvc --all-targets -- -D warnings
+```
+
+On a modern Windows development machine with the MSVC x86 linker/SDK installed:
+
+```powershell
+cargo build --offline --manifest-path tools/legacy-gl-probe/Cargo.toml --target i686-pc-windows-msvc
+.\tools\legacy-gl-probe\target\i686-pc-windows-msvc\debug\horizon-legacy-gl-probe.exe --context wgl --shader-version 110
+```
+
+**That standard target is NOT a Win7-supported artifact.** It is only a way to
+check Win32 calling conventions, struct layout and linking. `cargo check` emits
+no EXE and cannot validate imports or CRT deployment. A production Win7 build
+still requires the dedicated `i686-win7-windows-msvc` std/toolchain strategy from
+the plan, PE/DLL audit, then execution on Win7 x86 with the installed vendor ICD.
+Don't run the Linux smoke runner on Windows: its Mesa overrides/llvmpipe requirement
+are intentionally Linux-only. Run the Rust probe directly and preserve its JSON
+and stderr. No `--require-llvmpipe` on a real X1650; use the default minimum GL2
+qualification rather than forcing an exact reported GL version.
+
+### Continuation checks (2026-11-04)
+
+- 8 Rust unit tests passed: prior readback/report tests plus driver qualification
+  and WGL sentinel/fallback outcomes. These tests are not a mocked WGL runtime.
+- Linux and `i686-pc-windows-msvc` all-target Clippy passed with `-D warnings`;
+  Windows x86 `cargo check` passed. Const guards check the raw Win32 ABI layouts.
+- All three OSMesa/llvmpipe modes passed again; 5 Python runner tests passed.
+- This run used stable Rust/Cargo/Clippy/rustfmt **1.88.0** components from npm's
+  `@rustbin/*-1.88.0-*` mirrors (with registry integrity verification), including
+  the ordinary i686 MSVC std. The dedicated Win7 target exists in that rustc's
+  target list but its std is not installed. This is not a production toolchain lock.
+- Added `.github/workflows/legacy-gl-probe.yml`: resource-free Linux OSMesa tests
+  and a modern-Windows x86 build job, explicitly **not Win7 certification**.
+  The workflow has not been executed on GitHub in this session.
+
+Next: complete Win7 toolchain/PE32 and real-machine checks independently; proceed
+with the backend-neutral frame/resource boundary on Linux. Coordinate terrain
+work with existing draft PR #1 rather than duplicating it.
+
+
+## Reusable backend milestone
+
+Native context code now lives in [`horizon-legacy-render`](../../crates/horizon-legacy-render/README.md).
+The probe borrows that context and tests the actual reusable renderer in addition
+to its independent triangle test. Its safe `RenderBackend` contract is defined in
+`horizon-render-api`; the game library has an initial CPU terrain adapter only.
+
+All three llvmpipe modes now require **14 backend outcomes per mode**, including
+real texture updates, cutout, transparency/depth write, lightmap, fog, clipped
+UI-like overlay, large-coordinate rendering, padded atlas/terrain conversion,
+context switching, resource validation and reclamation, and resident-section
+replacement/rollback/eviction through `WorldScene`. Reports include a
+`backend_checks` list; runner schema is 2 and old triangle-only reports fail.
+Run the 12 native/API unit tests independently (the probe itself has 2 tests):
+
+```sh
+cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
+```
+
+For this continuation, 14 Rust unit tests, host and x86 Windows Clippy, all runtime
+modes and the Python suite (641 tests, 26 skipped) passed. Full game type-checking
+remains blocked by missing registry packages (287/488 supplied by pinned GitHub
+mirrors; the opt-in vendor check stops at `cpal`);
+prepared game resources are absent. No complete legacy game or Win7-compatible
+EXE was built. See the renderer README for the explicit remaining integration work.

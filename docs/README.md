@@ -17,6 +17,7 @@ To play, use [the launcher](../launcher/README.md); the project site is [playhor
 - [For server owners](owners.md): every `server.properties` key next to its `server.toml` field.
 - [Agent control](agent-control.md): what AI agents can drive in the launcher and the game, and the design of the control socket, `horizon-ctl` and MCP.
 - [Graphics](graphics.md): the graphics settings screen (pages, search, descriptions), the graphics benchmark and what it measured.
+- [OpenGL 2 / Windows 7 x86 plan](design/opengl2-win7-x86.md) (Russian): staged legacy renderer work for Radeon X1650, platform blockers, memory budgets, Linux llvmpipe tests and hardware acceptance gates; not implemented support.
 - [Server against Pumpkin](performance/server-vs-pumpkin.md): Horizon's server and Pumpkin (Rust) under the same bots at 0, 20, 60 and 100 players: tick time, CPU, memory, chunks, join; where Horizon loses, and how to run it again.
 - [Benchmark](benchmark.md): Horizon against vanilla 26.3 and vanilla with performance mods, on the same machine, world, path and settings: what is measured, how it is kept fair, how to reproduce it.
 - [Extras](extras.md): optional zoom, minimap, FPS and keystroke overlays and auto-reconnect, all off by default.

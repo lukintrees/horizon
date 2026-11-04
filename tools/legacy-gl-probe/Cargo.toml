@@ -1,0 +1,17 @@
+[package]
+name = "horizon-legacy-gl-probe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+
+# Independent bootstrap tool: no wgpu, game resources or workspace dependency graph.
+[workspace]
+
+[dependencies]
+horizon-legacy-render = { path = "../../crates/horizon-legacy-render" }
+horizon-render-api = { path = "../../crates/horizon-render-api" }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

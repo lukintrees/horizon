@@ -1,0 +1,70 @@
+name: legacy GL probe
+# Resource-free bootstrap checks, separate from the game's large dependency graph.
+# The Windows job is an ABI/build check on modern Windows, NOT Win7 certification.
+on:
+  pull_request:
+    paths:
+      - 'crates/horizon-legacy-render/**'
+      - 'crates/horizon-render-api/**'
+      - 'tools/legacy-gl-probe/**'
+      - 'tools/legacy_gl_smoke.py'
+      - 'tests/test_legacy_gl_smoke.py'
+      - '.github/workflows/legacy-gl-probe.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/horizon-legacy-render/**'
+      - 'crates/horizon-render-api/**'
+      - 'tools/legacy-gl-probe/**'
+      - 'tools/legacy_gl_smoke.py'
+      - 'tests/test_legacy_gl_smoke.py'
+      - '.github/workflows/legacy-gl-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  llvmpipe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.88.0'
+          components: rustfmt, clippy
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - run: cargo fmt --manifest-path crates/horizon-legacy-render/Cargo.toml --all -- --check
+      - run: cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
+      - run: cargo clippy --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace --all-targets -- -D warnings
+      - run: cargo fmt --manifest-path tools/legacy-gl-probe/Cargo.toml -- --check
+      - run: cargo clippy --offline --manifest-path tools/legacy-gl-probe/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --offline --manifest-path tools/legacy-gl-probe/Cargo.toml
+      - run: python3 -m unittest discover -s tests -p test_legacy_gl_smoke.py
+      - run: python3 tools/legacy_gl_smoke.py --context osmesa
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-gl-llvmpipe-report
+          path: target/legacy-gl-probe/report.json
+          if-no-files-found: warn
+  windows-x86-build:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.88.0'
+          targets: i686-pc-windows-msvc
+          components: clippy
+      - run: cargo clippy --offline --manifest-path tools/legacy-gl-probe/Cargo.toml --target i686-pc-windows-msvc --all-targets -- -D warnings
+      - run: cargo build --offline --release --manifest-path tools/legacy-gl-probe/Cargo.toml --target i686-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-gl-probe-windows-x86-not-win7-certified
+          path: tools/legacy-gl-probe/target/i686-pc-windows-msvc/release/horizon-legacy-gl-probe.exe
+          if-no-files-found: error

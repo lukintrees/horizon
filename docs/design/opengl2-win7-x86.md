@@ -1,0 +1,377 @@
+# План: OpenGL 2.0/2.1, Radeon X1650, Windows 7 x86
+
+Статус: **план; реализованы Linux probe и WGL-прототип, не поддержка игры**. Дата: 2026-11-04.
+Основание: текущий checkout `8dbbde43501924d16497d251e6e9d08f812eafcd`.
+Цель — запуск самой игры на Windows 7 SP1 **32 bit** с AMD/ATI Radeon X1650
+через установленный драйвер производителя. Linux + Mesa llvmpipe — основной
+автоматизированный стенд разработки, но не доказательство совместимости с ATI.
+
+## 1. Решение и границы
+
+Не переписывать игровую логику, протокол, миры и генератор. Добавить отдельный
+legacy OpenGL renderer и Win7-x86 сборку, сохранив существующий wgpu renderer
+для современных компьютеров. Полная замена рендера во всех сборках не нужна.
+
+Базовый контракт: **desktop OpenGL 2.0 + GLSL 1.10**. OpenGL 2.1 + GLSL 1.20 —
+дополнительный проверяемый режим, не обязательный минимум. Это не OpenGL ES 2.0.
+Версия API и расширения конкретного Win7-драйвера X1650 должны быть измерены;
+название видеокарты само по себе не гарантирует конкретный набор возможностей.
+
+Первый playable milestone: меню, загрузка мира, ходьба, блоки, освещение,
+прозрачность, базовые сущности, рука/предмет, HUD, инвентарь, сохранение и выход.
+Демонстрация нескольких текстурированных чанков — только промежуточный этап.
+
+Не включать в первую версию: HDR, PBR, shader packs, compute, GPU skinning,
+frame generation, дальние LOD, отражения, splitscreen, GPUI launcher и native
+code mods. Отключённые эффекты не должны менять симуляцию или содержимое мира.
+Упрощения изображения документировать; совместимость не означает полную
+визуальную идентичность современному renderer.
+
+## 2. Что обнаружено в репозитории
+
+| Участок | Текущее состояние / необходимое изменение |
+| --- | --- |
+| `crates/horizon-client-render/src/gfx.rs` и `gfx/` | Большой конкретный `Renderer`, wgpu device/queue/surface, uploads, passes, GPU culling. Выделить backend-neutral фасад и данные кадра. |
+| `crates/horizon-client-render/src/terrain.wgsl`, `entity.wgsl`, другие WGSL | Storage buffers, texture arrays, современная модель шейдеров. Написать небольшие собственные GLSL 1.10 программы, не рассчитывать на автоматический перевод WGSL. |
+| `mesher.rs`, `mesher/packed.rs`, `gfx/upload.rs` | Сохранить правила meshing и CPU-освещения; добавить преобразование packed quads в legacy вершины/индексы. |
+| `hud.rs`, `screen_draw.rs`, `font.rs`, `sprites.rs`, `mipmap.rs` | Переиспользовать CPU-геометрию и ресурсы; заменить GPU upload/draw, проверить atlas addressing. |
+| `crates/horizon-client/src/game.rs`, `game/` | Создание renderer, его методы/поля и построение кадра связаны с текущим API. Найти и убрать прямые wgpu-зависимости из общего пути. |
+| `crates/horizon-client-render/src/graphics.rs`, `graphics_ui.rs` | Явный выбор legacy backend, capability gating и безопасный preset. Существующий `OpenGl` не переименовывать молча в GL2. |
+| `crates/horizon-client{,-render,-lib}/Cargo.toml`, `horizon-hdr` | Аудит графа зависимостей и feature unification: legacy-only executable не должен требовать wgpu/Vulkan/DX12. |
+| `crates/horizon-client-input`, audio, narrator, allocator, networking | Независимые от GL риски Win7 и 32-bit; проверять каждый включённый runtime-компонент. |
+| `launcher/Cargo.toml`, `.github/workflows/game-build.yml`, packaging | GPUI launcher — отдельная задача. Нужен отдельный x86 portable artifact и способ прямого запуска. |
+
+У render crate стоит `#![forbid(unsafe_code)]`: не снимать запрет ради GL.
+FFI, загрузку GL-функций и владение контекстом изолировать в небольшом новом
+низкоуровневом crate с безопасным публичным API и документированными invariants.
+
+На момент аудита открыт [draft PR #1](https://github.com/lukintrees/horizon/pull/1)
+с CPU atlas/terrain prototypes и GLSL 1.10. Перед реализацией согласовать работу
+с ним: переиспользовать проверенные части, не создавать параллельный terrain
+backend. По описанию PR контекст, playable integration и runtime-тесты ещё отсутствуют.
+Этот документ — план по текущей базе, не утверждение о качестве кода того PR.
+
+## 3. Два независимых блокера: ОС и GPU
+
+### 3.1. Windows 7 x86 — проверить до большой переделки рендера
+
+1. Зафиксировать edition/MSRV: workspace использует Rust edition 2024, ключевые
+   client crates требуют Rust 1.90. Простое снижение Rust до старого Win7-совместимого
+   toolchain не является решением: сломаются язык и зависимости.
+2. Проверить доступность/статус `i686-win7-windows-msvc` у выбранного toolchain
+   (`rustc --print target-list`), наличие std artifacts. Если это tier-3 путь без
+   готового std — воспроизводимо собрать std подходящим nightly + rust-src и
+   `-Z build-std`; зафиксировать версии. Не обещать, что `rustup target add` сработает.
+   Обычный `i686-pc-windows-msvc` не считать гарантией Win7.
+3. Собрать маленький PE32 probe: старт, heap, threads, файл, таймер, окно, WGL,
+   shader compilation, swap buffers. Зафиксировать SDK, linker и CRT deployment.
+4. На Windows 7 SP1 x86 проверить запуск с нуля и imports **всех** DLL/EXE:
+   отсутствие обязательных Win8/10-only API, x64 DLL, неподходящего CRT и ISA.
+   Проверять и динамически загружаемые API, не только PE import table.
+5. Последовательно добавить окно/input, allocator, файлы, сеть/TLS, ресурсы,
+   звук, narrator, controllers. Спорные подсистемы сначала compile-time исключить,
+   затем вернуть по одной. `--no-default-features` сегодня отключает audio/controllers,
+   но само по себе не создаёт legacy-граф зависимостей.
+6. Проверить CPUID целевого процессора: X1650 не определяет CPU/ISA. Не использовать
+   `target-cpu=native` для распространяемой сборки; проверить нативные библиотеки
+   и runtime dispatch (в том числе allocator) на старом процессоре.
+
+**Gate A:** PE32 probe реально стартует на Win7 x86, показывает GL-треугольник,
+а минимальная сборка общих систем загружает ресурсы. Linux cross-build и Wine
+полезны, но не закрывают этот gate. Без Win7 стенда статус остаётся «не проверено».
+
+### 3.2. Реальные возможности драйвера
+
+Probe должен записывать vendor/renderer, GL/GLSL version, расширения, лимиты
+texture size, texture units, vertex attributes, uniforms/varyings, shader logs,
+pixel format/depth bits, способ загрузки функций, версию/разрядность драйвера.
+Начинать с 2D RGBA8 POT текстур и обычного depth buffer окна.
+Не предполагать объём VRAM по названию X1650: у разных плат он различается.
+`Microsoft GDI Generic` означает отсутствие требуемого аппаратного ICD, а не
+поддержку GL2. Выдавать понятную диагностическую ошибку вместо падения.
+
+## 4. Контракт legacy renderer
+
+| Современный механизм | Обязательная legacy замена |
+| --- | --- |
+| WGSL / bind groups / UBO / SSBO | GLSL 1.10, небольшие обычные uniforms и vertex attributes |
+| Texture arrays | Несколько страниц 2D atlas, draw batching по странице |
+| Vertex pulling / packed GPU quads | CPU unpack при изменении mesh → VBO + EBO, `glDrawElements` |
+| Indirect / multi-draw / instancing | CPU draw list и обычные draws; без обязательных instancing extensions |
+| Compute culling / occlusion | CPU frustum + существующая CPU visibility logic; запросы occlusion необязательны |
+| GPU pose / sprite animation / lightmap | CPU pose, CPU обновления небольших texture regions / lightmap |
+| HDR / float targets / MRT / post chain | SDR RGBA8, обычный framebuffer окна, простой fog/blend |
+| Современная синхронизация / timers | Ограниченные upload queues и CPU timings; sync/timer extensions не обязательны |
+
+Дополнительные правила реализации:
+
+- GL calls и создание/удаление ресурсов — только на потоке текущего контекста.
+  Workers готовят CPU данные; bounded queue, лимит upload bytes/frame.
+- VBO/EBO с явными attribute pointers; VAO, sampler objects и FBO не требуются.
+  Offscreen FBO разрешить только отдельным проверенным extension path;
+  основной запуск обязан работать без него. Screenshots — `glReadPixels` из окна.
+- WGL: создать обычный legacy context через Win7 APIs, не требовать GL3 core
+  profile или `WGL_ARB_create_context`. Загрузить функции через `wglGetProcAddress`
+  с fallback к `opengl32.dll`, отфильтровать недопустимые sentinel pointers.
+  На Linux — GLX либо desktop EGL, не GLES context. Библиотеку окна/контекста
+  выбрать после probe; проверить winit/glutin Win7 dependency graph, не делать
+  массовый downgrade winit без доказанной необходимости.
+- GLSL 1.10: `attribute`, `varying`, `texture2D`, `gl_FragColor`; без uint/bitwise,
+  `layout`, `texelFetch`, `gl_VertexID` и sampler-array dynamic indexing.
+  Атрибуты назначать перед link, диагностировать compile/link failures.
+- Камера/mesh: world coordinates хранить с текущей точностью CPU; в GL передавать
+  camera-relative float coordinates. Отдельно исправить projection/depth convention:
+  desktop GL clip-space Z = -w..w, нельзя слепо копировать wgpu projection 0..w.
+- Atlas: лимит страницы из capabilities; POT sizing, padding/extruded borders,
+  раздельные mip chains для sprites. Не переносить UV texture-array слоя напрямую.
+  Проверить repeating UV, animated sprites, rotated faces и pack reload.
+  Не вводить обязательную NPOT/mipmap комбинацию без capability-теста.
+- Непрозрачные → alpha cutout (`discard`) → отсортированные translucent draws;
+  для прозрачности depth test включён, depth write выключен. Зафиксировать
+  winding, culling, blend factors и порядок hand/HUD. Не прятать всё стекло/воду.
+- Фичи проверяются по реальным capabilities и контракту backend. Ни одна
+  неподдерживаемая настройка не должна создавать modern resources «на всякий случай».
+  UI-ошибки и названия настроек — через существующие translation keys.
+
+## 5. Этапы и критерии готовности
+
+Каждый пункт разбивать на небольшие PR, современный backend сохранять рабочим.
+Названия новых crates, features и CLI ниже — проектные, пока их нет в коде.
+
+| Этап | Работы | Проверяемый результат |
+| --- | --- | --- |
+| 0. Probes / platform audit | Win7 PE32/WGL probe; Linux llvmpipe setup; dependency tree и limits report | Gate A либо явный список блокеров; Linux triangle compile/link/draw/readback |
+| 1. Граница backend | Выделить `RenderFrame`, handles/caps и фасад render/upload/resize/readback; закрыть прямой доступ к device/queue | Современный renderer проходит прежние тесты; общий game path не зависит от GPU API |
+| 2. Legacy-only build | Небольшой GL FFI crate; native context; compile-time features, условные HDR/shaders dependencies | Legacy executable не линкуется с wgpu/Vulkan/DX12; окно, resize, clear и HUD quad |
+| 3. Ресурсы и UI | Atlas pages, fonts, clipping/scissor, menus, inventory icons, resource reload | Title/options/loading/inventory читаемы, ввод работает, текстуры не протекают между sprites |
+| 4. Terrain | Packed mesh conversion, VBO/EBO lifetime, uploads/removal, light/AO/tints/fog, cutout/water/glass | Контрольная сцена: камень, трава, листва, вода, стекло, факелы; day/night и block edits видимы |
+| 5. Playable path | Entities/items, CPU poses, first-person hand, block entities, particles, sky/weather/overlays | Создать/открыть мир, ходить, ломать/ставить, взять предмет, сохранить, перезапустить, подключиться к серверу |
+| 6. x86 budgets | Ограничить caches/workers/queues; eviction; fallback settings, diagnostics | Длительная сессия и переходы миров не исчерпывают адресное пространство; нет роста handles/GL objects |
+| 7. Доставка | Win7 toolchain lock, PE/DLL audit, portable archive, инструкции ресурсов, CI | Чистая Win7 SP1 x86 + X1650 запускает artifact без SDK/Rust/современного launcher |
+
+Ранний Win7 probe нужен **до** этапа 1; полный x86 build поддерживать по мере
+каждого этапа, не переносить платформенные проблемы на конец проекта.
+
+## 6. Память и стартовые настройки
+
+32-bit Windows обычно даёт процессу около 2 GiB user virtual address space.
+Не полагаться на `/3GB` или Large Address Aware; fragmentation, mappings,
+CRT, драйвер и integrated server тоже расходуют пространство. RSS недостаточно:
+измерять private/commit и virtual address usage, крупнейшую доступную область.
+
+Начальные инженерные бюджеты (не измеренные свойства проекта):
+
+- Нормальная сессия: целиться в private commit ≤ 1.2 GiB, отдельно контролировать
+  VA и transient peaks; оставлять запас до практического предела процесса.
+- GL textures + buffers: стартовый soft cap 64 MiB, менять только после измерений
+  на конкретной плате. Учёт allocations приблизителен и не равен VRAM драйвера.
+- Render distance 4 chunks, simulation distance 4 как стартовый preset;
+  GPU LOD/shader packs/HDR выключены, standard-resolution textures, без MSAA,
+  небольшое число workers. Проверить минимальный полный atlas и его размер:
+  если не укладывается, использовать страницы/lazy residency, не удалять ресурсы молча.
+- Bounded mesh/result queues, eviction далёких CPU/GPU meshes, никаких постоянных
+  двойных полноразмерных atlas copies. Учесть expanded vertices относительно packed quads.
+- Сначала multiplayer client (меньше нагрузки), затем single-player с integrated
+  server. Не объявлять цель выполненной, если работает только подключение к серверу.
+
+Для реальной X1650 предложенный performance target — 25–30 FPS при 800×600,
+4 chunks в зафиксированной сцене без shader packs. Это ориентир, **не гарантия**:
+CPU, RAM и VRAM пока неизвестны. Собирать p50/p95/p99 frame time, stutters,
+upload/draw counts, память и время загрузки. FPS llvmpipe не предсказывает FPS ATI.
+
+## 7. Как тестировать здесь: Linux + llvmpipe
+
+В sandbox Debian 12 при первоначальном аудите не были найдены `rustc`, `cargo`, `glxinfo`,
+`Xvfb` и GL/EGL библиотеки в `ldconfig`. Игровые prepared resources не обнаружены.
+Это исходное состояние, **не успешный тест**; результат bootstrap ниже. Доступ к сети ограничен, поэтому
+доставку Rust/Mesa/Xvfb через разрешённый канал или подготовленный образ включить
+в этап 0; не обещать доступность apt/rustup downloads в этом окружении.
+
+После подготовки образа нужны Mesa software DRI/GLX, Xvfb, mesa-utils, Rust,
+C/C++ toolchain и platform headers. Сначала записать `glxinfo -B`, versions и
+выполнить настоящий render/readback probe. Mesa renderer обязан содержать
+`llvmpipe`: одного `LIBGL_ALWAYS_SOFTWARE=1` недостаточно.
+
+Матрица запусков через Xvfb, например для оконного GLX probe (ещё не реализован):
+
+```sh
+LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+  MESA_GL_VERSION_OVERRIDE=2.0 MESA_GLSL_VERSION_OVERRIDE=120 \
+  xvfb-run -a -s '-screen 0 800x600x24 +extension GLX' <legacy-probe>
+
+LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+  MESA_GL_VERSION_OVERRIDE=2.1 MESA_GLSL_VERSION_OVERRIDE=120 \
+  xvfb-run -a -s '-screen 0 800x600x24 +extension GLX' <legacy-probe>
+```
+
+Обязательны GL2.0/110, GL2.1/120 и llvmpipe без override как контроль среды.
+Overrides меняют объявляемые версии/проверки Mesa, **не эмулируют X1650**,
+не убирают все современные расширения, не воспроизводят compiler/driver bugs.
+Нужен strict capability policy: запретить backend использовать функции вне
+baseline, отдельно тестировать отсутствие optional extensions и заниженные
+лимиты. Не считать «работает на Mesa 4.x» тестом GL2 совместимости.
+
+Каждый запуск игры — только в свежих `mktemp -d` каталогах:
+`HORIZON_HOME`, `HORIZON_LAUNCHER_HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`;
+`HORIZON_LAUNCHER_NO_SELF_UPDATE=1`, `HORIZON_NO_AUDIO=1`.
+Если потребуется launcher, также изолировать `HORIZON_LAUNCHER_TRASH`,
+`HORIZON_LAUNCHER_CLIPBOARD`, `HORIZON_LAUNCHER_DESKTOP` внутри scratch home.
+Звук потом проверять отдельным тестом. Данные игрока не использовать.
+
+### Набор проверок
+
+1. CPU unit tests: quad unpack, индексы/winding, camera-relative transforms,
+   atlas pages/UV/padding, mip borders, сортировка и eviction при budget pressure.
+2. GL integration tests: **выполнить** GLSL compile/link, upload, draw и readback;
+   несколько страниц atlas, alpha cutout/blend, depth, clipping/scissor, lightmap,
+   resize/minimize/restore и отсутствие необработанных GL errors.
+3. Deterministic fixture scenes с собственными тестовыми текстурами: все базовые
+   пути без Mojang resources. Сравнение изображений с tolerances/масками,
+   не только exact hashes и не только «процесс завершился с кодом 0».
+4. Game smoke после законной подготовки ресурсов: menus → world → edits →
+   entities/items → inventory → save/reload → server. Использовать существующий
+   `horizon-ctl`/control API, расширяя его только при необходимости.
+5. Stress: быстрая ходьба/телепорты, многократный reload pack/мира, смена размера,
+   нехватка texture budget, 30–60 минут сессии; память/handles стабилизируются.
+6. Regression: прежние unit/parity harnesses и современный renderer. Графический
+   порт не является поводом менять gameplay parity или удалять harnesses.
+
+В репозиторий не добавлять Mojang assets, jars, prepared resources и большие
+логи/скриншоты. CI с synthetic fixtures не зависит от лицензированных ресурсов;
+полный game smoke — отдельный стенд. Отчёт содержит commit, toolchain, Mesa,
+GL/GLSL strings, режим, результаты/readbacks и причины skips. Отсутствующие
+зависимости/ресурсы — `blocked`/`skipped`, никогда не `passed`.
+
+## 8. Приёмка и риски
+
+Три разных статуса, которые нельзя смешивать:
+
+- **Linux GL2 verified**: настоящий llvmpipe runtime, оба baseline режима,
+  synthetic suite и доступный game smoke; modern backend без регрессий.
+- **Win7 x86 verified**: PE32, loader/runtime/input/files/audio/TLS, ресурсы и
+  gameplay проверены на самой ОС. VM допустима для ОС, но не для оценки X1650.
+- **X1650 verified**: физическая плата, Win7 x86 ICD производителя, полный smoke,
+  длительная сессия, память и performance report на записанных настройках.
+
+Главные риски: Win7 API в транзитивных dependencies; Rust/std toolchain;
+старый ATI GLSL compiler; VA/texture budgets; слишком много draws после
+разворачивания quads; ресурсы/подготовка через современный Java toolchain.
+Ресурсы разрешается подготовить на современном компьютере из своей копии игры
+и перенести локально: не требовать JDK 25 на целевой Win7 x86 и не распространять
+Mojang данные в portable archive. Проверить запуск без Java после подготовки.
+Не обходить TLS/certificate ошибки отключением проверки сертификатов.
+
+**Начать с этапа 0:** получить Linux GL2 runtime baseline и Win7 PE32 probe.
+Следующий шаг — backend boundary и минимальный legacy-only build. До этих
+проверок оценка сроков полного порта и обещание запуска на X1650 ненадёжны.
+
+
+## 9. Начало реализации: проверено здесь
+
+Добавлен независимый Rust tool [`tools/legacy-gl-probe`](../../tools/legacy-gl-probe/README.md)
+и runner `tools/legacy_gl_smoke.py`. Без wgpu/игровых ресурсов создаётся desktop
+GL-контекст, реально выполняются GLSL compile/link, VBO/EBO draw, clear/triangle/depth
+readback, проверяется отказ для ошибочного GLSL и отсутствие GL errors.
+
+На Linux здесь прошли **OSMesa + llvmpipe**, Mesa 23.1.4 / LLVM 17.0.6:
+GL2.0 с source `#version 110`, GL2.1 с source `#version 120`, контрольный GL4.5
+с source `#version 110`. JSON-отчёт: `target/legacy-gl-probe/report.json` (ignored).
+2 Rust unit tests, 5 Python tests и Clippy с `-D warnings` прошли.
+
+Обнаруженное ограничение Mesa: reported GLSL override `110` приводит к null из
+`glGetString(GL_SHADING_LANGUAGE_VERSION)`. Поэтому runner использует ceiling `120`
+в обоих baseline режимах; GL2.0 shader source остаётся строго GLSL110.
+Это не проверка reported GLSL1.10 на настоящем старом драйвере.
+
+EGL-код добавлен, но его runtime в этом окружении пока не прошёл из-за недостающих
+библиотек. GLX, WGL/PE32/Win7 runtime и игра не проверены. Gate A остаётся
+открытым. Современный renderer и terrain-прототип PR #1 не менялись.
+
+
+### Продолжение: WGL bootstrap
+
+В Rust probe добавлен Windows-путь: Win32 окно с собственным DC, выбор/проверка
+pixel format, legacy `wglCreateContext`, загрузка GL2-функций с фильтрацией WGL
+sentinels и fallback в `opengl32.dll`, swap после readback, thread-confined cleanup.
+Общие проверки теперь диагностируют GDI Generic / GL<2 / GLES до загрузки
+современных entry points. Отчёт содержит target OS, pointer bits и факт swap.
+
+На Linux stable Rust 1.88.0 прошли 8 Rust unit tests, Clippy для host и
+`i686-pc-windows-msvc`, а также Windows x86 `cargo check`. Повторно прошли все
+три OSMesa/llvmpipe режима и 5 Python tests. Это **compile-only проверка Windows
+ABI**, не Win7-supported build и не запуск WGL. Обычный MSVC target не подменяет
+`i686-win7-windows-msvc`; PE32, imports/CRT и реальная плата всё ещё не проверены.
+Добавлен отдельный CI workflow для Linux smoke и modern-Windows x86 build;
+на GitHub в этой сессии он не запускался.
+
+
+## 10. Готовое ядро рендера, но ещё не готовая игра
+
+Добавлены `horizon-render-api` (CPU-контракт) и `horizon-legacy-render` (нативный
+GL2 backend). Native context код перенесён из probe в библиотеку, вызовы поточно
+изолированы и каждый раз привязывают нужный контекст. API покрывает RGBA8 textures,
+обновления, VBO/EBO meshes, ordered draws, depth/cutout/blend/overlay, scissor,
+lightmap, простой fog, readback и удаление ресурсов. Есть byte/object budgets,
+проверки индексов/областей/handle IDs, f64 camera-relative subtraction и GL projection.
+
+В CPU API переиспользована atlas packing/build-page реализация из draft PR #1;
+конвертер terrain сохраняет страницы/проходы/порядок и границы u16, нормализует
+материальные alpha flags. В `horizon-client-render::render_bridge` добавлен адаптер
+настоящих `TerrainVertex` / `SectionMesh`, но создание renderer и игровой цикл
+по-прежнему используют wgpu. API/GL библиотеки имеют отдельный dependency-free
+bootstrap workspace; общий контракт подключён path dependency к game render crate.
+
+Проверено: 12 native/API + 2 probe Rust unit tests, Clippy host и Windows x86,
+13 реальных backend проверок по пикселям в каждом из 3 llvmpipe режимов.
+Python regression: 633 tests, 26 skipped. Runner schema 2 требует backend checks:
+старый отчёт «нарисован треугольник» больше не проходит как проверка backend.
+
+**Блокер полной сборки:** попытка `cargo check --offline -p horizon-client-render`
+остановилась на отсутствии `log` в registry cache. crates.io/static.crates.io
+не разрешены сетевой политикой sandbox; ресурсов игры также нет. Root metadata
+проверена, но adapter test и сборка игры не выполнены. Нужны подготовленный Cargo
+cache/vendor и игровой prepared root, доступные здесь законным способом.
+
+**Не готово:** переключение `Game`/`gfx::Renderer` на backend boundary, UI special
+passes, entities/hand/CPU poses, анимации/pack reload, upload scheduler, resize/input,
+mips/repeated UVs, полноценный single-player/multiplayer smoke и Win7 PE32/CRT/ICD.
+Это не подмена игры синтетической сценой. Все ограничения и команды:
+[`crates/horizon-legacy-render/README.md`](../../crates/horizon-legacy-render/README.md).
+
+
+## 11. Продолжение: резидентные секции и GitHub vendor mirrors
+
+Добавлен `horizon_render_api::scene::WorldScene`: загрузка atlas pages/16×16
+lightmap, ограниченное число резидентных секций, поэтапная замена GPU meshes,
+выгрузка и удаление ресурсов. Ошибка в середине replacement сохраняет прежнюю
+секцию; временные меши удаляются перед следующей операцией. Неудавшееся удаление
+не теряет ID: оно повторяется позднее. Видимость и порядок проходов задаёт caller,
+включая предварительную сортировку translucent quads. Это ещё не async scheduler.
+`render_bridge::upload_section` соединяет этот слой с настоящим `SectionMesh`,
+проверяя общий vertex ceiling двух проходов до изменения GPU ресурсов.
+
+Новый реальный GL test проверяет replacement rollback при превышении mesh budget,
+обновление света, сохранение старого кадра при missing section, unload, Drop и
+частично неудавшийся constructor. Во всех трёх OSMesa/llvmpipe режимах теперь
+**14 backend checks**. Проверены host/Windows-x86 Clippy; Python suite — 641 tests,
+26 skipped. Это не проверка игрового цикла или запуска Win7.
+
+`tools/cargo_github_vendor.py` использует фиксированные Git commits vendor деревьев
+ClickHouse, Firefox, ChromiumOS и rust-code-analysis. Проверяет name/version,
+поле package checksum из `.cargo-checksum.json` против root `Cargo.lock`, а затем
+SHA256 каждого перечисленного файла; копирует только эти файлы. Сохраняет source
+provenance и отчёт под ignored `.local/`. Нормальный Cargo config и lock не меняет.
+Это проверка согласованности с pinned vendor manifests, **не независимая проверка
+SHA256 исходного сжатого `.crate` архива**. Chromium без package checksum и пакеты
+с отсутствующими Windows import libraries не принимаются как полные копии.
+
+Результат здесь: **287 из 488** registry packages проверены и установлены,
+**201 не найден**. Неполный набор возвращает exit 2, а не успех. Повторный
+`cargo --config .local/cargo-mirror/offline.toml check --offline --locked -p
+horizon-client-render` прошёл прежний блокер `log`, но остановился на `cpal`.
+У root render crate MSRV 1.90, поэтому установленный для bootstrap Rust 1.88
+тоже не следует выдавать за готовый игровой toolchain. Полная сборка и тест
+настоящего game adapter всё ещё не выполнены; prepared resources отсутствуют.
+
+Прогресс не меняет статус приёмки: wgpu-owned `gfx::Renderer` остаётся основным,
+legacy gameplay executable, меню/HUD/entities/hand и Win7 PE32/CRT/ICD не готовы.

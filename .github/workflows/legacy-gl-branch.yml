@@ -1,0 +1,99 @@
+name: Legacy GL branch validation
+# This session's branch only. No shared workflow or other branch is changed.
+on:
+  push:
+    branches: ['arena/a7e96628-horizon']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: legacy-gl-branch-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  terrain-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      HORIZON_TELEMETRY_URL: 'off'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native build headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: legacy-gl-branch
+      - name: Compile and test the actual game bridge
+        shell: bash
+        run: |
+          mkdir -p target/legacy-branch
+          set +e
+          cargo test --locked -p horizon-client-render --lib render_bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
+          status=$?
+          cat target/legacy-branch/cargo.stderr
+          # Standard check annotations make compiler failures readable through the
+          # checks API, even when downloading full logs/artifacts is unavailable.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          def escape(value):
+              return str(value).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          count = 0
+          for line in Path('target/legacy-branch/compiler.jsonl').read_text().splitlines():
+              try:
+                  record = json.loads(line)
+              except ValueError:
+                  print(line)
+                  continue
+              if record.get('reason') != 'compiler-message':
+                  continue
+              msg = record['message']
+              if msg.get('level') != 'error' or count >= 20:
+                  continue
+              spans = msg.get('spans', [])
+              span = next((s for s in spans if s.get('is_primary')), {})
+              location = ''
+              if span:
+                  location = 'file=' + escape(span['file_name']) + ',line=' + str(span['line_start']) + ','
+              print('::error ' + location + 'title=Game bridge compile::' + escape((msg.get('rendered') or msg['message'])[:5000]))
+              count += 1
+          PY
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-branch-game-check
+          path: target/legacy-branch/
+  gl2-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.88.0'
+          components: rustfmt, clippy
+      - name: Install OSMesa
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - name: Check independent renderer and run real GL2 readbacks
+        env:
+          HORIZON_OSMESA_LIBRARY: libOSMesa.so.8
+        run: |
+          cargo fmt --manifest-path crates/horizon-legacy-render/Cargo.toml --all -- --check
+          cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
+          cargo clippy --offline --manifest-path tools/legacy-gl-probe/Cargo.toml --all-targets -- -D warnings
+          python3 tools/legacy_gl_smoke.py --context osmesa
+          python3 -m unittest discover -s tests -p 'test_legacy_gl_smoke.py'
+          python3 -m unittest discover -s tests -p 'test_cargo_github_vendor.py'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legacy-branch-gl2-report
+          path: target/legacy-gl-probe/report.json
