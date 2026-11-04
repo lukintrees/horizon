@@ -322,11 +322,7 @@ fn parse_name_and_size(part: &str) -> (String, u32, bool) {
         return (part.to_string(), 1, false);
     };
     let name = part[..open].trim().to_string();
-    let inner = part[open + 1..]
-        .split(']')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let inner = part[open + 1..].split(']').next().unwrap_or("").trim();
     match inner.parse::<u32>() {
         Ok(size) => (name, size.max(1), false),
         Err(_) => (name, 1, true),

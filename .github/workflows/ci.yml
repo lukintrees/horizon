@@ -187,10 +187,11 @@ jobs:
           test_status=$?
           set -e
           # libtest's output is not JSON: only a failure's tail is worth an annotation, and the
-          # reporter attaches it when the stream carried no diagnostics.
+          # reporter attaches it when the stream carried no diagnostics. Only a failure's though
+          # -- run unconditionally it painted a green step red with 120 lines of passing tests.
           tail -n 200 test.log
-          python tools/gl21_annotate_rustc.py test.log
           if [ "$test_status" -ne 0 ]; then
+            python tools/gl21_annotate_rustc.py test.log
             echo "::error title=tests::cargo test exited $test_status"
           fi
           [ "$test_status" -eq 0 ]
