@@ -59,7 +59,9 @@ def image(bits=32, normal=True, delay=True, legacy_delay=False):
         string(0x400, "ucrtbase.dll")
         string(0x482, "malloc")
         thunks(0x440, 0x1280 + adjustment, 23)
-        thunks(0x4C0, 0x1280 + adjustment, 23)
+        # Unlike the INT, an unbound delay IAT holds executable helper addresses.
+        struct.pack_into("<III" if bits == 32 else "<QQQ", data, 0x4C0,
+                         base + 0x1500, base + 0x1510, 0)
     return data
 
 
@@ -82,7 +84,7 @@ class InventoryTests(unittest.TestCase):
     def test_legacy_delay_va_form(self):
         self.assertEqual(audit_pe(image(legacy_delay=True))["imports"], audit_pe(image())["imports"])
 
-    def test_unbound_iat_fallback_and_header_mapped_imports(self):
+    def test_normal_iat_fallback_header_names_and_missing_delay_int(self):
         data = image(delay=False)
         struct.pack_into("<I", data, 0x200, 0)  # no OriginalFirstThunk
         data[0x50:0x5B] = b"USER32.dll\0"
@@ -90,8 +92,9 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(audit_pe(data)["imports"][0],
                          {"kind": "normal", "dll": "USER32.dll", "symbols": ["GetTickCount", "#17"]})
         data = image(normal=False)
-        struct.pack_into("<I", data, 0x250, 0)  # delay INT absent; unbound IAT usable
-        self.assertEqual(audit_pe(data)["imports"][0]["symbols"], ["malloc", "#23"])
+        struct.pack_into("<I", data, 0x250, 0)  # delay IAT is NOT a name-table fallback
+        with self.assertRaisesRegex(AuditError, "delay import name table"):
+            audit_pe(data)
 
     def test_absent_directories_and_empty_inventory(self):
         data = image(normal=False, delay=False)
@@ -168,11 +171,12 @@ class MalformedTests(unittest.TestCase):
                     audit_pe(data)
 
     def test_bound_iat_without_original_names_is_not_silently_decoded(self):
-        for table_offset, stamp_offset in ((0x200, 0x204), (0x250, 0x25C)):
+        for table_offset, stamp_offset, error in ((0x200, 0x204, "bound IAT"),
+                                                  (0x250, 0x25C, "delay import name table")):
             data = image()
             struct.pack_into("<I", data, table_offset, 0)
             struct.pack_into("<I", data, stamp_offset, 1)
-            with self.assertRaisesRegex(AuditError, "bound IAT"):
+            with self.assertRaisesRegex(AuditError, error):
                 audit_pe(data)
 
     def test_unterminated_string_thunks_and_delay_table(self):

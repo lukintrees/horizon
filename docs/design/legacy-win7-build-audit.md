@@ -5,9 +5,11 @@
 - Task-ID: **O01a**; Variant: **A — independent Python-stdlib PE reader**.
 - Integration draft: [#4](https://github.com/lukintrees/horizon/pull/4);
   task draft: [#7](https://github.com/lukintrees/horizon/pull/7).
-- Integration base: `arena/a7e96628-horizon`;
-  fetched baseline **`453966cb6253adf848deb58165eba354693e7acc`**.
-- Depends-on: existing native probe; no new facade/contract dependency.
+- Integration base: `arena/a7e96628-horizon`; refreshed, fetched and merged baseline
+  **`74fd86ba4d7d884ff7a463c646591cbe7c6897e7`** (C01/CI01).
+  Initial scope draft used `453966cb6253adf848deb58165eba354693e7acc`.
+- Contract-Version: **1**; no common contract changes/consumer dependency.
+- Depends-on: existing native probe at that baseline; no new facade/contract dependency.
 - Owner/reviewer: lukintrees's scoped Arena.ai agent / coordinating Arena.ai integrator.
 - Scope: this document, `tools/legacy_win7_audit.py`, `tests/test_legacy_win7_audit.py`.
   **No** manifests/lockfiles, contracts, central Game/GL wiring, workflows or policy edits.
@@ -86,7 +88,7 @@ cargo metadata --no-deps --offline --locked --format-version=1
 | target list / cfg / spec | Both triples listed; Win7 cfg: `target_vendor="win7"`, width 32, `sse`/`sse2`/`fxsr`/`x87`; tier 3, CPU pentium4 |
 | Win7 probe check, no target std | **Exit 101, E0463: can't find crate for `std`**. No PE emitted |
 | Host probe unit tests | **2 passed**, no WGL/GL runtime |
-| Host native/API workspace tests | **38 passed** (11 + 27), no Windows runtime |
+| Host native/API workspace tests | **41 passed** (11 + 30), no Windows runtime |
 | Game manifest inventory | MSRV 1.90 confirmed; mandatory wgpu dependencies still include Windows DX12 and non-macOS GLES |
 
 For an additional build-std attempt, the matching Rust **library** tree was extracted from
@@ -176,7 +178,8 @@ Game artifact, record the resolved `cargo tree --locked --target ... -e features
 ## 4. Isolated static helper and reproducible negative fixtures
 
 Runs with Python 3.10+ on the **build/audit host**; Python need not run on Win7.
-No third-party parser, code execution, DLL loading, SDK or network is needed.
+No third-party parser, code execution, DLL loading, SDK or network is needed. Layouts follow
+Microsoft's public [PE/COFF specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#delay-load-import-tables-image-only), not another parser's implementation.
 
 ```sh
 python3 -m unittest discover -s tests -p test_legacy_win7_audit.py -v
@@ -186,8 +189,9 @@ python3 tools/legacy_win7_audit.py path/to/probe.exe path/to/bundled.dll \
 
 - Reports SHA-256/size, COFF machine + PE32/PE32+, OS/subsystem versions,
   large-address-aware flag, **normal and delay** DLLs, names/`#ordinals`, CRT families.
-- Parses RVA-based and old VA-based delay descriptors, PE32+ 64-bit thunks, and unbound
-  IAT fallback when original names are absent. Bound IAT without original names is rejected.
+- Parses RVA-based and old VA-based delay descriptors and PE32+ 64-bit thunks. Only **normal**
+  unbound imports can fall back to the IAT when original names are absent; bound IAT is rejected.
+  A delay INT is mandatory: even an unbound delay IAT contains helper/code pointers, not names.
 - DLL deny matching is case-insensitive; symbol matching is case-sensitive; rules are **exact**,
   no wildcard or implicit API availability database. DLL names are reported as stored, not
   resolved through Windows search paths, API-set maps or forwarded exports.

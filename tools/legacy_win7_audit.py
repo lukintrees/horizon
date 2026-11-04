@@ -147,6 +147,7 @@ class PE:
             if delay:
                 attrs, name, _, iat, table, bound, _, stamp = fields
                 require(attrs in (0, 1), "unsupported delay-import attributes")
+                require(table, "missing delay import name table (IAT contains code pointers)")
                 legacy = attrs == 0
             else:
                 table, stamp, _, name, iat = fields
