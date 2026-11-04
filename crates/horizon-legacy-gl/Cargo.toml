@@ -11,3 +11,7 @@ window-context = []
 
 [lints]
 workspace = true
+
+[[example]]
+name = "wgl_probe"
+required-features = ["window-context"]

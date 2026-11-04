@@ -107,4 +107,6 @@ jobs:
           targets: i686-pc-windows-msvc
           components: clippy
       - name: Check 32-bit WGL context code
-        run: cargo clippy --locked -p horizon-legacy-gl --features window-context --target i686-pc-windows-msvc -- -D warnings
+        run: cargo clippy --locked -p horizon-legacy-gl --features window-context --all-targets --target i686-pc-windows-msvc -- -D warnings
+      - name: Run 32-bit native WGL probe
+        run: cargo run --locked -p horizon-legacy-gl --features window-context --target i686-pc-windows-msvc --example wgl_probe
