@@ -7,6 +7,8 @@ on:
       - 'crates/horizon-client-render/Cargo.toml'
       - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
       - 'tools/legacy_gl_*'
+      - 'tools/pe_imports.py'
+      - 'tests/test_pe_imports.py'
       - '.github/workflows/legacy-opengl.yml'
   pull_request:
     paths:
@@ -15,6 +17,8 @@ on:
       - 'crates/horizon-client-render/Cargo.toml'
       - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
       - 'tools/legacy_gl_*'
+      - 'tools/pe_imports.py'
+      - 'tests/test_pe_imports.py'
       - '.github/workflows/legacy-opengl.yml'
   workflow_dispatch:
 permissions:
@@ -36,8 +40,10 @@ jobs:
         with:
           shared-key: legacy-opengl
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Run GL 2.1 and CPU smoke tests
-        run: tools/legacy_gl_e2e.sh
+      - name: Run GL 2.0/2.1 and CPU smoke tests
+        run: |
+          tools/legacy_gl_e2e.sh
+          python3 -m unittest discover -s tests -p test_pe_imports.py -v
       # Attach the end of a failed build to an annotation so it can be inspected
       # through the checks API as well as the runner's downloadable logs.
       - name: Check the client-render crate
@@ -113,6 +119,8 @@ jobs:
   win7-i686:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      RUSTFLAGS: "-C target-feature=+crt-static"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -124,3 +132,15 @@ jobs:
         run: cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-legacy-gl --features window-context --target i686-win7-windows-msvc --example wgl_probe
       - name: Run Win7-targeted probe on hosted Windows
         run: ./target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
+      - name: Inventory static PE imports (not a compatibility verdict)
+        shell: pwsh
+        run: |
+          python tools/pe_imports.py target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe --github-annotations | Tee-Object -FilePath wgl-static-imports.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: experimental-win7-x86-wgl-probe
+          path: |
+            target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
+            wgl-static-imports.txt
+          retention-days: 7
