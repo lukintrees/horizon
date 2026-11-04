@@ -191,12 +191,16 @@ fn clip(poly: Vec<ClipVertex>, axis: usize, edge: f64, below: bool) -> Vec<ClipV
 /// well as UVs. Never reorder triangles by page, including alpha-blended quads.
 trait AtlasVertex: Copy {
     const ENTITY: bool;
+    fn valid_pass(pass: crate::Pass) -> bool;
     fn base(&self) -> &Vertex;
     fn extra(&self) -> [f32; 10];
     fn from_parts(base: Vertex, extra: [f32; 10]) -> Self;
 }
 impl AtlasVertex for Vertex {
     const ENTITY: bool = false;
+    fn valid_pass(pass: crate::Pass) -> bool {
+        pass.is_overlay() && !matches!(pass, crate::Pass::Gui(_))
+    }
     fn base(&self) -> &Vertex {
         self
     }
@@ -209,6 +213,9 @@ impl AtlasVertex for Vertex {
 }
 impl AtlasVertex for crate::entity::LitVertex {
     const ENTITY: bool = true;
+    fn valid_pass(pass: crate::Pass) -> bool {
+        matches!(pass, crate::Pass::Entity(_))
+    }
     fn base(&self) -> &Vertex {
         &self.base
     }
@@ -232,6 +239,33 @@ impl AtlasVertex for crate::entity::LitVertex {
         }
     }
 }
+impl AtlasVertex for gui::GuiVertex {
+    const ENTITY: bool = false;
+    fn valid_pass(pass: crate::Pass) -> bool {
+        matches!(pass, crate::Pass::Gui(_))
+    }
+    fn base(&self) -> &Vertex {
+        &self.base
+    }
+    fn extra(&self) -> [f32; 10] {
+        let mut v = [0.; 10];
+        v[..2].copy_from_slice(&self.glint_uv);
+        v
+    }
+    fn from_parts(base: Vertex, extra: [f32; 10]) -> Self {
+        Self {
+            base,
+            glint_uv: [extra[0], extra[1]],
+        }
+    }
+}
+pub fn split_gui(
+    layout: Layout,
+    source: &[gui::Run<gui::GuiVertex>],
+    max_vertices: usize,
+) -> Result<Vec<Run<gui::GuiVertex>>, Error> {
+    split_vertices(layout, source, max_vertices)
+}
 pub fn split(layout: Layout, source: &[gui::Run], max_vertices: usize) -> Result<Vec<Run>, Error> {
     split_vertices(layout, source, max_vertices)
 }
@@ -250,12 +284,18 @@ fn split_vertices<V: AtlasVertex>(
     let mut output: Vec<Run<V>> = Vec::new();
     let mut total = 0usize;
     let mut visited = 0usize;
+    // A depth group can start with a degenerate material run. Keep its clear
+    // pending until the first visible triangle, even across plain/foil splits.
+    let mut pending_depth = false;
     for run in source {
-        if (if V::ENTITY {
-            !matches!(run.pass, crate::Pass::Entity(_))
-        } else {
-            !run.pass.is_overlay()
-        }) || (run.clear_depth && run.pass != crate::Pass::OverlayDepth)
+        if run.pass.pipeline() != crate::Pass::OverlayDepth {
+            pending_depth = false;
+        } else if run.clear_depth {
+            pending_depth = true;
+        }
+
+        if !V::valid_pass(run.pass)
+            || (run.clear_depth && run.pass.pipeline() != crate::Pass::OverlayDepth)
             || run.indices.len() % 3 != 0
             || run
                 .indices
@@ -275,7 +315,6 @@ fn split_vertices<V: AtlasVertex>(
         {
             return Err(Error::InvalidMesh);
         }
-        let mut first = true;
         for tri in run.indices.chunks_exact(3) {
             let tri: [ClipVertex; 3] = std::array::from_fn(|i| {
                 ClipVertex::new(&run.vertices[tri[i] as usize], layout.size)
@@ -334,7 +373,8 @@ fn split_vertices<V: AtlasVertex>(
                             .checked_add(3)
                             .filter(|&n| n <= max_vertices)
                             .ok_or(Error::VertexBudget)?;
-                        let clear_depth = first && run.clear_depth;
+                        let clear_depth = pending_depth;
+                        pending_depth = false;
                         if clear_depth
                             || output.last().is_none_or(|last| {
                                 last.page != page
@@ -359,7 +399,6 @@ fn split_vertices<V: AtlasVertex>(
                         last.vertices
                             .extend(triangle.map(|v| v.vertex::<V>(origin, layout.side)));
                         last.indices.extend([base, base + 1, base + 2]);
-                        first = false;
                     }
                 }
             }
@@ -443,6 +482,56 @@ impl Cache {
             let texture = self.texture(backend, run.page, &mut load)?;
             gui::render(backend, std::slice::from_ref(&run.geometry), texture, white)
                 .map_err(RenderError::Gui)?;
+        }
+        Ok(())
+    }
+    /// Foil-aware GUI streaming; one depth clear per original model group,
+    /// including when atlas pages, marker state or u16 boundaries change.
+    pub fn render_gui<B: RenderBackend, L>(
+        &mut self,
+        backend: &mut B,
+        runs: &[Run<gui::GuiVertex>],
+        white: TextureId,
+        mut load: impl FnMut(usize) -> Result<Vec<u8>, L>,
+    ) -> Result<(), RenderError<B::Error, L>> {
+        if runs.iter().any(|r| {
+            r.page >= self.layout.page_count()
+                || !matches!(r.geometry.pass, crate::Pass::Gui(_))
+                || (r.geometry.clear_depth
+                    && r.geometry.pass.pipeline() != crate::Pass::OverlayDepth)
+        }) {
+            return Err(RenderError::InvalidPage);
+        }
+        self.collect_garbage(backend)
+            .map_err(RenderError::Backend)?;
+        for run in runs {
+            let texture = self.texture(backend, run.page, &mut load)?;
+            let mesh = backend
+                .create_gui_mesh(&run.geometry.vertices, &run.geometry.indices)
+                .map_err(RenderError::Backend)?;
+            self.retired_meshes.push(mesh);
+            let draw = crate::Draw {
+                mesh,
+                texture,
+                lightmap: white,
+                origin: [0.; 3],
+                pass: run.geometry.pass,
+                scissor: run.geometry.scissor,
+            };
+            let result = backend.render(&crate::Frame {
+                view_projection: crate::IDENTITY,
+                camera: [0.; 3],
+                fog: None,
+                clear: if run.geometry.clear_depth {
+                    crate::Clear::Depth
+                } else {
+                    crate::Clear::Load
+                },
+                draws: &[draw],
+            });
+            let cleanup = self.collect_garbage(backend);
+            result.map_err(RenderError::Backend)?;
+            cleanup.map_err(RenderError::Backend)?;
         }
         Ok(())
     }
@@ -659,5 +748,47 @@ mod tests {
             .find(|v| v.pos[0] == 0.)
             .unwrap();
         assert_eq!(boundary.uv[0], 0.25);
+    }
+    #[test]
+    fn empty_material_before_foil_cannot_lose_or_leak_a_model_depth_clear() {
+        use crate::{
+            TextureId,
+            entity::{Glint, Strength},
+        };
+        let l = Layout::new([2, 2], 4, 1).unwrap();
+        let mut input = [gui::GlintInput {
+            base: Input {
+                pos: [0.; 2],
+                uv: [0.5; 2],
+                depth: 0.9,
+                color: 0,
+            },
+            glint_uv: [0.; 2],
+        }; 6];
+        for (v, p) in input[3..].iter_mut().zip([[0., 0.], [64., 0.], [0., 64.]]) {
+            v.base.pos = p;
+            v.base.uv[0] += 2.;
+        }
+        let options = gui::Options {
+            window: [64; 2],
+            scale: 1.,
+            uv_scale: [1.; 2],
+            max_vertices: 6,
+            glint: Some(Glint {
+                texture: TextureId(1),
+                strength: Strength::ONE,
+            }),
+        };
+        for depth in [true, false] {
+            let batches = if depth {
+                vec![(0..6, Blend::Depth([0, 0, 64, 64]))]
+            } else {
+                vec![(0..3, Blend::Depth([0, 0, 64, 64])), (3..6, Blend::Alpha)]
+            };
+            let runs = gui::glint_runs(&input, &batches, options).unwrap();
+            let clipped = split_gui(l, &runs, 6).unwrap();
+            assert_eq!(clipped.len(), 1);
+            assert_eq!(clipped[0].geometry.clear_depth, depth);
+        }
     }
 }

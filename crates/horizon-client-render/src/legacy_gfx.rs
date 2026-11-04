@@ -334,10 +334,15 @@ impl TerrainHudRenderer {
         });
 
         let runs = {
-            let source = gui_bridge::runs(hud, self.size(), [1.; 2], self.limits.gui_vertices)
-                .map_err(diagnostic)?;
+            let source = gui_bridge::glint_runs(
+                hud,
+                self.size(),
+                self.limits.gui_vertices,
+                self.glint_textures.as_ref().map(|t| t.item),
+            )
+            .map_err(diagnostic)?;
             // Drop unpaged scratch before patch staging and GPU submission.
-            paged_gui::split(self.hud.layout(), &source, self.limits.gui_vertices)
+            paged_gui::split_gui(self.hud.layout(), &source, self.limits.gui_vertices)
                 .map_err(diagnostic)?
         };
         let changed = self
@@ -422,7 +427,7 @@ impl TerrainHudRenderer {
                 .map_err(diagnostic)?;
         }
         self.cache
-            .render(self.world.backend_mut(), &runs, self.white, |page| {
+            .render_gui(self.world.backend_mut(), &runs, self.white, |page| {
                 backing.load(page)
             })
             .map_err(diagnostic)
@@ -1226,6 +1231,145 @@ mod tests {
         sample(&mut renderer, [32, 192, 48]);
         draw(&mut renderer, 36, false, 1.).unwrap();
         sample(&mut renderer, [32, 128, 112]);
+        let stats = renderer.world.backend_mut().stats();
+        assert_eq!(stats.texture_bytes, 1164);
+        assert_eq!(stats.textures, 6);
+        assert_eq!(stats.mesh_bytes, 0);
+        assert_eq!(stats.meshes, 0);
+    }
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_gui_foil_masks_pages_patches_and_reloads_with_compact_mesh_budget() {
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 6;
+        atlas.height = 2;
+        atlas.pixels = [0, 16, 128, 255, 255, 255]
+            .into_iter()
+            .flat_map(|a| [255, 255, 255, a])
+            .collect::<Vec<_>>()
+            .repeat(2);
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits {
+                gpu: Budget {
+                    texture_bytes: 1164,
+                    mesh_bytes: 324,
+                },
+                hud_page_size: 4,
+                gui_vertices: 256,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let frame = SceneFrame {
+            view_projection: IDENTITY,
+            camera: [0.; 3],
+            clear: [0., 0., 0., 1.],
+            fog: Some(horizon_render_api::Fog {
+                color: [0., 0., 1.],
+                start: 0.,
+                end: 0.0001,
+            }),
+            solid: &[],
+            translucent: &[],
+        };
+        let p = [[2., 2.], [62., 2.], [62., 62.], [2., 62.]];
+        let mut hud = HudBatch::new([64; 2]);
+        hud.glint_alpha = 0.5;
+        hud.quad(p, [[4.5 / 6., 0.5]; 4], 0xff302010);
+        renderer.render(&frame, &hud).unwrap();
+        let stable = renderer.read_rgba([27, 32, 1, 1]).unwrap();
+        hud.quad_glint(
+            p,
+            [[2., 0.], [3., 0.], [3., 1.], [2., 1.]],
+            [[0.25, 0.5]; 4],
+            0,
+        );
+        hud.blend_since(6, crate::hud::Blend::Additive);
+        assert!(renderer.render(&frame, &hud).is_err());
+        assert_eq!(renderer.read_rgba([27, 32, 1, 1]).unwrap(), stable);
+        let image = |rgba| Image {
+            width: 1,
+            height: 1,
+            rgba,
+        };
+        renderer
+            .set_glint_textures(image(&[128, 64, 0, 0]), image(&[0; 4]))
+            .unwrap();
+        let near = |r: &mut TerrainHudRenderer, x, expected: [u8; 3]| {
+            let actual = r.read_rgba([x, 32, 1, 1]).unwrap();
+            for i in 0..3 {
+                assert!(
+                    (i16::from(actual[i]) - i16::from(expected[i])).abs() <= 2,
+                    "{actual:?} != {expected:?}"
+                );
+            }
+        };
+        renderer.render(&frame, &hud).unwrap();
+        near(&mut renderer, 7, [16, 32, 48]);
+        for x in [27, 37, 57] {
+            near(&mut renderer, x, [32, 36, 48]);
+        }
+        hud.patches.push(crate::font::Patch {
+            x: 2,
+            y: 0,
+            width: 1,
+            height: 2,
+            rgba: [255, 255, 255, 0].repeat(2),
+        });
+        renderer.render(&frame, &hud).unwrap();
+        near(&mut renderer, 27, [16, 32, 48]);
+        near(&mut renderer, 37, [32, 36, 48]);
+        hud.patches.clear();
+        let stable = renderer.read_rgba([37, 32, 1, 1]).unwrap();
+        renderer.reload_hud(&atlas).unwrap();
+        renderer
+            .set_glint_textures(image(&[0, 128, 0, 0]), image(&[0; 4]))
+            .unwrap();
+        assert_eq!(renderer.read_rgba([37, 32, 1, 1]).unwrap(), stable);
+        renderer.render(&frame, &hud).unwrap();
+        near(&mut renderer, 27, [16, 48, 48]);
+        let stable = renderer.read_rgba([27, 32, 1, 1]).unwrap();
+        for bad in [f32::NAN, -0.1, 1.1] {
+            hud.glint_alpha = bad;
+            assert!(renderer.render(&frame, &hud).is_err());
+            assert_eq!(renderer.read_rgba([27, 32, 1, 1]).unwrap(), stable);
+        }
+        hud.glint_alpha = 0.5;
+        renderer.limits.gui_vertices = 11;
+        assert!(renderer.render(&frame, &hud).is_err());
+        renderer.limits.gui_vertices = 12;
+        assert!(renderer.render(&frame, &hud).is_err());
+        assert_eq!(renderer.read_rgba([27, 32, 1, 1]).unwrap(), stable);
+        renderer.limits.gui_vertices = 256;
+        hud.vertices[7].glint_uv = [f32::NAN; 2];
+        assert!(renderer.render(&frame, &hud).is_err());
+        hud.vertices[7].glint_uv = [0.25, 0.5];
+        hud.vertices[7].uv[0] = 0.5;
+        assert!(renderer.render(&frame, &hud).is_err());
+        hud.vertices[7].uv[0] = 3.;
+        for blend in [crate::hud::Blend::EndPortal, crate::hud::Blend::CitGlint(0)] {
+            hud.blends = vec![(6..12, blend)];
+            assert!(renderer.render(&frame, &hud).is_err());
+            assert_eq!(renderer.read_rgba([27, 32, 1, 1]).unwrap(), stable);
+        }
+        hud.blends = vec![(6..12, crate::hud::Blend::Additive)];
+        renderer.render(&frame, &hud).unwrap();
         let stats = renderer.world.backend_mut().stats();
         assert_eq!(stats.texture_bytes, 1164);
         assert_eq!(stats.textures, 6);

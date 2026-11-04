@@ -33,6 +33,8 @@ pub struct Image<'a> {
 pub enum Pass {
     Opaque,
     Entity(entity::Material),
+    /// Typed GUI vertices with independently repeated foil coordinates.
+    Gui(gui::Material),
     Cutout,
     Translucent,
     /// Screen-space geometry uses the supplied projection, without depth testing.
@@ -44,9 +46,16 @@ pub enum Pass {
     OverlayDepth,
 }
 impl Pass {
+    /// Fixed-function state shared by ordinary and foil-aware GUI buffers.
+    pub fn pipeline(self) -> Self {
+        match self {
+            Self::Gui(m) => m.kind.pipeline(),
+            other => other,
+        }
+    }
     pub fn is_overlay(self) -> bool {
         matches!(
-            self,
+            self.pipeline(),
             Self::Overlay
                 | Self::OverlayInvert
                 | Self::OverlayAdditive
@@ -111,6 +120,11 @@ pub trait RenderBackend {
         vertices: &[entity::LitVertex],
         indices: &[u16],
     ) -> Result<MeshId, Self::Error>;
+    fn create_gui_mesh(
+        &mut self,
+        vertices: &[gui::GuiVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, Self::Error>;
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), Self::Error>;
     fn render(&mut self, frame: &Frame<'_>) -> Result<(), Self::Error>;
     fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, Self::Error>;
@@ -143,6 +157,13 @@ impl<B: RenderBackend + ?Sized> RenderBackend for &mut B {
         indices: &[u16],
     ) -> Result<MeshId, Self::Error> {
         (**self).create_entity_mesh(vertices, indices)
+    }
+    fn create_gui_mesh(
+        &mut self,
+        vertices: &[gui::GuiVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, Self::Error> {
+        (**self).create_gui_mesh(vertices, indices)
     }
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), Self::Error> {
         (**self).remove_mesh(id)

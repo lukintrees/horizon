@@ -383,6 +383,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_entity_layers");
     entity_glint(context)?;
     checks.push("backend_entity_glint");
+    gui_glint(context)?;
+    checks.push("backend_gui_glint");
 
     // Switch to an unrelated context, then alternate both renderers. Every safe
     // operation must bind the correct context, rather than use thread-local luck.
@@ -1644,5 +1646,259 @@ fn entity_glint(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "glint resources not reclaimed",
+    )
+}
+
+fn gui_glint(context: &Context) -> Result<(), String> {
+    use horizon_render_api::{
+        entity::{Glint, Strength},
+        gui::{self, Blend, GlintInput, Input},
+        paged_gui::{self, Cache, Layout},
+    };
+    fn error(e: impl std::fmt::Debug) -> String {
+        format!("GUI foil: {e:?}")
+    }
+    let mut renderer = Renderer::new(
+        context,
+        Budget {
+            texture_bytes: 84,
+            mesh_bytes: 324,
+        },
+    )?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let foil = renderer.create_texture(Image {
+        width: 2,
+        height: 2,
+        rgba: &[255, 0, 0, 0, 0, 0, 255, 0].repeat(2),
+    })?;
+    let layout = Layout::new([6, 2], 4, 3).map_err(error)?;
+    let mut cache = Cache::new(layout, 1).map_err(error)?;
+    let pixels = [0, 16, 128, 255, 255, 255]
+        .into_iter()
+        .flat_map(|a| [255, 255, 255, a])
+        .collect::<Vec<_>>()
+        .repeat(2);
+    let options = gui::Options {
+        window: [64; 2],
+        scale: 1.,
+        uv_scale: [1.; 2],
+        max_vertices: 128,
+        glint: Some(Glint {
+            texture: foil,
+            strength: Strength::new(0.5).map_err(error)?,
+        }),
+    };
+    let p = [[2., 2.], [62., 2.], [62., 62.], [2., 62.]];
+    let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];
+    let vertices = [0, 1, 2, 0, 2, 3].map(|i| GlintInput {
+        base: Input {
+            pos: p[i],
+            uv: [uv[i][0] + 2., uv[i][1]],
+            color: 0,
+            depth: 0.5,
+        },
+        glint_uv: [-0.25 + uv[i][0] * 1.5, 0.5],
+    });
+    let prepare =
+        |v: &[GlintInput], batches: &[(std::ops::Range<usize>, Blend)], opt| -> Result<_, String> {
+            let runs = gui::glint_runs(v, batches, opt).map_err(error)?;
+            paged_gui::split_gui(layout, &runs, 256).map_err(error)
+        };
+    let clear = |renderer: &mut Renderer| {
+        renderer.render(&Frame {
+            clear: Clear::ColorDepth([16. / 255., 32. / 255., 48. / 255., 1.]),
+            ..frame(&[])
+        })
+    };
+    let runs = prepare(&vertices, &[(0..6, Blend::Additive)], options)?;
+    clear(&mut renderer)?;
+    cache
+        .render_gui(&mut renderer, &runs, white, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    for x in 2..62 {
+        let t = (x as f32 + 0.5 - 2.) / 60.;
+        let u = -0.25 + t * 1.5;
+        let a = u * 2. - 0.5;
+        let weight = a - a.floor();
+        let red = if (a.floor() as i32).rem_euclid(2) == 0 {
+            1. - weight
+        } else {
+            weight
+        };
+        let expected = if t * 6. < 2. {
+            [16, 32, 48]
+        } else {
+            [
+                (16. + 63.75 * red * red).round() as u8,
+                32,
+                (48. + 63.75 * (1. - red) * (1. - red)).round() as u8,
+            ]
+        };
+        pixel(&mut renderer, [x, 32], expected)?;
+    }
+    // Unlike entity glint, GUI alpha uses the mask, not max(alpha,strength),
+    // and ignores tint. In additive mode a half mask does not scale the RGB.
+    let constant = vertices.map(|v| GlintInput {
+        glint_uv: [0.25, 0.5],
+        ..v
+    });
+    for (strength, expected) in [(0.5, [40, 16, 24]), (0., [8, 16, 24])] {
+        let opt = gui::Options {
+            glint: Some(Glint {
+                strength: Strength::new(strength).map_err(error)?,
+                ..options.glint.unwrap()
+            }),
+            ..options
+        };
+        let runs = prepare(&constant, &[(0..6, Blend::Alpha)], opt)?;
+        clear(&mut renderer)?;
+        cache
+            .render_gui(&mut renderer, &runs, white, |p| layout.pixels(p, &pixels))
+            .map_err(error)?;
+        pixel(&mut renderer, [27, 32], expected)?;
+        pixel(&mut renderer, [7, 32], [16, 32, 48])?;
+    }
+    let model = |marked: bool, depth, color| {
+        constant.map(|v| GlintInput {
+            base: Input {
+                uv: [if marked { 2.75 } else { 0.75 }, 0.5],
+                depth,
+                color,
+                ..v.base
+            },
+            ..v
+        })
+    };
+    // Plain and foil changes must share ONE model depth clear, in both orders.
+    for reverse in [false, true] {
+        let source = if reverse {
+            [model(true, 0.2, 0), model(false, 0.8, 0xff00ff00)].concat()
+        } else {
+            [model(false, 0.2, 0xff00ff00), model(true, 0.8, 0)].concat()
+        };
+        let runs = prepare(&source, &[(0..12, Blend::Depth([0, 0, 64, 64]))], options)?;
+        clear(&mut renderer)?;
+        cache
+            .render_gui(&mut renderer, &runs, white, |p| layout.pixels(p, &pixels))
+            .map_err(error)?;
+        pixel(
+            &mut renderer,
+            [40, 32],
+            if reverse { [64, 0, 0] } else { [0, 255, 0] },
+        )?;
+    }
+    // A degenerate plain prefix must not swallow the model's clear when the
+    // first visible triangle belongs to the next foil material run.
+    let degenerate = model(false, 0.9, 0).map(|v| GlintInput {
+        base: Input {
+            pos: [0.; 2],
+            ..v.base
+        },
+        ..v
+    });
+    let blue = model(true, 0.8, 0).map(|v| GlintInput {
+        glint_uv: [0.75, 0.5],
+        ..v
+    });
+    let source = [degenerate, blue].concat();
+    let runs = prepare(&source, &[(0..12, Blend::Depth([0, 0, 64, 64]))], options)?;
+    cache
+        .render_gui(&mut renderer, &runs, white, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    pixel(&mut renderer, [40, 32], [0, 0, 64])?;
+    // A new model resets depth, but only inside its top-left scissor; a later
+    // ordinary GUI draw resets the scissor, shader mode and depth write/test.
+    let overlay = model(false, 0.9, 0xff3c2814).map(|v| GlintInput {
+        base: Input {
+            pos: v.base.pos.map(|n| (n - 2.) / 60. * 8.),
+            ..v.base
+        },
+        ..v
+    });
+    let source = [model(true, 0.2, 0), model(false, 0.9, 0xffff0000), overlay].concat();
+    let runs = prepare(
+        &source,
+        &[
+            (0..6, Blend::Depth([0, 0, 64, 64])),
+            (6..12, Blend::Depth([16, 0, 16, 64])),
+            (12..18, Blend::Alpha),
+        ],
+        options,
+    )?;
+    clear(&mut renderer)?;
+    cache
+        .render_gui(&mut renderer, &runs, white, |p| layout.pixels(p, &pixels))
+        .map_err(error)?;
+    pixel(&mut renderer, [24, 32], [0, 0, 255])?;
+    pixel(&mut renderer, [40, 32], [64, 0, 0])?;
+    pixel(&mut renderer, [4, 60], [20, 40, 60])?;
+    let before = renderer.read_rgba([4, 60, 1, 1])?;
+    let geometry = &runs[0].geometry;
+    let bad_vertices = geometry
+        .vertices
+        .iter()
+        .take(3)
+        .map(|v| gui::GuiVertex {
+            glint_uv: [f32::NAN; 2],
+            ..*v
+        })
+        .collect::<Vec<_>>();
+    require(
+        renderer.create_gui_mesh(&bad_vertices, &[0, 1, 2]).is_err(),
+        "nonfinite GUI UV accepted",
+    )?;
+    let mesh = renderer.create_gui_mesh(&geometry.vertices[..3], &[0, 1, 2])?;
+    let base = renderer.create_mesh(
+        &geometry.vertices[..3]
+            .iter()
+            .map(|v| v.base)
+            .collect::<Vec<_>>(),
+        &[0, 1, 2],
+    )?;
+    let draw = Draw {
+        mesh,
+        texture: white,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: geometry.pass,
+        scissor: None,
+    };
+    for bad in [
+        Draw {
+            pass: Pass::Opaque,
+            ..draw
+        },
+        Draw { mesh: base, ..draw },
+        Draw {
+            texture: foil,
+            ..draw
+        },
+    ] {
+        require(
+            renderer
+                .render(&Frame {
+                    clear: Clear::ColorDepth([1.; 4]),
+                    ..frame(&[bad])
+                })
+                .is_err(),
+            "GUI layout/alias accepted",
+        )?;
+        require(
+            renderer.read_rgba([4, 60, 1, 1])? == before,
+            "invalid GUI draw cleared frame",
+        )?;
+    }
+    renderer.remove_mesh(mesh)?;
+    renderer.remove_mesh(base)?;
+    cache.release(&mut renderer)?;
+    renderer.remove_texture(foil)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "GUI foil resources not reclaimed",
     )
 }

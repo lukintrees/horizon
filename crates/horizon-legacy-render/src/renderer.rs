@@ -38,11 +38,33 @@ struct Texture {
     size: [u32; 2],
     bytes: usize,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MeshLayout {
+    Basic,
+    Entity,
+    Gui,
+}
+impl MeshLayout {
+    fn stride(self) -> i32 {
+        match self {
+            Self::Basic => 44,
+            Self::Entity => 84,
+            Self::Gui => 52,
+        }
+    }
+    fn pass(pass: Pass) -> Self {
+        match pass {
+            Pass::Entity(_) => Self::Entity,
+            Pass::Gui(_) => Self::Gui,
+            _ => Self::Basic,
+        }
+    }
+}
 struct Mesh {
     buffers: [u32; 2],
     count: i32,
     bytes: usize,
-    entity: bool,
+    layout: MeshLayout,
 }
 struct Uniforms {
     matrix: i32,
@@ -55,6 +77,7 @@ struct Uniforms {
     overlay: i32,
     mask: i32,
     glint: i32,
+    gui_glint: i32,
 }
 
 pub struct Renderer<'a> {
@@ -154,6 +177,7 @@ impl<'a> Renderer<'a> {
                 overlay: -1,
                 mask: -1,
                 glint: -1,
+                gui_glint: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -182,6 +206,7 @@ impl<'a> Renderer<'a> {
                 overlay: location(c"overlay")?,
                 mask: location(c"mask_only")?,
                 glint: location(c"glint_strength")?,
+                gui_glint: location(c"gui_glint")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -218,7 +243,7 @@ impl<'a> Renderer<'a> {
         &mut self,
         vertices: &[T],
         indices: &[u16],
-        entity: bool,
+        layout: MeshLayout,
         base: impl Fn(&T) -> &Vertex,
     ) -> Result<MeshId, String> {
         if self.stats.meshes >= 65536 {
@@ -254,7 +279,7 @@ impl<'a> Renderer<'a> {
         let id = MeshId(id()?);
         self.gl.context.make_current()?;
         let mut buffers = [0; 2];
-        // SAFETY: the only callers instantiate T as repr(C) Vertex/LitVertex,
+        // SAFETY: the only callers instantiate T as repr(C) Vertex/LitVertex/GuiVertex,
         // containing only floats and no padding. Checked sizes match live arrays. GL copies client storage during BufferData.
         unsafe {
             (self.gl.gen_buffers)(2, buffers.as_mut_ptr());
@@ -290,7 +315,7 @@ impl<'a> Renderer<'a> {
                 buffers,
                 count: indices.len() as i32,
                 bytes,
-                entity,
+                layout,
             },
         );
         self.stats.mesh_bytes += bytes;
@@ -304,32 +329,49 @@ impl<'a> Renderer<'a> {
         {
             return Err("unknown, foreign or released mesh/texture ID".into());
         }
-        if self.meshes[&draw.mesh].entity != matches!(draw.pass, Pass::Entity(_)) {
-            return Err("entity mesh/pass mismatch".into());
+        if self.meshes[&draw.mesh].layout != MeshLayout::pass(draw.pass) {
+            return Err("typed mesh/pass mismatch".into());
         }
-        if let Pass::Entity(material) = draw.pass {
-            if let Some(glint) = material.glint {
-                let foil = self
-                    .textures
-                    .get(&glint.texture)
-                    .ok_or("unknown glint texture")?;
-                if !matches!(material.kind, Kind::Body | Kind::Item) {
+        let glint = match draw.pass {
+            Pass::Entity(material) => {
+                if material.overlay_color().is_none() {
+                    return Err("invalid entity overlay".into());
+                }
+                if material.glint.is_some() && !matches!(material.kind, Kind::Body | Kind::Item) {
                     return Err("glint on unsupported material".into());
                 }
-                if (glint.texture == draw.texture || glint.texture == draw.lightmap)
-                    && foil.size != [1, 1]
-                {
-                    return Err("glint requires an independent repeating texture".into());
-                }
+                material.glint
             }
-            if material.overlay_color().is_none() {
-                return Err("invalid entity overlay".into());
+            Pass::Gui(material) => {
+                if material.glint.is_some()
+                    && !matches!(
+                        material.kind,
+                        horizon_render_api::gui::Kind::Alpha
+                            | horizon_render_api::gui::Kind::Additive
+                            | horizon_render_api::gui::Kind::Depth
+                    )
+                {
+                    return Err("glint on unsupported GUI pipeline".into());
+                }
+                material.glint
+            }
+            _ => None,
+        };
+        if let Some(glint) = glint {
+            let foil = self
+                .textures
+                .get(&glint.texture)
+                .ok_or("unknown glint texture")?;
+            if (glint.texture == draw.texture || glint.texture == draw.lightmap)
+                && foil.size != [1, 1]
+            {
+                return Err("glint requires an independent repeating texture".into());
             }
         }
         // GL2 texture sampling state belongs to the texture, not to a sampler
         // object. One nonconstant texture cannot be both linear atlas and nearest
         // lightmap in the same draw. A 1x1 white texture is equivalent either way.
-        if draw.pass == Pass::OverlayVignette
+        if draw.pass.pipeline() == Pass::OverlayVignette
             && draw.texture == draw.lightmap
             && self.textures[&draw.texture].size != [1, 1]
         {
@@ -452,7 +494,7 @@ impl RenderBackend for Renderer<'_> {
         self.check()
     }
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, String> {
-        self.upload_mesh(vertices, indices, false, |v| v)
+        self.upload_mesh(vertices, indices, MeshLayout::Basic, |v| v)
     }
     fn create_entity_mesh(
         &mut self,
@@ -468,7 +510,20 @@ impl RenderBackend for Renderer<'_> {
         }) {
             return Err("invalid entity lighting".into());
         }
-        self.upload_mesh(vertices, indices, true, |v| &v.base)
+        self.upload_mesh(vertices, indices, MeshLayout::Entity, |v| &v.base)
+    }
+    fn create_gui_mesh(
+        &mut self,
+        vertices: &[horizon_render_api::gui::GuiVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, String> {
+        if vertices
+            .iter()
+            .any(|v| v.glint_uv.iter().any(|n| !n.is_finite()))
+        {
+            return Err("invalid GUI glint UV".into());
+        }
+        self.upload_mesh(vertices, indices, MeshLayout::Gui, |v| &v.base)
     }
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), String> {
         self.gl.context.make_current()?;
@@ -521,28 +576,37 @@ impl RenderBackend for Renderer<'_> {
             }
             (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
             for draw in frame.draws {
+                let pass = draw.pass.pipeline();
                 let mesh = &self.meshes[&draw.mesh];
                 let offset = self.validate_draw(draw, frame)?;
                 (self.gl.uniform3f)(self.uniforms.origin, offset[0], offset[1], offset[2]);
-                let (start, end, color) = match (frame.fog, draw.pass) {
+                let (start, end, color) = match (frame.fog, pass) {
                     (Some(f), pass) if !pass.is_overlay() => (f.start, f.end, f.color),
                     _ => (1e20, 2e20, [0.; 3]),
                 };
                 (self.gl.uniform4f)(self.uniforms.fog, color[0], color[1], color[2], start);
                 (self.gl.uniform1f)(self.uniforms.fog_end, end);
-                let cutoff = match draw.pass {
+                let cutoff = match pass {
                     Pass::Entity(m) if matches!(m.kind, Kind::Shadow | Kind::WaterMask) => 0.,
                     Pass::Cutout | Pass::Entity(_) => 0.1,
                     Pass::Overlay | Pass::OverlayAdditive | Pass::OverlayDepth => 0.004,
                     _ => 0.,
                 };
                 (self.gl.uniform1f)(self.uniforms.cutoff, cutoff);
-                let entity = match draw.pass {
+                let entity = match pass {
                     Pass::Entity(m) => Some(m),
                     _ => None,
                 };
                 (self.gl.uniform1f)(self.uniforms.entity, if entity.is_some() { 1. } else { 0. });
-                let glint = entity.and_then(|m| m.glint);
+                let gui_glint = match draw.pass {
+                    Pass::Gui(m) => m.glint,
+                    _ => None,
+                };
+                (self.gl.uniform1f)(
+                    self.uniforms.gui_glint,
+                    if gui_glint.is_some() { 1. } else { 0. },
+                );
+                let glint = gui_glint.or_else(|| entity.and_then(|m| m.glint));
                 (self.gl.uniform1f)(
                     self.uniforms.glint,
                     glint.map_or(0., |g| g.strength.value()),
@@ -596,13 +660,13 @@ impl RenderBackend for Renderer<'_> {
 
                 (self.gl.uniform1f)(
                     self.uniforms.force_opaque,
-                    if draw.pass == Pass::OverlayVignette {
+                    if draw.pass.pipeline() == Pass::OverlayVignette {
                         1.
                     } else {
                         0.
                     },
                 );
-                if (draw.pass.is_overlay() && draw.pass != Pass::OverlayDepth)
+                if (pass.is_overlay() && pass != Pass::OverlayDepth)
                     || entity.is_some_and(|m| m.kind == Kind::SeeThrough)
                 {
                     (self.gl.disable)(0x0B71);
@@ -610,18 +674,16 @@ impl RenderBackend for Renderer<'_> {
                     (self.gl.enable)(0x0B71);
                 }
                 (self.gl.depth_func)(
-                    if draw.pass == Pass::OverlayDepth || matches!(draw.pass, Pass::Entity(_)) {
+                    if pass == Pass::OverlayDepth || matches!(pass, Pass::Entity(_)) {
                         0x0203
                     } else {
                         0x0201
                     },
                 );
-                let depth_write = matches!(
-                    draw.pass,
-                    Pass::Opaque | Pass::Cutout | Pass::OverlayDepth
-                ) || matches!(draw.pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough));
+                let depth_write = matches!(pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
+                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough));
                 (self.gl.depth_mask)(u8::from(depth_write));
-                let factors = match draw.pass {
+                let factors = match pass {
                     Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),
                     Pass::OverlayAdditive => Some((1, 1, 1, 1)),
                     Pass::OverlayVignette => Some((0, 0x0301, 0, 1)),
@@ -651,7 +713,7 @@ impl RenderBackend for Renderer<'_> {
                     }
                     // The credits vignette uses a linear atlas sampler. Restore
                     // nearest on every other draw, including the lightmap.
-                    let filter = if unit == 0x84C0 && draw.pass == Pass::OverlayVignette {
+                    let filter = if unit == 0x84C0 && pass == Pass::OverlayVignette {
                         0x2601
                     } else {
                         0x2600
@@ -667,25 +729,31 @@ impl RenderBackend for Renderer<'_> {
                         count,
                         0x1406,
                         0,
-                        if mesh.entity { 84 } else { 44 },
+                        mesh.layout.stride(),
                         offset as *const c_void,
                     );
                     (self.gl.enable_attribute)(index);
                 }
                 for (index, count, offset) in [(4, 4, 44), (5, 4, 60), (6, 2, 76)] {
-                    if mesh.entity {
+                    let present = mesh.layout == MeshLayout::Entity
+                        || (mesh.layout == MeshLayout::Gui && index == 6);
+                    if present {
+                        let offset = if mesh.layout == MeshLayout::Gui {
+                            44
+                        } else {
+                            offset
+                        };
                         (self.gl.attribute_pointer)(
                             index,
                             count,
                             0x1406,
                             0,
-                            84,
+                            mesh.layout.stride(),
                             offset as *const c_void,
                         );
                         (self.gl.enable_attribute)(index);
                     } else {
                         (self.gl.disable_attribute)(index);
-                        // Array draws leave generic attribute values unspecified.
                         (self.gl.attribute4f)(index, 1., 1., 1., 1.);
                     }
                 }

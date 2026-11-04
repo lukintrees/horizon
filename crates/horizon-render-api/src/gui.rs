@@ -19,12 +19,58 @@ pub enum Blend {
     /// Top-left physical-pixel rectangle, already including GUI scale.
     Depth([u32; 4]),
 }
+
+/// Compact GUI layout: ordinary attributes plus foil UV, without world lighting.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GuiVertex {
+    pub base: Vertex,
+    pub glint_uv: [f32; 2],
+}
+#[derive(Clone, Copy, Debug)]
+pub struct GlintInput {
+    pub base: Input,
+    pub glint_uv: [f32; 2],
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Alpha,
+    Invert,
+    Additive,
+    Vignette,
+    Depth,
+}
+impl Kind {
+    pub fn pipeline(self) -> Pass {
+        match self {
+            Self::Alpha => Pass::Overlay,
+            Self::Invert => Pass::OverlayInvert,
+            Self::Additive => Pass::OverlayAdditive,
+            Self::Vignette => Pass::OverlayVignette,
+            Self::Depth => Pass::OverlayDepth,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Material {
+    pub kind: Kind,
+    pub glint: Option<crate::entity::Glint>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Options {
+    pub window: [u32; 2],
+    pub scale: f32,
+    pub uv_scale: [f32; 2],
+    pub max_vertices: usize,
+    pub glint: Option<crate::entity::Glint>,
+}
 #[derive(Debug, PartialEq, Eq)]
 pub enum GuiError {
     InvalidTarget,
     InvalidRange,
     InvalidVertex,
     UnsupportedGlint,
+    InvalidGlint,
     VertexBudget,
     InvalidAtlas,
 }
@@ -132,6 +178,123 @@ pub fn runs(
     Ok(output)
 }
 
+/// The actual HUD marker (u >= 2) selects a separate alpha-mask foil shader.
+/// Split ONLY at triangle boundaries, preserving the original depth group clear
+/// across ordinary/foil changes and u16 chunks. No sorting by page or material.
+pub fn glint_runs(
+    input: &[GlintInput],
+    batches: &[(Range<usize>, Blend)],
+    options: Options,
+) -> Result<Vec<Run<GuiVertex>>, GuiError> {
+    // Reuse ordinary target/coordinate conversion and validation, not a second
+    // screen projection. Mask marker is decoded before this conversion.
+    runs(&[], &[], options.window, options.scale, options.uv_scale, 0)?;
+    let mut output: Vec<Run<GuiVertex>> = Vec::new();
+    let mut total = 0usize;
+    for (range, blend) in batches {
+        if range.start > range.end
+            || range.end > input.len()
+            || range.start % 3 != 0
+            || range.len() % 3 != 0
+        {
+            return Err(GuiError::InvalidRange);
+        }
+        // Resolve/clamp depth scissor even for an empty range, before allocation.
+        let (kind, scissor, depth) = match *blend {
+            Blend::Alpha => (Kind::Alpha, None, false),
+            Blend::Invert => (Kind::Invert, None, false),
+            Blend::Additive => (Kind::Additive, None, false),
+            Blend::Vignette => (Kind::Vignette, None, false),
+            Blend::Depth([x, y, w, h]) => {
+                let x = x.min(options.window[0]);
+                let y = y.min(options.window[1]);
+                let w = w.min(options.window[0] - x);
+                let h = h.min(options.window[1] - y);
+                if w == 0 || h == 0 {
+                    continue;
+                }
+                (
+                    Kind::Depth,
+                    Some([x, options.window[1] - y - h, w, h]),
+                    true,
+                )
+            }
+        };
+        total = total
+            .checked_add(range.len())
+            .filter(|n| *n <= options.max_vertices)
+            .ok_or(GuiError::VertexBudget)?;
+        let mut first = true;
+        // Convert a bounded u16 chunk at once; never allocate for an unbounded
+        // range before validating the complete input count.
+        for source in input[range.clone()].chunks(65535) {
+            let decoded = source
+                .iter()
+                .map(|v| Input {
+                    uv: [
+                        v.base.uv[0] - if v.base.uv[0] >= 2. { 2. } else { 0. },
+                        v.base.uv[1],
+                    ],
+                    ..v.base
+                })
+                .collect::<Vec<_>>();
+            let converted = runs(
+                &decoded,
+                &[(0..decoded.len(), Blend::Alpha)],
+                options.window,
+                options.scale,
+                options.uv_scale,
+                decoded.len(),
+            )?;
+            let converted = &converted[0].vertices;
+            for (triangle, vertices) in source.chunks_exact(3).zip(converted.chunks_exact(3)) {
+                let marked = triangle[0].base.uv[0] >= 2.;
+                if triangle.iter().any(|v| (v.base.uv[0] >= 2.) != marked) {
+                    return Err(GuiError::InvalidVertex);
+                }
+                let glint = if marked {
+                    if !matches!(kind, Kind::Alpha | Kind::Additive | Kind::Depth) {
+                        return Err(GuiError::UnsupportedGlint);
+                    }
+                    if triangle
+                        .iter()
+                        .any(|v| v.glint_uv.iter().any(|n| !n.is_finite()))
+                    {
+                        return Err(GuiError::InvalidVertex);
+                    }
+                    Some(options.glint.ok_or(GuiError::UnsupportedGlint)?)
+                } else {
+                    None
+                };
+                let pass = Pass::Gui(Material { kind, glint });
+                if first
+                    || output
+                        .last()
+                        .is_none_or(|r| r.pass != pass || r.vertices.len() + 3 > 65535)
+                {
+                    output.push(Run {
+                        pass,
+                        scissor,
+                        clear_depth: first && depth,
+                        vertices: Vec::new(),
+                        indices: Vec::new(),
+                    });
+                }
+                first = false;
+                let run = output.last_mut().unwrap();
+                for (v, original) in vertices.iter().zip(triangle) {
+                    run.indices.push(run.vertices.len() as u16);
+                    run.vertices.push(GuiVertex {
+                        base: *v,
+                        glint_uv: if marked { original.glint_uv } else { [0.; 2] },
+                    });
+                }
+            }
+        }
+    }
+    Ok(output)
+}
+
 /// Edge-extend an RGBA8 atlas to POT dimensions. Bound the allocation before
 /// allocating; oversized atlases need paging, not silently downscaled resources.
 pub fn pad_atlas(
@@ -200,10 +363,11 @@ pub fn render<B: RenderBackend>(
     atlas: TextureId,
     white: TextureId,
 ) -> Result<(), RenderError<B::Error>> {
-    if runs
-        .iter()
-        .any(|r| !r.pass.is_overlay() || (r.clear_depth && r.pass != Pass::OverlayDepth))
-    {
+    if runs.iter().any(|r| {
+        !r.pass.is_overlay()
+            || matches!(r.pass, Pass::Gui(_))
+            || (r.clear_depth && r.pass != Pass::OverlayDepth)
+    }) {
         return Err(RenderError::InvalidPass);
     }
     let mut uploads = Uploads {
@@ -454,5 +618,113 @@ mod tests {
             ),
             Err(GuiError::InvalidAtlas)
         ));
+    }
+    fn foil_options(max_vertices: usize) -> Options {
+        Options {
+            window: [64; 2],
+            scale: 1.,
+            uv_scale: [1.; 2],
+            max_vertices,
+            glint: Some(crate::entity::Glint {
+                texture: TextureId(1),
+                strength: crate::entity::Strength::ONE,
+            }),
+        }
+    }
+    fn foil_input(marked: bool) -> GlintInput {
+        GlintInput {
+            base: Input {
+                pos: [1., 2.],
+                uv: [if marked { 2.25 } else { 0.25 }, 0.75],
+                color: 0,
+                depth: 0.3,
+            },
+            glint_uv: [-0.25, 1.25],
+        }
+    }
+    #[test]
+    fn gui_foil_decodes_only_mask_uv_preserves_order_and_model_depth_group() {
+        assert_eq!(size_of::<GuiVertex>(), 52);
+        assert_eq!(std::mem::offset_of!(GuiVertex, glint_uv), 44);
+        let source = [
+            [foil_input(false); 3],
+            [foil_input(true); 3],
+            [foil_input(false); 3],
+        ]
+        .concat();
+        let runs = glint_runs(
+            &source,
+            &[(0..9, Blend::Depth([4, 8, 16, 32]))],
+            foil_options(9),
+        )
+        .unwrap();
+        assert_eq!(runs.len(), 3);
+        for (i, run) in runs.iter().enumerate() {
+            assert_eq!(run.clear_depth, i == 0);
+            assert_eq!(run.scissor, Some([4, 24, 16, 32]));
+            assert_eq!(run.pass.pipeline(), Pass::OverlayDepth);
+            let Pass::Gui(material) = run.pass else {
+                panic!("typed GUI")
+            };
+            assert_eq!(material.glint.is_some(), i == 1);
+            assert_eq!(run.vertices[0].base.uv, [0.25, 0.75]);
+            assert_eq!(
+                run.vertices[0].glint_uv,
+                if i == 1 { [-0.25, 1.25] } else { [0.; 2] }
+            );
+        }
+        let mut options = foil_options(9);
+        options.glint = None;
+        assert_eq!(
+            glint_runs(&source, &[(0..9, Blend::Alpha)], options).err(),
+            Some(GuiError::UnsupportedGlint)
+        );
+    }
+    #[test]
+    fn gui_foil_u16_split_never_reclears_or_crosses_a_triangle() {
+        let mut source = vec![foil_input(true); 65541];
+        source[..3].fill(foil_input(false));
+        source[65538..].fill(foil_input(false));
+        let output = glint_runs(
+            &source,
+            &[(0..65541, Blend::Depth([0, 0, 64, 64]))],
+            foil_options(65541),
+        )
+        .unwrap();
+        assert_eq!(
+            output.iter().map(|r| r.vertices.len()).collect::<Vec<_>>(),
+            [3, 65535, 3]
+        );
+        assert_eq!(output.iter().filter(|r| r.clear_depth).count(), 1);
+        assert!(output.iter().all(|r| r.indices.len() % 3 == 0));
+        assert_eq!(
+            glint_runs(&source, &[(0..65541, Blend::Alpha)], foil_options(65540)).err(),
+            Some(GuiError::VertexBudget)
+        );
+    }
+    #[test]
+    fn gui_foil_rejects_mixed_markers_nonfinite_coords_and_wrong_shader_modes() {
+        let mut source = [foil_input(true); 3];
+        source[1] = foil_input(false);
+        assert_eq!(
+            glint_runs(&source, &[(0..3, Blend::Alpha)], foil_options(3)).err(),
+            Some(GuiError::InvalidVertex)
+        );
+        let mut source = [foil_input(true); 3];
+        source[1].glint_uv[0] = f32::NAN;
+        assert_eq!(
+            glint_runs(&source, &[(0..3, Blend::Additive)], foil_options(3)).err(),
+            Some(GuiError::InvalidVertex)
+        );
+        for blend in [Blend::Invert, Blend::Vignette] {
+            assert_eq!(
+                glint_runs(&[foil_input(true); 3], &[(0..3, blend)], foil_options(3)).err(),
+                Some(GuiError::UnsupportedGlint)
+            );
+        }
+        let mut source = [foil_input(false); 3];
+        source[1].glint_uv = [f32::NAN; 2];
+        let output = glint_runs(&source, &[(0..3, Blend::Alpha)], foil_options(3)).unwrap();
+        assert_eq!(output[0].vertices[1].glint_uv, [0.; 2]);
     }
 }

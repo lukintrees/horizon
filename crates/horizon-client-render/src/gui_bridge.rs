@@ -21,18 +21,7 @@ pub fn runs(
     if batch.vertices.len() > max_vertices {
         return Err(Error::Gui(GuiError::VertexBudget));
     }
-    let mut batches = Vec::new();
-    for (range, blend) in batch.runs() {
-        let blend = match blend {
-            Blend::Alpha => gui::Blend::Alpha,
-            Blend::Invert => gui::Blend::Invert,
-            Blend::Additive => gui::Blend::Additive,
-            Blend::Depth(clip) => gui::Blend::Depth(clip),
-            Blend::Vignette => gui::Blend::Vignette,
-            unsupported => return Err(Error::UnsupportedBlend(unsupported)),
-        };
-        batches.push((range.start as usize..range.end as usize, blend));
-    }
+    let batches = batches(batch)?;
     let input = batch
         .vertices
         .iter()
@@ -50,6 +39,63 @@ pub fn runs(
         batch.scale,
         uv_scale,
         max_vertices,
+    )
+    .map_err(Error::Gui)
+}
+
+fn batches(batch: &HudBatch) -> Result<Vec<(std::ops::Range<usize>, gui::Blend)>, Error> {
+    let mut batches = Vec::new();
+    for (range, blend) in batch.runs() {
+        let blend = match blend {
+            Blend::Alpha => gui::Blend::Alpha,
+            Blend::Invert => gui::Blend::Invert,
+            Blend::Additive => gui::Blend::Additive,
+            Blend::Depth(clip) => gui::Blend::Depth(clip),
+            Blend::Vignette => gui::Blend::Vignette,
+            unsupported => return Err(Error::UnsupportedBlend(unsupported)),
+        };
+        batches.push((range.start as usize..range.end as usize, blend));
+    }
+    Ok(batches)
+}
+/// Foil-aware path retaining real HudVertex.glint_uv and HUD accessibility
+/// strength. Portal/CIT remain explicit errors, not flattened atlas draws.
+pub fn glint_runs(
+    batch: &HudBatch,
+    window: [u32; 2],
+    max_vertices: usize,
+    item_texture: Option<horizon_render_api::TextureId>,
+) -> Result<Vec<Run<gui::GuiVertex>>, Error> {
+    if batch.vertices.len() > max_vertices {
+        return Err(Error::Gui(GuiError::VertexBudget));
+    }
+    let strength = horizon_render_api::entity::Strength::new(batch.glint_alpha)
+        .map_err(|_| Error::Gui(GuiError::InvalidGlint))?;
+    let batches = batches(batch)?;
+    let input = batch
+        .vertices
+        .iter()
+        .map(|v| gui::GlintInput {
+            base: Input {
+                pos: v.pos,
+                uv: v.uv,
+                color: v.color,
+                depth: v.depth,
+            },
+            glint_uv: v.glint_uv,
+        })
+        .collect::<Vec<_>>();
+    gui::glint_runs(
+        &input,
+        &batches,
+        gui::Options {
+            window,
+            scale: batch.scale,
+            uv_scale: [1.; 2],
+            max_vertices,
+            glint: item_texture
+                .map(|texture| horizon_render_api::entity::Glint { texture, strength }),
+        },
     )
     .map_err(Error::Gui)
 }
@@ -107,6 +153,28 @@ pub fn upload_patches<B: horizon_render_api::RenderBackend>(
 mod tests {
     use super::*;
     use horizon_render_api::Pass;
+    #[test]
+    fn actual_gui_foil_retains_marker_uv_and_uses_hud_not_world_strength() {
+        let mut batch = HudBatch::new([64; 2]);
+        batch.glint_alpha = 0.37;
+        batch.quad_glint(
+            [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
+            [[2.25, 0.5]; 4],
+            [[-0.25, 1.25]; 4],
+            0,
+        );
+        assert!(glint_runs(&batch, [64; 2], 6, None).is_err());
+        let output =
+            glint_runs(&batch, [64; 2], 6, Some(horizon_render_api::TextureId(7))).unwrap();
+        let Pass::Gui(material) = output[0].pass else {
+            panic!("GUI material")
+        };
+        assert_eq!(material.glint.unwrap().strength.value(), 0.37);
+        assert_eq!(output[0].vertices[0].base.uv, [0.25, 0.5]);
+        assert_eq!(output[0].vertices[0].glint_uv, [-0.25, 1.25]);
+        batch.glint_alpha = f32::NAN;
+        assert!(glint_runs(&batch, [64; 2], 6, Some(horizon_render_api::TextureId(7))).is_err());
+    }
     #[test]
     fn actual_hud_batch_keeps_invert_depth_alpha_and_triangle_order() {
         let mut batch = HudBatch::new([100, 80]);
