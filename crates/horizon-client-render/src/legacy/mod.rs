@@ -7,6 +7,12 @@ pub mod animation;
 pub mod atlas;
 pub mod entity;
 pub mod hud;
+#[cfg(all(
+    feature = "legacy-scene",
+    feature = "legacy-gl-window",
+    any(target_os = "linux", target_os = "windows")
+))]
+pub mod renderer;
 #[cfg(feature = "legacy-scene")]
 pub mod scene;
 pub mod terrain;
