@@ -172,23 +172,26 @@ def chain_width(line):
     return None
 
 
-STRUCT_LIT = re.compile(r"\b(?:[A-Z]\w*|Self)\s*\{([^{}]*)\}")
+STRUCT_LIT = re.compile(r"(?<![\w:])(?:[A-Z]\w*|Self)\s*\{([^{}]*)\}")
 
 
 def wide_struct_literals(line):
-    """Struct literals on `line` whose fields are past `struct_lit_width` (18), as rustfmt sees it.
+    """Struct literals on `line` whose fields rustfmt breaks, as one string per literal.
 
-    `Viewport { width: 320, height: 240 }` is 22 columns of fields and CI turned it into four lines;
-    `SectionRuns { first_run, runs }` is 16 and stays. The rule is rustfmt's default
-    `struct_lit_width`, and it is why a short-name struct stays on one line while a named-field one
-    does not.
+    `TerrainUniforms { origin: [0.0; 3], fade: 1.0, sprite: [0.0; 4] }` is three named fields and
+    CI puts each on its own line whatever their width. Two named fields are left to `max_width`
+    (`Viewport { width: 320, height: 240 }` stays on one line), and shorthand (`Slot { begin, len,
+    runs }`) and patterns (`Records { records, dirty, .. }`) are not literals at all.
     """
     code = code_of(line).rstrip()
     out = []
     for match in STRUCT_LIT.finditer(code):
-        fields = match.group(1).strip()
-        if len(fields) > STRUCT_LIT_WIDTH:
-            out.append(fields)
+        fields = [field for field in match.group(1).split(",") if field.strip()]
+        # `Slot { begin, len, runs }` is shorthand and stays; `Records { records, dirty, .. }` is a
+        # pattern. Only a literal that names its fields is broken.
+        named = [field for field in fields if ":" in field]
+        if len(named) >= 3:
+            out.append(match.group(1).strip())
     return out
 
 
@@ -293,8 +296,7 @@ def check_text(text, name="<memory>"):
             problems.append(
                 (
                     number,
-                    f"this struct literal's {len(fields)} columns of fields is past rustfmt's "
-                    f"{STRUCT_LIT_WIDTH}: one field a line",
+                    "this struct literal has three or more fields: rustfmt puts one a line",
                 )
             )
         names = unsorted_use(code)

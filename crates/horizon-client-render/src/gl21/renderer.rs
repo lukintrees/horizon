@@ -168,12 +168,13 @@ impl Renderer {
         device.bind_texture(Texture::Lightmap);
         for draw in self.frame.draws() {
             self.begin_pass(device, draw);
-            device.terrain(TerrainUniforms {
+            let uniforms = TerrainUniforms {
                 origin: [0.0; 3],
                 visibility: draw.visibility,
                 sprite: [0.0; 4],
                 alpha_test: draw.pass.alpha_test(),
-            });
+            };
+            device.terrain(uniforms);
             device.draw(draw.begin, draw.count);
         }
         if let Some(hud) = hud {
@@ -385,10 +386,7 @@ mod tests {
         let hud = hud_batch(6, Blend::Alpha);
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 800,
-            height: 600,
-        },
+            Viewport { width: 800, height: 600 },
             [0.1, 0.2, 0.3, 1.0],
             &[section(1, &solid, &[])],
             None,
@@ -429,10 +427,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 320,
-            height: 240,
-        },
+            Viewport { width: 320, height: 240 },
             [0.0; 4],
             &[section(1, &a, &[]), section(2, &b, &[])],
             None,
@@ -462,10 +457,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 320,
-            height: 240,
-        },
+            Viewport { width: 320, height: 240 },
             [0.0; 4],
             &[section(1, &solid, &translucent)],
             Some((&sky, 7)),
@@ -498,10 +490,7 @@ mod tests {
         let solid = vertices(6, 3);
         let mut renderer = Renderer::new(1024);
         let mut device = Recording::default();
-        let viewport = Viewport {
-            width: 320,
-            height: 240,
-        };
+        let viewport = Viewport { width: 320, height: 240 };
         renderer.draw(&mut device, viewport, [0.0; 4], &[section(1, &solid, &[])], None, None);
         let uploads = |device: &Recording| {
             device.calls.iter().filter(|c| c.starts_with("upload ")).count()
@@ -538,16 +527,17 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 320,
-            height: 240,
-        },
+            Viewport { width: 320, height: 240 },
             [0.0; 4],
             &[],
             None,
             Some(&hud),
         );
-        let hud_states = device.calls.iter().filter(|call| call.starts_with("state")).count();
+        let hud_states = device
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("state"))
+            .count();
         let hud_draws = device
             .calls
             .iter()
@@ -565,10 +555,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 320,
-            height: 240,
-        },
+            Viewport { width: 320, height: 240 },
             [0.5; 4],
             &[],
             None,
@@ -577,7 +564,11 @@ mod tests {
         assert!(device.calls[0].starts_with("begin "));
         assert_eq!(device.calls.last().map(String::as_str), Some("end"));
         // No world draw, but the present quad is there: the cleared frame has to reach the window.
-        let world = device.calls.iter().filter(|c| c.starts_with("draw ")).count();
+        let world = device
+            .calls
+            .iter()
+            .filter(|c| c.starts_with("draw "))
+            .count();
         assert_eq!(world, 1);
     }
 
@@ -590,10 +581,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 320,
-            height: 240,
-        },
+            Viewport { width: 320, height: 240 },
             [0.0; 4],
             &[section(1, &solid, &translucent)],
             Some((&sky, 1)),
@@ -622,10 +610,7 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport {
-            width: 320,
-            height: 240,
-        },
+            Viewport { width: 320, height: 240 },
             [0.0; 4],
             &[],
             Some((&sky, 3)),

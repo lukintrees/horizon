@@ -56,14 +56,17 @@ class TypedBindingTests(unittest.TestCase):
 
 
 class StructLiteralTests(unittest.TestCase):
-    def test_a_struct_literal_with_long_fields_goes_one_a_line(self):
-        # CI turned `Viewport { width: 320, height: 240 }` into four lines.
-        line = "        let viewport = Viewport { width: 320, height: 240 };\n"
+    def test_a_literal_with_three_named_fields_goes_one_a_line(self):
+        # CI broke this one after a `--changed` run said nothing about it.
+        line = (
+            "            TerrainUniforms { origin: [0.0; 3], fade: 1.0,"
+            " sprite: [0.0; 4] },\n"
+        )
         self.assertTrue(any("struct literal" in message for message in found(line)))
 
-    def test_a_short_one_stays(self):
-        line = "            solid: SectionRuns::new(0, 2),\n"
-        self.assertEqual(found(line), [])
+    def test_two_fields_and_shorthand_stay(self):
+        self.assertEqual(found("        let v = Viewport { width: 320, height: 240 };\n"), [])
+        self.assertEqual(found("        Slot { begin, len, runs }\n"), [])
 
 
 class MacroWidthTests(unittest.TestCase):
