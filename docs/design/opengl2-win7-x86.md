@@ -773,3 +773,51 @@ Win7/X1650, PE/CRT/ISA, startup/platform/game-loop/resource wiring и остав
 runtime matrix, **36 выполненных x86 Windows workspace tests** и probe linking.
 Следующий docs-only commit не меняет проверенный код. Ошибки CPU/Clippy теперь
 также попадают в own check annotations без скачивания redirected log blobs.
+
+
+## 18. Экранные эффекты настоящего игрового кадра
+
+`Frame.screen` больше не отвергается целиком: alpha/vignette quads из
+`screen_effects` рисуются после world/particles/see-through/hand и до HUD, в
+исходном порядке. Это SDR-вариант воды, огня/block overlay, vignette,
+pumpkin/powder-snow/portal; `world_tint` имеет отдельный смысл только в HDR,
+который legacy profile не включает. Остальные missing passes остаются errors.
+
+Спрайты извлекаются из compressed virtual HUD backing: максимум одна decoded
+page одновременно, копируются interiors без gutters, giant atlas не собирается.
+Одинаковые rect делят CPU pixels в пределах кадра; patches применяются до
+extraction, reload не оставляет старый sprite cache. Rect должен соответствовать
+целым texel boundaries, восстанавливаемым из atlas f32 (допуск .01 texel),
+subtexel crops отвергаются. До clear проверяются vertices/flags/native texture
+size, **256 quads / 8 MiB extracted pixels + одна decoded page** и GPU budgets.
+
+`Pass::Screen` получает отдельную texture со sprite-local UV, без CPU fract.
+Nearest/linear, repeat/clamp применяются hardware после интерполяции, включая
+bilinear на шве спрайта. Разрешены NPOT textures desktop GL2 core без mipmaps и
+без resample/padding; terrain/GUI pages остаются POT. В runtime probe теперь
+обязателен реальный 3x2 NPOT repeat/linear readback, но это не ATI qualification.
+Shader обходит light/fog/glint/GUI cutoff. Vignette игнорирует alpha для RGB,
+сохраняет destination alpha; ordinary draws сбрасывают screen/sampler state.
+
+CPU preflight резервирует max(largest sprite, GUI page), а не их сумму: cache
+освобождается до world sizing и после hand, screen держит только одну image +
+188-byte mesh, удаляет их до HUD. Failed cleanup IDs не теряются. Native failure
+по-прежнему может оставить partial frame; CPU rejection сохраняет framebuffer.
+
+Новый обязательный outcome `backend_screen_sampling`: 160 независимых RGBA
+samples для 8 blend/sampler combinations, transparent vignette, light/fog ignore,
+alias/reset, tiny alpha и cleanup. Два CPU tests перебирают все 420 subrectangles
+7x5 atlas, seams, dedup, patch и invalid budgets. 12-й actual-game GPU fixture
+проверяет Frame.screen, hand→screen→HUD, четыре sampling режима, patches/reload,
+rejection preservation и **1156 texture / 516 peak mesh bytes**.
+Локально: **38 standalone Rust tests**, host/i686 Clippy, **3×23 OSMesa checks**,
+**642 Python, 1 skipped**. Startup/input/resources, sky/panorama/оставшиеся passes,
+Win7 PE/CRT/ISA и настоящий X1650 пока не дают playable qualification.
+
+Финальный own CI [41801421945](https://github.com/lukintrees/horizon/actions/runs/41801421945)
+на `c076df5`: **все три jobs SUCCESS**, два новых CPU tests, **12 actual-game GPU
+fixtures**, full-client check/game Clippy, 3×23 independent runtime outcomes,
+**37 выполненных x86 Windows workspace tests** и ordinary probe linking.
+Первый GPU запуск корректно отверг недостаточный hand-mesh budget самого теста;
+финальный fixture учитывает шесть paged vertices. Docs-only commit после него
+не меняет проверенный код. Чужие workflows/PR/Actions не использовались.

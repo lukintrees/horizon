@@ -337,3 +337,27 @@ at `e568d92`, **all three jobs passed**: four frame + one shared-lightmap CPU
 tests, eleven actual-game GPU fixtures, full-client check/game Clippy, runtime
 matrix, **36 executed x86 Windows workspace tests**, and ordinary probe linking.
 The subsequent documentation-only commit does not change this tested code.
+
+
+## Camera-overlay sampling
+
+Required outcomes per profile: **23**. The new `backend_screen_sampling` uses a
+real 3x2 NPOT image and an independent CPU bilinear/addressing oracle: 160 RGBA
+samples across repeat/clamp, nearest/linear and alpha/vignette, including zero
+alpha vignette color, ignored light/fog, sampler alias/reset, tiny positive alpha
+and cleanup. This uses only desktop GL2/GLSL110, no mipmaps or GL3 feature.
+
+The actual-game coordinator additionally consumes `gfx::Frame::screen`, extracts
+sprites from compressed virtual-atlas pages after patches, streams one GPU image
+and mesh between hand and HUD, and explicitly bounds decoded/payload storage.
+Two CPU tests and a twelfth actual-game GPU fixture cover seams, patches/reload,
+all sampling modes, compositing order, exact budgets and framebuffer preservation.
+Local **38 Rust / 3x23 llvmpipe / 642 Python (1 skipped)**, host/i686 Clippy pass.
+Normal Game backend selection, sky/panorama/other missing passes and Win7/X1650
+qualification remain unfinished; no playable port is claimed.
+
+Final own CI [41801421945](https://github.com/lukintrees/horizon/actions/runs/41801421945)
+at `c076df5`: **all three jobs passed**, including the two new CPU tests, twelve
+actual-game GPU fixtures, full-client check/game Clippy, 3x23 runtime matrix,
+**37 executed x86 Windows workspace tests**, and ordinary x86 probe linking.
+The subsequent documentation-only commit leaves the verified code unchanged.

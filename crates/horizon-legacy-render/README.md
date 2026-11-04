@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-22 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+23 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, spherical/dual-distance fog, reversed game depth, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 22 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 23 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -60,9 +60,9 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 ## Verified / blocked (2026-11-04)
 
-Verified here: stable Rust 1.88.0, 35 workspace unit tests plus 2 probe unit tests;
+Verified here: stable Rust 1.88.0, 36 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 22 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 23 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -510,8 +510,8 @@ size (rebuild after resize), fog and classic lightmap parameters, glint, counts,
 visibility duplicates and explicitly requested missing passes before submission.
 Unsupported: panorama, visible sky/End sky, clouds/celestial/stars, weather,
 lightning/additive, lines/outlines, GPU skin frames (caller must request CPU
-poses), glowing silhouettes, dynamic/colored lights, emissive layers, screen
-overlays, border, post/menu blur, chunk fade and water mirrors. These are **errors,
+poses), glowing silhouettes, dynamic/colored lights, emissive layers,
+border, post/menu blur, chunk fade and water mirrors. These are **errors,
 not automatically disabled options**. Consequently normal Overworld/title frames
 are not yet accepted; a no-sky classic frame without these passes is supported.
 Shadow/motion/pack-uniform metadata alone does not request an additional classic
@@ -541,3 +541,77 @@ ordinary x86 probe linking. CPU/Clippy failure diagnostics are also surfaced as
 own check annotations instead of depending on redirected log-blob downloads.
 Win7/X1650, remaining passes, game startup/resource/input scheduling, PE/CRT/ISA
 and a complete playable executable remain unqualified.
+
+
+## Actual camera overlays: sprite-local screen sampling
+
+`render_game_frame` now accepts the game's `ScreenQuad` list and draws it **after
+world/particles/see-through/hand and before the HUD**, in source order. This
+implements the classic SDR path for water, block/fire overlays, vignette,
+pumpkin/powder-snow/portal overlays emitted by `screen_effects`. `world_tint`
+changes the HDR path only; in this explicitly SDR backend it has the ordinary
+screen-alpha meaning. Sky/panorama and other requested missing passes are still
+errors; enabling screen effects does not make normal Game startup playable.
+
+`legacy_gfx::screen::Prepared` validates every quad, common per-quad rectangle,
+finite clip/local UVs, [0,1] color and sampling flags. Sprite rectangles must
+recover integer texel boundaries from atlas-normalized f32 values (within .01
+texel); arbitrary subtexel crops are rejected, not rounded into a different
+image. Native maximum texture size is checked before world clear.
+
+Sprites are extracted from the compressed virtual HUD backing, decoding only
+one bounded page at a time and copying **interiors, never page gutters**. This
+works across virtual page boundaries and does not reconstruct the giant atlas.
+Identical rectangles share one CPU image per frame. There is no stale persistent
+sprite-image cache: current HUD patches are applied before extraction, and atlas
+reloads are reflected in the next preparation. Default limits are **256 screen
+quads / 8 MiB extracted pixels plus one decoded page**; descriptor arrays are
+separately bounded by the quad count. GPU texture/mesh payload budgets still
+apply independently. A sprite exceeding either profile or native limits is an
+explicit error before submission.
+
+`Pass::Screen` uses an independent sprite texture and its own per-draw
+nearest/linear + repeat/clamp state. Local UVs remain unwrapped through
+interpolation; hardware addressing/filtering reproduces sprite-edge/seam
+sampling instead of repeating the whole atlas or baking `fract` at vertices.
+General textures now accept NPOT dimensions (desktop GL2 core; no mipmaps),
+without resampling/padding the sprite or changing its repeat period. Terrain and
+virtual GUI **pages** retain their existing POT layout. Runtime qualification
+now includes an actual 3x2 NPOT repeat/linear readback, not merely a version-string
+assumption. Real ATI/Win7 qualification is still required.
+
+The screen shader exits before lighting/fog/glint/GUI alpha cutoff. Alpha effects
+discard only nonpositive alpha; vignette outputs its RGB even for zero texture/
+tint alpha and uses ZERO/ONE_MINUS_SRC_COLOR, preserving destination alpha.
+Ordinary GUI/terrain/entity draws reset screen mode and sampler state. A screen
+texture may alias the unused lightmap: its binding must not override image
+sampling parameters. The existing ordinary-vignette alias restriction remains.
+
+Before clear, the coordinator validates CPU inputs and available space for the
+largest sprite, a 188-byte screen mesh, and a virtual GUI page when needed.
+GUI pages are released before world-budget sizing and between hand and screen.
+Only **one screen image + one mesh** are live on the GPU at a time; they are
+released before HUD paging resumes. Thus image and GUI-page peaks are max(), not
+sum(), and the original atlas quota cannot silently overcommit. Failed native
+cleanup IDs remain owned for retry/Drop. CPU rejection preserves the framebuffer;
+native upload/draw/delete failures still have no whole-frame rollback guarantee.
+
+The mandatory `backend_screen_sampling` outcome checks 160 independent RGBA
+samples across all 8 blend/sampler combinations on a 3x2 image, transparent
+vignette samples, ignored lighting/fog, sampler aliasing, reset to an ordinary
+overlay, tiny positive alpha and complete resource release. Two CPU game tests
+cover all **420** subrectangles of a 7x5 atlas across page seams, deduplication,
+patches and invalid/budget inputs. The twelfth actual-game GPU fixture drives
+real `gfx::Frame::screen`, uses all four sampling modes, proves hand→screen→HUD
+order, patches/reloads, full-frame rejection preservation, and exact **1156
+texture / 516 peak mesh bytes** (the paged hand has six 84-byte vertices, not four).
+
+Local: **38 standalone Rust tests**, host/i686 Clippy, **3x23 OSMesa outcomes**,
+**642 Python tests, 1 skipped**. Own branch run
+[41801421945](https://github.com/lukintrees/horizon/actions/runs/41801421945)
+at `c076df5` passed **all three jobs**, including both new CPU tests, **12
+actual-game GPU fixtures**, full-client check/game Clippy, the independent runtime
+matrix, **37 executed x86 Windows workspace tests**, and ordinary probe linking.
+The initial GPU attempt correctly rejected an undersized hand-mesh test budget;
+the final fixture budgets the actual paged six-vertex stream. This is not
+Win7/X1650 or complete gameplay qualification.
