@@ -24,12 +24,17 @@ pub struct Atlas {
 /// `pixels`. The sprite must divide `PAGE`, so that no sprite straddles a page.
 pub fn pack(pixels: &[u8], sprite: u32, layers: u32) -> Result<Atlas, String> {
     if sprite == 0 || sprite > PAGE || !PAGE.is_multiple_of(sprite) {
-        return Err(format!("a sprite of {sprite} texels does not divide the {PAGE}-texel page"));
+        return Err(format!(
+            "a sprite of {sprite} texels does not divide the {PAGE}-texel page"
+        ));
     }
     let row = (sprite * 4) as usize;
     let layer_bytes = row * sprite as usize;
     if pixels.len() != layer_bytes * layers as usize {
-        return Err(format!("{} bytes for {layers} sprites of {sprite} texels", pixels.len()));
+        return Err(format!(
+            "{} bytes for {layers} sprites of {sprite} texels",
+            pixels.len()
+        ));
     }
     let per_row = PAGE / sprite;
     let per_page = per_row * per_row;
@@ -41,15 +46,24 @@ pub fn pack(pixels: &[u8], sprite: u32, layers: u32) -> Result<Atlas, String> {
             pages.push(vec![0; (PAGE * PAGE * 4) as usize]);
         }
         let origin = [(slot % per_row) * sprite, (slot / per_row) * sprite];
-        let page = pages.last_mut().expect("a page is pushed for every first slot");
+        let page = pages
+            .last_mut()
+            .expect("a page is pushed for every first slot");
         let source = &pixels[layer as usize * layer_bytes..][..layer_bytes];
         for (y, source_row) in source.chunks_exact(row).enumerate() {
             let at = (((origin[1] + y as u32) * PAGE + origin[0]) * 4) as usize;
             page[at..at + row].copy_from_slice(source_row);
         }
-        placements.push(Placement { page: layer / per_page, origin });
+        placements.push(Placement {
+            page: layer / per_page,
+            origin,
+        });
     }
-    Ok(Atlas { sprite, pages, placements })
+    Ok(Atlas {
+        sprite,
+        pages,
+        placements,
+    })
 }
 
 #[cfg(test)]
@@ -79,8 +93,20 @@ mod tests {
     fn each_layer_lands_at_its_placement_with_its_own_texels() {
         let atlas = pack(&layers(4, 3), 4, 3).unwrap();
         assert_eq!(atlas.pages.len(), 1);
-        assert_eq!(atlas.placements[0], Placement { page: 0, origin: [0, 0] });
-        assert_eq!(atlas.placements[2], Placement { page: 0, origin: [8, 0] });
+        assert_eq!(
+            atlas.placements[0],
+            Placement {
+                page: 0,
+                origin: [0, 0]
+            }
+        );
+        assert_eq!(
+            atlas.placements[2],
+            Placement {
+                page: 0,
+                origin: [8, 0]
+            }
+        );
         // Texel (1, 2) of layer 2 sits at the origin plus (1, 2) in the page.
         assert_eq!(texel(&atlas, 0, 8 + 1, 2), [2, 1, 2, 255]);
         // The texel after layer 2's last column belongs to nobody: it stays empty.
@@ -92,7 +118,13 @@ mod tests {
         // 1024-texel sprites: four to a page, so layer 4 is the first of page 1.
         let atlas = pack(&layers(1024, 5), 1024, 5).unwrap();
         assert_eq!(atlas.pages.len(), 2);
-        assert_eq!(atlas.placements[4], Placement { page: 1, origin: [0, 0] });
+        assert_eq!(
+            atlas.placements[4],
+            Placement {
+                page: 1,
+                origin: [0, 0]
+            }
+        );
         assert_eq!(texel(&atlas, 1, 3, 5), [4, 3, 5, 255]);
     }
 
