@@ -10,7 +10,9 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
 # Win7 std has no prebuilt rustup component. Use rust-src for the exact nightly.
-$env:RUSTFLAGS = (($env:RUSTFLAGS, '-C target-feature=+crt-static' | Where-Object { $_ }) -join ' ')
+if ($env:RUSTFLAGS -notmatch 'target-feature=\+crt-static(?:\s|,|$)') {
+    $env:RUSTFLAGS = (($env:RUSTFLAGS, '-C target-feature=+crt-static' | Where-Object { $_ }) -join ' ')
+}
 if (-not $Release -and -not $env:CARGO_PROFILE_DEV_DEBUG) { $env:CARGO_PROFILE_DEV_DEBUG = '0' }
 $cargoArgs = @('+nightly', 'build', '-Z', 'build-std=std,panic_abort', '--locked',
     '-p', 'horizon-client', '--no-default-features', '--bin', 'horizon-client',

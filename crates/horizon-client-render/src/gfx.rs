@@ -1585,11 +1585,12 @@ fn instance_descriptor(
         descriptor = descriptor.with_display_handle(Box::new(WindowDisplay(window.clone())));
     }
     descriptor.backends = backends.with_env();
-    let dx12 = cfg!(windows) && descriptor.backends.contains(wgpu::Backends::DX12);
+    let dx12 = cfg!(all(windows, not(target_vendor = "win7")))
+        && descriptor.backends.contains(wgpu::Backends::DX12);
     // FXC spends about 2.6 s on every start compiling the pipelines (DXC about
     // 1 s); what it compiled once is kept in the game folder and read back
     // after that (third_party/wgpu-hal/src/dx12/disk_cache.rs).
-    #[cfg(windows)]
+    #[cfg(all(windows, not(target_vendor = "win7")))]
     if dx12 {
         wgpu::hal::dx12::disk_cache::set_file(dx12_shader_cache(&crate::logging::game_home()));
     }

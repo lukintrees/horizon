@@ -5,6 +5,10 @@ on:
       - 'crates/horizon-legacy-gl/**'
       - 'crates/horizon-client-render/src/legacy/**'
       - 'crates/horizon-client-render/Cargo.toml'
+      - 'crates/horizon-client-render/src/gfx.rs'
+      - 'crates/horizon-client/Cargo.toml'
+      - 'crates/horizon-client-lib/Cargo.toml'
+      - 'tools/build_win7_x86.ps1'
       - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
@@ -16,6 +20,10 @@ on:
       - 'crates/horizon-legacy-gl/**'
       - 'crates/horizon-client-render/src/legacy/**'
       - 'crates/horizon-client-render/Cargo.toml'
+      - 'crates/horizon-client-render/src/gfx.rs'
+      - 'crates/horizon-client/Cargo.toml'
+      - 'crates/horizon-client-lib/Cargo.toml'
+      - 'tools/build_win7_x86.ps1'
       - 'crates/horizon-client-render/examples/legacy_gl_window.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
@@ -164,7 +172,10 @@ jobs:
           python - <<'PY'
           import os
           from pathlib import Path
-          text = Path(os.environ['RUNNER_TEMP'], 'win7-client-check.log').read_text(errors='replace')[-2500:]
+          import re
+          log = Path(os.environ['RUNNER_TEMP'], 'win7-client-check.log').read_text(errors='replace')
+          match = re.search(r'^error(?:\[[^]]+\])?:', log, re.MULTILINE)
+          text = (log[match.start():match.start() + 1800] + '\n...\n' + log[-650:]) if match else log[-2500:]
           text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           print('::error::' + text)
           PY
