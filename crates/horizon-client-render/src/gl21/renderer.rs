@@ -152,7 +152,9 @@ impl Renderer {
     /// present quad.
     ///
     /// `hud` is `None` for a frame with no overlay at all (a screenshot, a loading screen drawn by the
-    /// game's own code); `present` comes from the frame's plan (`Frame::present`).
+    /// game's own code). `present` draws the frame texture onto the window: a frame the game keeps in
+    /// its own texture for the menu's blur does not, and then the last pass into the window is the
+    /// game's own.
     pub fn draw(
         &mut self,
         device: &mut dyn Device,
@@ -161,8 +163,9 @@ impl Renderer {
         sections: &[Section<'_>],
         sky: Option<Sky<'_>>,
         hud: Option<&HudDraws>,
+        present: bool,
     ) {
-        self.frame.build(sections, sky, hud.is_none());
+        self.frame.build(sections, sky, present);
         device.begin_frame(viewport, clear);
         // The ranges the GPU has not seen, before anything is drawn out of them.
         for upload in self.frame.uploads() {
@@ -386,6 +389,7 @@ mod tests {
             sections,
             None,
             None,
+            true,
         );
     }
 
@@ -422,6 +426,7 @@ mod tests {
             &[section(1, &solid, &[])],
             None,
             Some(&hud),
+            true,
         );
         let calls = &device.calls;
         let first = calls.first().map(String::as_str);
@@ -463,6 +468,7 @@ mod tests {
             &[section(1, &a, &[]), section(2, &b, &[])],
             None,
             None,
+            true,
         );
         let states = device
             .calls
@@ -493,6 +499,7 @@ mod tests {
             &[section(1, &solid, &translucent)],
             Some((&sky, 7)),
             None,
+            true,
         );
         let states: Vec<&String> = device
             .calls
@@ -562,6 +569,7 @@ mod tests {
             &[],
             None,
             Some(&hud),
+            true,
         );
         let hud_states = device
             .calls
@@ -591,6 +599,7 @@ mod tests {
             &[],
             None,
             None,
+            true,
         );
         assert!(device.calls[0].starts_with("begin "));
         assert_eq!(device.calls.last().map(String::as_str), Some("end"));
@@ -601,6 +610,24 @@ mod tests {
             .filter(|c| c.starts_with("draw "))
             .count();
         assert_eq!(world, 1);
+    }
+
+    #[test]
+    fn a_frame_kept_in_its_own_texture_has_no_present_pass() {
+        let solid = vertices(6, 3);
+        let mut renderer = Renderer::new(1024);
+        let mut device = Recording::default();
+        renderer.draw(
+            &mut device,
+            Viewport::new(320, 240),
+            [0.0; 4],
+            &[section(1, &solid, &[])],
+            None,
+            None,
+            false,
+        );
+        assert!(!device.calls.iter().any(|call| call.contains("Present")));
+        assert!(!renderer.frame().present());
     }
 
     #[test]
@@ -617,6 +644,7 @@ mod tests {
             &[section(1, &solid, &translucent)],
             Some((&sky, 1)),
             None,
+            true,
         );
         let line = summary(renderer.frame());
         assert!(line.contains("1 solid"), "{line}");
@@ -646,6 +674,7 @@ mod tests {
             &[],
             Some((&sky, 3)),
             None,
+            true,
         );
         let draw = renderer.frame().draws()[0];
         assert_eq!(draw.section, SKY);

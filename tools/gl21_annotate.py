@@ -40,7 +40,11 @@ SHORT = re.compile(
 # `---- a_test stdout ----` opens a failed test's output; what it printed follows.
 SECTION = re.compile(r"^---- (?P<name>\S+) stdout ----$")
 # `thread 'gl21::draws::tests::a_test' panicked at crates/x/src/y.rs:12:5:`
-PANIC = re.compile(r"^thread '(?P<name>[^']+)' panicked at (?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+):?")
+# `thread 'a_test' (6464) panicked at crates/x/src/y.rs:12:5:` — rustc 1.87 prints the thread's id,
+# older ones do not. Both match.
+PANIC = re.compile(
+    r"^thread '(?P<name>[^']+)'(?: \(\d+\))? panicked at (?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+):?"
+)
 # The location a rustc diagnostic points at: ` --> crates/x/src/y.rs:12:5`.
 LOCATION = re.compile(r"^\s*--> (?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+)$")
 # `error[E0425]: cannot find value `x`` / `error: could not compile ...`
@@ -114,12 +118,12 @@ def test_annotations(text):
             current = {"name": section.group("name"), "body": []}
         elif current is not None:
             if line.startswith("failures:") or line.startswith("test result:"):
+                # The section is over: keep whatever it printed.
+                if current["body"]:
+                    out.append(_section_annotation(current))
                 current = None
             else:
                 current["body"].append(line)
-        if current is not None and len(current["body"]) >= 6:
-            out.append(_section_annotation(current))
-            current = None
         panic = PANIC.match(line)
         if panic:
             out.append(

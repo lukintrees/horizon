@@ -66,6 +66,38 @@ class LinterTests(unittest.TestCase):
             gl21_annotate.annotations("cargo", "")
 
 
+class TestSectionBlocks(unittest.TestCase):
+    """A failed test whose output has no `panicked at` line still has to name itself."""
+
+    def test_a_section_names_the_test_and_what_it_printed(self):
+        text = (
+            "failures:\n"
+            "    gl21::renderer::tests::a_test\n"
+            "\n"
+            "---- gl21::renderer::tests::a_test stdout ----\n"
+            "assertion `left == right` failed\n"
+            "  left: 3\n"
+            " right: 2\n"
+            "\n"
+            "test result: FAILED. 1 passed; 1 failed\n"
+        )
+        found = gl21_annotate.test_annotations(text)
+        self.assertEqual(len(found), 1, found)
+        _, _, message = found[0]
+        self.assertIn("a_test", message)
+        self.assertIn("left: 3", message)
+
+    def test_a_thread_id_does_not_hide_the_panic(self):
+        text = (
+            "thread 'gl21::backend::tests::a_test' (6464) panicked at "
+            "crates/horizon-client-render/src/gl21/backend.rs:394:9:\n"
+            "assertion failed\n"
+        )
+        found = gl21_annotate.test_annotations(text)
+        self.assertEqual(len(found), 1, found)
+        self.assertEqual(found[0][:2], ("crates/horizon-client-render/src/gl21/backend.rs", 394))
+
+
 class TestRunTests(unittest.TestCase):
     CARGO_TEST = """   Compiling horizon-client-render v0.1.0
 error[E0425]: cannot find function `layer_split_with` in this scope
