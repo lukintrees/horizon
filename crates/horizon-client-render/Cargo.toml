@@ -18,6 +18,7 @@ horizon-command = { path = "../horizon-command" }
 horizon-core = { path = "../horizon-core" }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-items = { path = "../horizon-items" }
+horizon-legacy-gl = { path = "../horizon-legacy-gl" }
 # The narrator option's status and whether the narrator is there (Options.narrator).
 horizon-narrator = { path = "../horizon-narrator" }
 # OptiFine-format pack files: random entity textures (hud.rs), connected textures
