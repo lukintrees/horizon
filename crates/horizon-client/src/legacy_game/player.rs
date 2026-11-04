@@ -260,7 +260,7 @@ impl Player {
             boundary[1] * delta[1],
             boundary[2] * delta[2],
         ];
-        let mut normal = [0, 0, 0];
+        let mut normal: [i32; 3];
         for _ in 0..256 {
             let axis = if max[0] <= max[1] && max[0] <= max[2] {
                 0

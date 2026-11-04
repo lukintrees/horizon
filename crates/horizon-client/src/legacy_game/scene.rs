@@ -7,7 +7,7 @@ use super::Game;
 use super::player::REACH;
 use super::text::{TextAtlas, TextQuad};
 use super::ui::{Rect, UiFrame};
-use super::world::{CHUNK_SIZE, WORLD_HEIGHT, height_at};
+use super::world::{CHUNK_SIZE, height_at};
 
 const UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 const ORDER: [usize; 6] = [0, 1, 2, 0, 2, 3];
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn world_height_stays_inside_the_chunk_mesh_bounds() {
-        assert!(WORLD_HEIGHT > 0);
+        assert!(super::super::world::WORLD_HEIGHT > 0);
         assert_eq!(CHUNK_SIZE, 16);
     }
 }

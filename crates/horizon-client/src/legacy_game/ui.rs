@@ -435,9 +435,10 @@ impl UiFrame {
             y1: h - 6.0,
             color: HOTBAR,
         });
-        for slot in 0..9 {
+        for slot in 0_usize..9 {
+            let slot_u8 = slot as u8;
             let x = hotbar_x + slot as f32 * 42.0;
-            let color = if slot == state.selected {
+            let color = if slot_u8 == state.selected {
                 SELECTED
             } else {
                 BUTTON_HOVER
@@ -460,11 +461,12 @@ impl UiFrame {
                 9.0,
             ));
         }
+        let fps = state.fps.round() as i32;
         self.texts.push(translated(
             12.0,
             12.0,
             "horizon.legacyGl.game.fps",
-            &[&state.fps.round() as i32],
+            &[&fps],
             13.0,
         ));
         self.texts.push(translated(

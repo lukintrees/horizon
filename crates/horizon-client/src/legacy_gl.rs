@@ -33,9 +33,7 @@ use horizon_client_render::gfx21::{
 use raw_window_handle::HasWindowHandle;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{
-    DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
-};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
@@ -481,6 +479,7 @@ struct App {
     infinite: bool,
     mode: Mode,
     game: Game,
+    cursor: (f64, f64),
     last_frame: Instant,
     error: Option<String>,
 }
@@ -584,9 +583,6 @@ impl App {
         self.gl_surface = Some(gl_surface);
 
         let gl_display = gl_config.display();
-        unsafe {
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-        }
         let gl = unsafe {
             glow::Context::from_loader_function(|symbol| {
                 let symbol = CString::new(symbol).unwrap();
@@ -595,6 +591,9 @@ impl App {
                     .cast::<c_void>()
             })
         };
+        unsafe {
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        }
 
         let version = unsafe { gl.get_parameter_string(glow::VERSION) };
         let glsl = unsafe { gl.get_parameter_string(glow::SHADING_LANGUAGE_VERSION) };
@@ -764,7 +763,7 @@ impl App {
         let width = self.width.max(1);
         let height = self.height.max(1);
         let scene: RenderScene = self.game.build_scene(width, height)?;
-        if scene.draw_count > MAX_DRAWS {
+        if scene.draw_count > MAX_DRAWS as usize {
             return Err(format!("draw budget: {} > {}", scene.draw_count, MAX_DRAWS));
         }
         unsafe {
@@ -1305,8 +1304,12 @@ impl ApplicationHandler for App {
                     window.request_redraw();
                 }
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = (position.x, position.y);
+            }
             WindowEvent::MouseInput { state, button, .. } => {
-                let exit = self.game.mouse_click(button, state, 0.0, 0.0);
+                let (x, y) = self.cursor;
+                let exit = self.game.mouse_click(button, state, x as f32, y as f32);
                 self.apply_cursor();
                 if exit {
                     self.save_game();
@@ -1427,7 +1430,8 @@ impl Renderer {
     }
 
     pub fn render(self, _frame: &RenderFrame) -> Result<bool, RendererError> {
-        self.run(&LegacySettings::default())?;
+        let settings = self.app.settings.clone();
+        self.run(&settings)?;
         Ok(false)
     }
 
