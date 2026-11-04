@@ -110,3 +110,17 @@ jobs:
         run: cargo clippy --locked -p horizon-legacy-gl --features window-context --all-targets --target i686-pc-windows-msvc -- -D warnings
       - name: Run 32-bit native WGL probe
         run: cargo run --locked -p horizon-legacy-gl --features window-context --target i686-pc-windows-msvc --example wgl_probe
+  win7-i686:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      # Rust does not distribute std for the tier-3 Win7 target. Build it from
+      # the matching nightly sources, not from the Windows 10+ prebuilt target.
+      - name: Build probe with Windows 7 standard library
+        run: cargo +nightly build -Z build-std=std,panic_abort --locked -p horizon-legacy-gl --features window-context --target i686-win7-windows-msvc --example wgl_probe
+      - name: Run Win7-targeted probe on hosted Windows
+        run: ./target/i686-win7-windows-msvc/debug/examples/wgl_probe.exe
