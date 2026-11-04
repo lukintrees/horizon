@@ -181,7 +181,7 @@ jobs:
           $sysroot = rustc +nightly --print sysroot
           $nm = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
           $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/Lib'
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installerswhere.exe" -latest -property installationPath
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
           $msvc = Join-Path $vs 'VC/Tools/MSVC'
           python tools/win7_symbol_users.py --nm "$nm" --symbol GetSystemTimePreciseAsFileTime target/i686-win7-windows-msvc/debug "$kits" "$msvc"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
