@@ -16828,8 +16828,17 @@ impl Game<'_> {
             if !budgeted && self.pending_uploads.is_empty() && uploads.len() <= AUTO_UPLOADS_AT_ONCE
             {
                 horizon_client::spans::time("upload", || {
+                    let mut warned = false;
                     for (key, mesh) in &uploads {
-                        renderer.upload(*key, mesh);
+                        let uploaded =
+                            horizon_client::renderer_facade::RendererFacade::modern(renderer)
+                                .upload_section([key.0, key.1, key.2], mesh);
+                        if let Err(error) = uploaded
+                            && !warned
+                        {
+                            log::warn!("Horizon: cannot upload a terrain section: {error}");
+                            warned = true;
+                        }
                     }
                 });
                 self.streaming.free(uploads);
@@ -16888,7 +16897,12 @@ impl Game<'_> {
                         break;
                     }
                     let (key, mesh) = pending.pop().expect("checked above");
-                    renderer.upload(key, &mesh);
+                    if let Err(error) =
+                        horizon_client::renderer_facade::RendererFacade::modern(renderer)
+                            .upload_section([key.0, key.1, key.2], &mesh)
+                    {
+                        log::warn!("Horizon: cannot upload a terrain section: {error}");
+                    }
                     spent.push((key, mesh));
                     count += 1;
                     bytes += size;

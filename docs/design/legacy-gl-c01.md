@@ -50,6 +50,8 @@ wgpu-free dependency graph остаётся за D01.
   фасада: Game и `horizon-ctl` больше не называют `wgpu::AdapterInfo`/`SurfaceConfiguration`, а F3
   получает вид GPU как `DeviceClass`, а не `wgpu::DeviceType`. Legacy заполнит ту же форму из GL-строк,
   когда G01 начнёт классифицировать адаптер; до тех пор дальность не урезается.
+- Terrain upload (`upload_section`) — команда фасада: Game больше не вызывает `Renderer::upload`
+  напрямую; ошибка (legacy) логируется, а не теряется молча.
 - `capabilities()` описывает реализованные feature families, **не** фактические hardware GL limits.
   `require()` явно отклоняет GPU poses/panorama/packs на legacy; F01 ещё должен вызвать negotiation
   до geometry generation. Native driver checks/budgets продолжают проверяться существующим backend.
@@ -85,7 +87,7 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 | `device`, `queue`, `hud` uploads в skins/maps/UI/glint | A01/A02/E01/R02: CPU patches/resource commands; не протаскивать device/queue в общий trait |
 | `screenshot*`, capture requests/results, device recovery | R02a: facade commands `request_screenshot`/`screenshot_pending`/`take_*`/`restore_*` уже используются Game; modern capture остаётся в modern adapter, legacy readback — U01 |
 | `info`, gpu times/census, HDR calibration, shader macros/packs | Backend-neutral diagnostics; modern-only commands явно capability gated |
-| `upload`, section membership/removals, `take_dropped_sections`, LOD / culling / static entities | W01/R02: neutral section keys/stamps, bounded queues, CPU visibility; modern GPU paths isolated |
+| `upload`, section membership/removals, `take_dropped_sections`, LOD / culling / static entities | W01/R02: terrain `upload_section` уже команда фасада (ошибка не теряется); neutral section keys/stamps, bounded queues, CPU visibility и modern GPU paths остаются |
 | `skins_entities`, `skinned_models`, GPU posing storage | E01: настоящее CPU posing, не только `skin=None` |
 | `gamma`, fullbright, animation/filtering, fog/lightmap | F01/A02: policy/settings commands, не публичные GPU-owned поля |
 | `frame::Frame` и DTO `skin`/`lightning`/`pack` | R01a вынесены в общий CPU-модуль; старые `gfx::*` пути совместимы. Остаток R01: visibility/resource descriptors и отделение dependency graph, а не второй Frame |
