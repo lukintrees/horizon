@@ -1290,7 +1290,7 @@ impl Game<'_> {
                 "gpu": gpu.name,
                 "vendor": vendor_name(gpu.vendor),
                 "driver": gpu.driver,
-                "device_type": gpu.device_type,
+                "device_type": gpu.device_class.as_str(),
                 "backend": gpu.backend,
                 "size": [width, height],
                 "present_mode": format!("{:?}", r.config.present_mode),

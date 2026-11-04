@@ -345,16 +345,9 @@ impl Game<'_> {
     /// `DebugEntryFps`.
     pub(super) fn debug_fps_line(&self, d: &mut debug_overlay::Displayer) {
         let limit = self.framerate_limit();
-        let present = self
-            .renderer
-            .as_ref()
-            .map_or("", |r| match r.config.present_mode {
-                wgpu::PresentMode::Immediate => " (immediate)",
-                wgpu::PresentMode::Mailbox => " (mailbox)",
-                wgpu::PresentMode::Fifo => " (fifo)",
-                wgpu::PresentMode::FifoRelaxed => " (fifo relaxed)",
-                _ => "",
-            });
+        let present = self.renderer.as_ref().map_or("", |r| {
+            horizon_client::renderer_facade::present_mode(r).label()
+        });
         let refresh = self
             .window
             .as_ref()
@@ -426,7 +419,7 @@ impl Game<'_> {
                     CPU.get_or_init(horizon_client::crash::cpu)
                 )],
             );
-            let info = &r.info;
+            let gpu = horizon_client::renderer_facade::gpu_info(r);
             d.group(
                 "system",
                 [format!(
@@ -434,10 +427,10 @@ impl Game<'_> {
                     framebuffer[0],
                     framebuffer[1],
                     // Metal adapters report no PCI vendor.
-                    if info.vendor == 0 && info.backend == wgpu::Backend::Metal {
+                    if gpu.vendor == 0 && gpu.backend == "Metal" {
                         "Apple".into()
                     } else {
-                        debug_overlay::vendor_name(info.vendor)
+                        debug_overlay::vendor_name(gpu.vendor)
                     }
                 )],
             );
@@ -453,22 +446,21 @@ impl Game<'_> {
                     )],
                 );
             }
-            let kind = match info.device_type {
-                wgpu::DeviceType::IntegratedGpu => " (iGPU)",
-                wgpu::DeviceType::DiscreteGpu => " (dGPU)",
-                wgpu::DeviceType::VirtualGpu => " (vGPU)",
-                wgpu::DeviceType::Cpu => " (software)",
-                wgpu::DeviceType::Other => "",
+            let kind = match gpu.device_class {
+                horizon_client::renderer_facade::DeviceClass::Integrated => " (iGPU)",
+                horizon_client::renderer_facade::DeviceClass::Discrete => " (dGPU)",
+                horizon_client::renderer_facade::DeviceClass::Virtual => " (vGPU)",
+                horizon_client::renderer_facade::DeviceClass::Cpu => " (software)",
+                horizon_client::renderer_facade::DeviceClass::Other => "",
             };
-            let driver = format!("{} {}", info.driver, info.driver_info);
             d.group(
                 "system",
                 [
-                    format!("{}{kind}", info.name),
+                    format!("{}{kind}", gpu.name),
                     format!(
-                        "{:?} {}",
-                        info.backend,
-                        driver.trim().lines().next().unwrap_or("")
+                        "{} {}",
+                        gpu.backend,
+                        gpu.driver.lines().next().unwrap_or("")
                     )
                     .trim_end()
                     .to_owned(),

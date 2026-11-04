@@ -46,9 +46,10 @@ wgpu-free dependency graph остаётся за D01.
 - Surface handover (`release_surface`/`recreate_surface`) — тоже команды фасада: modern передаёт и
   восстанавливает wgpu surface, legacy возвращает ошибку, потому что его surface принадлежит native
   context (G01). Молчаливый no-op оставил бы два владельца окна.
-- Diagnostics (`gpu_info`, `lod_distance`, `drawable_size`) — нейтральные функции фасада: Game и
-  `horizon-ctl` больше не называют `wgpu::AdapterInfo`/`SurfaceConfiguration`. Legacy заполнит ту же
-  форму из GL-строк, когда G01 начнёт классифицировать адаптер; до тех пор дальность не урезается.
+- Diagnostics (`gpu_info`, `lod_distance`, `drawable_size`, `present_mode`) — нейтральные функции
+  фасада: Game и `horizon-ctl` больше не называют `wgpu::AdapterInfo`/`SurfaceConfiguration`, а F3
+  получает вид GPU как `DeviceClass`, а не `wgpu::DeviceType`. Legacy заполнит ту же форму из GL-строк,
+  когда G01 начнёт классифицировать адаптер; до тех пор дальность не урезается.
 - `capabilities()` описывает реализованные feature families, **не** фактические hardware GL limits.
   `require()` явно отклоняет GPU poses/panorama/packs на legacy; F01 ещё должен вызвать negotiation
   до geometry generation. Native driver checks/budgets продолжают проверяться существующим backend.

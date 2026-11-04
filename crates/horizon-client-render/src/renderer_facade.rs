@@ -198,11 +198,31 @@ pub struct GpuInfo {
     pub name: String,
     /// PCI vendor id, 0 when the backend has only a string.
     pub vendor: u32,
-    /// `integrated`, `discrete`, `virtual`, `cpu` or `other`.
-    pub device_type: &'static str,
+    pub device_class: DeviceClass,
     /// The graphics API, as `wgpu`/GL name it.
     pub backend: String,
     pub driver: String,
+}
+/// What kind of GPU the adapter is, in the terms far terrain and the debug
+/// overlay care about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceClass {
+    Integrated,
+    Discrete,
+    Virtual,
+    Cpu,
+    Other,
+}
+impl DeviceClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Integrated => "integrated",
+            Self::Discrete => "discrete",
+            Self::Virtual => "virtual",
+            Self::Cpu => "cpu",
+            Self::Other => "other",
+        }
+    }
 }
 /// The adapter's facts, read-only: `horizon-ctl` and logs ask here rather than
 /// touching `Renderer` fields.
@@ -211,17 +231,48 @@ pub fn gpu_info(renderer: &gfx::Renderer) -> GpuInfo {
     GpuInfo {
         name: info.name.clone(),
         vendor: info.vendor,
-        device_type: match info.device_type {
-            wgpu::DeviceType::IntegratedGpu => "integrated",
-            wgpu::DeviceType::DiscreteGpu => "discrete",
-            wgpu::DeviceType::VirtualGpu => "virtual",
-            wgpu::DeviceType::Cpu => "cpu",
-            wgpu::DeviceType::Other => "other",
+        device_class: match info.device_type {
+            wgpu::DeviceType::IntegratedGpu => DeviceClass::Integrated,
+            wgpu::DeviceType::DiscreteGpu => DeviceClass::Discrete,
+            wgpu::DeviceType::VirtualGpu => DeviceClass::Virtual,
+            wgpu::DeviceType::Cpu => DeviceClass::Cpu,
+            wgpu::DeviceType::Other => DeviceClass::Other,
         },
         backend: format!("{:?}", info.backend),
         driver: format!("{} {}", info.driver, info.driver_info)
             .trim()
             .to_owned(),
+    }
+}
+/// How the backend presents, without Game naming a `wgpu` type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentMode {
+    Immediate,
+    Mailbox,
+    Fifo,
+    FifoRelaxed,
+    Other,
+}
+impl PresentMode {
+    /// The FPS line's suffix, empty when there is nothing to say.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Immediate => " (immediate)",
+            Self::Mailbox => " (mailbox)",
+            Self::Fifo => " (fifo)",
+            Self::FifoRelaxed => " (fifo relaxed)",
+            Self::Other => "",
+        }
+    }
+}
+/// The mode the surface presents with. Legacy (G01) reports its swap interval.
+pub fn present_mode(renderer: &gfx::Renderer) -> PresentMode {
+    match renderer.config.present_mode {
+        wgpu::PresentMode::Immediate => PresentMode::Immediate,
+        wgpu::PresentMode::Mailbox => PresentMode::Mailbox,
+        wgpu::PresentMode::Fifo => PresentMode::Fifo,
+        wgpu::PresentMode::FifoRelaxed => PresentMode::FifoRelaxed,
+        _ => PresentMode::Other,
     }
 }
 /// `distance` as far terrain applies it on this adapter. Legacy has no adapter

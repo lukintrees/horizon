@@ -1413,7 +1413,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/control.rs",
-      "sha256": "3cf01d3c1258251c919ada7d64d1312b14df500ae3948de0a182b1fb7e7b6ff8",
+      "sha256": "ffab4002f05126920195e2b8daf8a69fec5883a4f359d7cf681b8769e9dc6d91",
       "references": [
         {
           "line": 34,
@@ -1773,7 +1773,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/debug_keys.rs",
-      "sha256": "b11e47bb3ca3667f5e94b8a3ba31c61e22ceb3794013c81f7e722e6ad46697f4",
+      "sha256": "45d5405aca3cfaa494b901d9a1ec40444a69cf8f10553057c1cb1a4d099b2840",
       "references": [
         {
           "line": 333,
@@ -1790,35 +1790,28 @@
           "code": "&r.lightmap_pixels,"
         },
         {
-          "line": 349,
+          "line": 348,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "let present = self.renderer.as_ref().map_or(\"\", |r| {"
+        },
+        {
+          "line": 361,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 351,
-          "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map_or(\"\", |r| match r.config.present_mode {"
-        },
-        {
-          "line": 368,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": ".renderer"
-        },
-        {
-          "line": 370,
+          "line": 363,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".and_then(|r| r.frame_generation_share())"
         },
         {
-          "line": 407,
+          "line": 400,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -1826,28 +1819,21 @@
           "code": "if self.renderer.as_ref().is_some_and(|r| r.multi_draw) {"
         },
         {
-          "line": 420,
+          "line": 413,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.as_ref() {"
         },
         {
-          "line": 429,
-          "kinds": [
-            "candidate-member-access"
-          ],
-          "code": "let info = &r.info;"
-        },
-        {
-          "line": 481,
+          "line": 473,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "&& let Some(r) = self.renderer.as_ref()"
         },
         {
-          "line": 483,
+          "line": 475,
           "kinds": [
             "candidate-member-access"
           ],
