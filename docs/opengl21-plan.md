@@ -226,8 +226,13 @@ culling, без flat draws, без translucent batching, без GPU-culling, б�
 - `gl21/draws.rs` — план кадра без GPU: небо, затем solid в порядке списка, затем прозрачное
   от дальнего к ближнему, затем present; `draw_calls` считает вызовы (на 2006 CPU это и есть
   цена), `Pass` знает про глубину, блендинг и порог теста.
-- Ничего из этого ещё не рисует: драйвер окна и контекста (Phase 1) требует `glutin`, которой в
-  `Cargo.lock` нет, и добавить её вслепую, без `cargo`, значит сломать `--locked` в CI.
+- `gl21/context.rs` — чеклист §9.2 как данные: `Capabilities::missing()` («нужен OpenGL 2.1,
+  драйвер сообщает 1.4») и `wanted()` (только скорость).
+- `gl21/arena.rs` — один буфер вершин на весь обзор и диапазоны для `glBufferSubData` на кадр.
+- `gl21/program.rs` — таблицы атрибутов и uniform'ов, сверяемые с объявлениями в самих шейдерах.
+- **Собрано в CI:** `checks`/`verify` зелёный — `cargo fmt --check`, `clippy --workspace
+  --all-targets -D warnings`, `cargo test --workspace`. Ничего из этого ещё не рисует: драйвер окна и
+  контекста (Phase 1) требует `glutin`, которой в `Cargo.lock` нет.
 
 ### Phase 4 — сущности и всё остальное в мире (3 недели)
 
