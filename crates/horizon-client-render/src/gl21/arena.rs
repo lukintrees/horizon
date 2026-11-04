@@ -201,7 +201,7 @@ pub fn coalesce(pending: &[Upload]) -> Vec<Upload> {
     let mut out: Vec<Upload> = Vec::new();
     for upload in pending {
         match out.last_mut() {
-            Some(last) if joins(last, &upload) => {
+            Some(last) if joins(last, upload) => {
                 last.len = upload.begin + upload.len - last.begin;
             }
             _ => out.push(*upload),
