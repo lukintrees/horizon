@@ -1520,9 +1520,7 @@ impl Game<'_> {
                 let scale = self
                     .renderer
                     .as_ref()
-                    .map(|r| {
-                        horizon_client::hud::HudBatch::new(r.surface_size()).scale
-                    })
+                    .map(|r| horizon_client::hud::HudBatch::new(r.surface_size()).scale)
                     .ok_or("no renderer yet")?;
                 let device_id = DeviceId::dummy();
                 let position = PhysicalPosition::new(f64::from(x * scale), f64::from(y * scale));

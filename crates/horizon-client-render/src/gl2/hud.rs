@@ -55,17 +55,36 @@ impl Hud {
     /// context.
     pub fn new(gl: &glow::Context, pixels: &[u8], width: u32, height: u32) -> Result<Self, String> {
         if pixels.len() != (width as usize) * (height as usize) * 4 {
-            return Err(format!("the HUD atlas holds {} bytes, not {width}x{height} RGBA", pixels.len()));
+            return Err(format!(
+                "the HUD atlas holds {} bytes, not {width}x{height} RGBA",
+                pixels.len()
+            ));
         }
         let program = shader::program(gl, VERTEX_SHADER, FRAGMENT_SHADER, &ATTRIBUTES)?;
         // SAFETY: the context is current on this thread, as the caller requires.
         unsafe {
             let atlas = gl.create_texture()?;
             gl.bind_texture(glow::TEXTURE_2D, Some(atlas));
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::NEAREST as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::NEAREST as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
             gl.tex_image_2d(
                 glow::TEXTURE_2D,
                 0,
@@ -78,7 +97,11 @@ impl Hud {
                 glow::PixelUnpackData::Slice(Some(pixels)),
             );
             let vertices = gl.create_buffer()?;
-            Ok(Self { program, atlas, vertices })
+            Ok(Self {
+                program,
+                atlas,
+                vertices,
+            })
         }
     }
 
@@ -137,7 +160,11 @@ impl Hud {
             for (range, blend) in runs(len, &batch.blends) {
                 let (source, destination) = factors(blend);
                 gl.blend_func(source, destination);
-                gl.draw_arrays(glow::TRIANGLES, range.start as i32, (range.end - range.start) as i32);
+                gl.draw_arrays(
+                    glow::TRIANGLES,
+                    range.start as i32,
+                    (range.end - range.start) as i32,
+                );
             }
             gl.disable(glow::BLEND);
             for index in 0..ATTRIBUTES.len() {

@@ -68,7 +68,9 @@ impl Renderer {
         let version = unsafe { gl.get_parameter_string(glow::VERSION) };
         match parse_version(&version) {
             Some(found) if found < (3, 3) => {}
-            Some(_) => return Err(format!("OpenGL {version} is 3.3 or newer; wgpu draws this GPU").into()),
+            Some(_) => {
+                return Err(format!("OpenGL {version} is 3.3 or newer; wgpu draws this GPU").into());
+            }
             None => return Err(format!("the OpenGL version {version:?} cannot be read").into()),
         }
         // A mesh of this path is six vertices per quad, as `batch::solid` reads it. The packed
@@ -164,11 +166,24 @@ impl Renderer {
 
     /// The view of a flat screen, from the frame's camera.
     pub fn views(&self, frame: &Frame) -> ViewSet {
-        ViewSet::single(View::screen(frame.yaw, frame.pitch, frame.fov_degrees, self.aspect(), frame.depth_far))
+        ViewSet::single(View::screen(
+            frame.yaw,
+            frame.pitch,
+            frame.fov_degrees,
+            self.aspect(),
+            frame.depth_far,
+        ))
     }
 
     /// Camera-relative clip planes, as the wgpu path builds them.
-    pub fn camera_frustum(&self, fov_degrees: f32, yaw: f32, pitch: f32, bob: Mat4, depth_far: f32) -> Frustum {
+    pub fn camera_frustum(
+        &self,
+        fov_degrees: f32,
+        yaw: f32,
+        pitch: f32,
+        bob: Mat4,
+        depth_far: f32,
+    ) -> Frustum {
         Frustum::of(View::screen(yaw, pitch, fov_degrees, self.aspect(), depth_far).view_proj(bob))
     }
 
@@ -206,7 +221,13 @@ impl Renderer {
 
     /// Clears to the fog colour and draws the sections whose bounds lie inside the frustum of
     /// `view_proj`, seen from `camera`. Returns how many were drawn.
-    fn draw_world(&mut self, view_proj: Mat4, camera: DVec3, fog_color: [f32; 3], fog_range: [f32; 4]) -> usize {
+    fn draw_world(
+        &mut self,
+        view_proj: Mat4,
+        camera: DVec3,
+        fog_color: [f32; 3],
+        fog_range: [f32; 4],
+    ) -> usize {
         let frustum = Frustum::of(view_proj);
         let clip = to_gl_clip() * view_proj;
         let [width, height] = self.size;
@@ -219,20 +240,27 @@ impl Renderer {
             // on GEQUAL.
             self.gl.depth_func(glow::GEQUAL);
             self.gl.depth_mask(true);
-            self.gl.clear_color(fog_color[0], fog_color[1], fog_color[2], 1.0);
+            self.gl
+                .clear_color(fog_color[0], fog_color[1], fog_color[2], 1.0);
             self.gl.clear_depth_f64(0.0);
-            self.gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+            self.gl
+                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
         }
 
-        let fog = Fog { range: fog_range, color: fog_color };
+        let fog = Fog {
+            range: fog_range,
+            color: fog_color,
+        };
         self.terrain.begin(&self.gl, &clip.to_cols_array(), fog);
         let mut drawn = 0;
         for (key, placed) in &self.sections {
-            let origin = (DVec3::new(key.0 as f64, key.1 as f64, key.2 as f64) * 16.0 - camera).as_vec3();
+            let origin =
+                (DVec3::new(key.0 as f64, key.1 as f64, key.2 as f64) * 16.0 - camera).as_vec3();
             if !frustum.intersects(origin + placed.bounds[0], origin + placed.bounds[1]) {
                 continue;
             }
-            self.terrain.draw(&self.gl, &placed.section, origin.to_array());
+            self.terrain
+                .draw(&self.gl, &placed.section, origin.to_array());
             drawn += 1;
         }
         self.drawn = drawn;
@@ -273,7 +301,12 @@ impl Drop for Renderer {
 /// The depth of `gfx::view`'s reversed clip space, rewritten for OpenGL, whose clip depth runs from
 /// -w to w: z' = 2z - w. The depth values stay reversed, so the buffer keeps GEQUAL and clear 0.
 fn to_gl_clip() -> Mat4 {
-    Mat4::from_cols(Vec4::X, Vec4::Y, Vec4::new(0.0, 0.0, 2.0, 0.0), Vec4::new(0.0, 0.0, -1.0, 1.0))
+    Mat4::from_cols(
+        Vec4::X,
+        Vec4::Y,
+        Vec4::new(0.0, 0.0, 2.0, 0.0),
+        Vec4::new(0.0, 0.0, -1.0, 1.0),
+    )
 }
 
 fn full_section() -> [Vec3; 2] {
@@ -286,7 +319,12 @@ fn fog_of(frame: &Frame) -> ([f32; 3], [f32; 4]) {
     if let Some(fog) = frame.fog {
         return (
             [fog.color[0], fog.color[1], fog.color[2]],
-            [fog.environmental_start, fog.environmental_end, fog.render_distance_start, fog.render_distance_end],
+            [
+                fog.environmental_start,
+                fog.environmental_end,
+                fog.render_distance_start,
+                fog.render_distance_end,
+            ],
         );
     }
     if frame.underwater {
@@ -294,12 +332,17 @@ fn fog_of(frame: &Frame) -> ([f32; 3], [f32; 4]) {
     }
     let d = frame.distance;
     let (start, end) = frame.environment_fog.unwrap_or((f32::MAX, f32::MAX));
-    (frame.sky.fog_color, [start, end, (d - d.min(64.0) * 0.25).max(0.0), d])
+    (
+        frame.sky.fog_color,
+        [start, end, (d - d.min(64.0) * 0.25).max(0.0), d],
+    )
 }
 
 /// `(major, minor)` from a `GL_VERSION` string such as "2.1.2 ATI-1.0" or "3.3.0 Mesa 23.0".
 fn parse_version(text: &str) -> Option<(u32, u32)> {
-    let mut numbers = text.split(|c: char| !c.is_ascii_digit()).filter(|part| !part.is_empty());
+    let mut numbers = text
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty());
     let major = numbers.next()?.parse().ok()?;
     let minor = numbers.next()?.parse().ok()?;
     Some((major, minor))
@@ -393,12 +436,19 @@ mod gpu_tests {
     impl ApplicationHandler for Make {
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             if self.window.is_none() {
-                let attributes = Window::default_attributes().with_inner_size(PhysicalSize::new(128, 128));
+                let attributes =
+                    Window::default_attributes().with_inner_size(PhysicalSize::new(128, 128));
                 self.window = event_loop.create_window(attributes).ok();
             }
         }
 
-        fn window_event(&mut self, _event_loop: &ActiveEventLoop, _id: WindowId, _event: WindowEvent) {}
+        fn window_event(
+            &mut self,
+            _event_loop: &ActiveEventLoop,
+            _id: WindowId,
+            _event: WindowEvent,
+        ) {
+        }
     }
 
     /// The event loop is returned too: the window must not outlive it.
@@ -426,7 +476,12 @@ mod gpu_tests {
             .expect("the OpenGL 2 renderer starts on the window's context");
 
         // One white quad across the section's far face (z = 8 of 16), facing the camera.
-        let corners = [[0.0, 0.0, 8.0], [16.0, 0.0, 8.0], [16.0, 16.0, 8.0], [0.0, 16.0, 8.0]];
+        let corners = [
+            [0.0, 0.0, 8.0],
+            [16.0, 0.0, 8.0],
+            [16.0, 16.0, 8.0],
+            [0.0, 16.0, 8.0],
+        ];
         let mut mesh = SectionMesh::default();
         mesh.solid = corners
             .map(|pos| TerrainVertex::new(pos, [0.5, 0.5], 0, 0xFF_FFFF, 0xF0F0))
@@ -439,7 +494,12 @@ mod gpu_tests {
         let view = View::screen(0.0, 0.0, 70.0, aspect, 512.0);
         let camera = DVec3::new(8.0, 8.0, 0.0);
         assert!(make_current(&renderer.platform));
-        let drawn = renderer.draw_world(view.view_proj(Mat4::IDENTITY), camera, [0.5, 0.5, 0.5], [1.0e9; 4]);
+        let drawn = renderer.draw_world(
+            view.view_proj(Mat4::IDENTITY),
+            camera,
+            [0.5, 0.5, 0.5],
+            [1.0e9; 4],
+        );
         assert_eq!(drawn, 1, "the section lies in front of the camera");
 
         let mut pixels = vec![0u8; (width * height * 4) as usize];
@@ -454,9 +514,19 @@ mod gpu_tests {
                 glow::UNSIGNED_BYTE,
                 glow::PixelPackData::Slice(Some(&mut pixels)),
             );
-            assert_eq!(renderer.gl.get_error(), glow::NO_ERROR, "the frame draws without a GL error");
+            assert_eq!(
+                renderer.gl.get_error(),
+                glow::NO_ERROR,
+                "the frame draws without a GL error"
+            );
         }
-        let bright = pixels.chunks_exact(4).filter(|p| p[0] > 200 && p[1] > 200).count();
-        assert!(bright > 1000, "the quad covers the frame: {bright} bright pixels");
+        let bright = pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > 200 && p[1] > 200)
+            .count();
+        assert!(
+            bright > 1000,
+            "the quad covers the frame: {bright} bright pixels"
+        );
     }
 }

@@ -11,17 +11,17 @@ use winit::window::Window;
 
 use crate::Result;
 use crate::block_entity_render::{StaticCacheFrameStats, StaticSectionRevision};
+use crate::fast_hash::FxHashSet;
+use crate::gfx::compositor::Compositor;
 use crate::gfx::{
-    self, Frame, Frustum, HdrCalibration, PreparedTextures, ScreenshotRequest, SectionKey,
-    ViewSet, block_light, panorama,
+    self, Frame, Frustum, HdrCalibration, PreparedTextures, ScreenshotRequest, SectionKey, ViewSet,
+    block_light, panorama,
 };
 use crate::gl2;
 use crate::graphics::GraphicsApi;
+use crate::lod::TileKey;
 use crate::mesher::SectionMesh;
 use crate::sprites::SpriteAnimation;
-use crate::fast_hash::FxHashSet;
-use crate::gfx::compositor::Compositor;
-use crate::lod::TileKey;
 use std::time::Duration;
 
 pub enum Renderer {
@@ -505,7 +505,10 @@ impl Renderer {
         }
     }
 
-    pub fn block_entity_section_revision(&self, section: [i32; 3]) -> Option<StaticSectionRevision> {
+    pub fn block_entity_section_revision(
+        &self,
+        section: [i32; 3],
+    ) -> Option<StaticSectionRevision> {
         match self {
             Self::Wgpu(r) => r.block_entity_section_revision(section),
             Self::Gl2(r) => r.block_entity_section_revision(section),
@@ -576,7 +579,15 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn set_hdr(&mut self, on: bool, paper_white: f32, peak: f32, black: f32, ui: f32, marker: &std::path::Path) {
+    pub fn set_hdr(
+        &mut self,
+        on: bool,
+        paper_white: f32,
+        peak: f32,
+        black: f32,
+        ui: f32,
+        marker: &std::path::Path,
+    ) {
         match self {
             Self::Wgpu(r) => r.set_hdr(on, paper_white, peak, black, ui, marker),
             Self::Gl2(r) => r.set_hdr(on, paper_white, peak, black, ui, marker),
@@ -639,7 +650,12 @@ impl Renderer {
         }
     }
 
-    pub fn set_shader_pack(&mut self, dimension: i32, pack: Option<horizon_shaders::Post>, block_ids: &[i32]) -> Option<(Vec<String>, Vec<String>)> {
+    pub fn set_shader_pack(
+        &mut self,
+        dimension: i32,
+        pack: Option<horizon_shaders::Post>,
+        block_ids: &[i32],
+    ) -> Option<(Vec<String>, Vec<String>)> {
         match self {
             Self::Wgpu(r) => r.set_shader_pack(dimension, pack, block_ids),
             Self::Gl2(r) => r.set_shader_pack(dimension, pack, block_ids),
@@ -660,7 +676,16 @@ impl Renderer {
         }
     }
 
-    pub fn set_native_shader_pack(&mut self, pack: Option<(horizon_shader_api::Report, Vec<(String, f64)>, Vec<(u32, u32)>, Vec<(u32, u32)>, block_light::LightTable)>) -> std::result::Result<Vec<String>, String> {
+    pub fn set_native_shader_pack(
+        &mut self,
+        pack: Option<(
+            horizon_shader_api::Report,
+            Vec<(String, f64)>,
+            Vec<(u32, u32)>,
+            Vec<(u32, u32)>,
+            block_light::LightTable,
+        )>,
+    ) -> std::result::Result<Vec<String>, String> {
         match self {
             Self::Wgpu(r) => r.set_native_shader_pack(pack),
             Self::Gl2(r) => r.set_native_shader_pack(pack),
@@ -737,7 +762,14 @@ impl Renderer {
         }
     }
 
-    pub fn camera_frustum(&self, fov_degrees: f32, yaw: f32, pitch: f32, bob: Mat4, depth_far: f32) -> Frustum {
+    pub fn camera_frustum(
+        &self,
+        fov_degrees: f32,
+        yaw: f32,
+        pitch: f32,
+        bob: Mat4,
+        depth_far: f32,
+    ) -> Frustum {
         match self {
             Self::Wgpu(r) => r.camera_frustum(fov_degrees, yaw, pitch, bob, depth_far),
             Self::Gl2(r) => r.camera_frustum(fov_degrees, yaw, pitch, bob, depth_far),
@@ -821,7 +853,12 @@ impl Renderer {
         }
     }
 
-    pub fn queue_lods(&mut self, meshes: Vec<(TileKey, SectionMesh)>, removed: Vec<TileKey>, cutout: Option<FxHashSet<(i32, i32)>>) {
+    pub fn queue_lods(
+        &mut self,
+        meshes: Vec<(TileKey, SectionMesh)>,
+        removed: Vec<TileKey>,
+        cutout: Option<FxHashSet<(i32, i32)>>,
+    ) {
         match self {
             Self::Wgpu(r) => r.queue_lods(meshes, removed, cutout),
             Self::Gl2(r) => r.queue_lods(meshes, removed, cutout),

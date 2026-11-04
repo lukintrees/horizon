@@ -111,7 +111,11 @@ impl Context {
         if hdc.is_null() {
             return Err(last_error("GetDC"));
         }
-        let mut context = Context { hwnd, hdc, glrc: ptr::null_mut() };
+        let mut context = Context {
+            hwnd,
+            hdc,
+            glrc: ptr::null_mut(),
+        };
         // SAFETY: `hdc` is the window's device context.
         if unsafe { GetPixelFormat(hdc) } == 0 {
             let pfd = PixelFormatDescriptor {
@@ -165,7 +169,10 @@ impl Context {
         if is_real_proc(p) {
             return p;
         }
-        let library: Vec<u16> = "opengl32.dll".encode_utf16().chain(std::iter::once(0)).collect();
+        let library: Vec<u16> = "opengl32.dll"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let module = unsafe { GetModuleHandleW(library.as_ptr()) };
         if module.is_null() {
             return ptr::null();

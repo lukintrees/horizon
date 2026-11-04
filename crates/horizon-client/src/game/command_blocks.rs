@@ -748,10 +748,7 @@ impl Game<'_> {
                 return;
             }
         }
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([1, 1], |r| r.surface_size());
+        let size = self.renderer.as_ref().map_or([1, 1], |r| r.surface_size());
         let b = HudBatch::new(size);
         let hit = CommandBlockScreen::buttons(b.width, b.height, s.cart.is_some())
             .into_iter()

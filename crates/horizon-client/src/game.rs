@@ -371,7 +371,6 @@ use horizon_client::{
     first_person::{Hand, SwingAnimation},
     furnace::FurnaceCooking,
     gfx::Frame,
-    renderer::Renderer,
     hud::{HudAtlas, HudBatch, rgba},
     hud_layout, hud_overlays,
     items::{ItemStack, Items},
@@ -383,6 +382,7 @@ use horizon_client::{
     motion::{MotionEvent, MotionResources, PlayerMotion},
     mouse::{LookOptions, MouseLook},
     particles::Particle,
+    renderer::Renderer,
     save::{Level, Persistent, SaveDir},
     settings::Settings,
     spans,
@@ -8054,10 +8054,10 @@ impl Game<'_> {
             self.restore_held_keys();
         }
         let Some(window) = &self.window else { return };
-        let size = self.renderer.as_ref().map_or_else(
-            || window.inner_size().into(),
-            |r| r.surface_size(),
-        );
+        let size = self
+            .renderer
+            .as_ref()
+            .map_or_else(|| window.inner_size().into(), |r| r.surface_size());
         let [vx, vy] = self.view_at.map(f64::from);
         let centre = winit::dpi::PhysicalPosition::new(
             vx + f64::from(size[0]) / 2.0,
@@ -10084,11 +10084,7 @@ impl Game<'_> {
         let Some(key) = self.settings.keys.container_hotbar_key(code) else {
             return false;
         };
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return false;
         };
         let batch = HudBatch::new(size);
@@ -10111,11 +10107,7 @@ impl Game<'_> {
     /// slot or the off hand, THROW one or the whole stack.
     fn inventory_hotkey(&mut self, key: KeyCode) -> bool {
         use horizon_client::menu::Input;
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return false;
         };
         let batch = HudBatch::new(size);
@@ -10144,11 +10136,7 @@ impl Game<'_> {
         let menu = (self.screen == Screen::Inventory
             || (self.screen == Screen::Creative && !self.creative_screen.tab().search))
             && !self.dialog_open();
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return;
         };
         let batch = HudBatch::new(size);
@@ -10588,11 +10576,7 @@ impl Game<'_> {
         if self.remote.is_some() {
             return self.remote_click(right);
         }
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return;
         };
         let batch = HudBatch::new(size);
@@ -15021,11 +15005,7 @@ impl Game<'_> {
         );
     }
     fn click_creative(&mut self, right: bool) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return;
         };
         let batch = HudBatch::new(size);
@@ -15513,11 +15493,7 @@ impl Game<'_> {
             }
             return Ok(false);
         }
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return Ok(false);
         };
         let alpha = self.clock.fraction();
@@ -16531,12 +16507,10 @@ impl Game<'_> {
     fn lod_distance(&self) -> u32 {
         let (distance, _) = self.far_terrain_choice();
         match &self.renderer {
-            Some(renderer) => {
-                match renderer.adapter_info() {
-                    Some(info) => horizon_client::graphics::lod_distance_capped(distance, info),
-                    None => distance.min(horizon_client::lod::MAX_CHUNKS),
-                }
-            }
+            Some(renderer) => match renderer.adapter_info() {
+                Some(info) => horizon_client::graphics::lod_distance_capped(distance, info),
+                None => distance.min(horizon_client::lod::MAX_CHUNKS),
+            },
             None => distance.min(horizon_client::lod::MAX_CHUNKS),
         }
     }
@@ -17950,17 +17924,11 @@ impl Game<'_> {
                             self.death_click()?
                         }
                         Screen::Advancements if button == MouseButton::Left => {
-                            let size = self
-                                .renderer
-                                .as_ref()
-                                .map_or([1, 1], |r| r.surface_size());
+                            let size = self.renderer.as_ref().map_or([1, 1], |r| r.surface_size());
                             self.advancements_mouse(pressed, size);
                         }
                         Screen::Stats if pressed && button == MouseButton::Left => {
-                            let size = self
-                                .renderer
-                                .as_ref()
-                                .map_or([1, 1], |r| r.surface_size());
+                            let size = self.renderer.as_ref().map_or([1, 1], |r| r.surface_size());
                             self.stats_click(size);
                         }
                         Screen::Stats if button == MouseButton::Left => self.stats_release(),
@@ -18352,7 +18320,8 @@ impl Game<'_> {
                     if let Some(threshold) = self.options.spikes
                         && let Some(r) = self.renderer.as_ref()
                     {
-                        let cpu = now.elapsed().saturating_sub(r.last_wait()).as_secs_f32() * 1000.0;
+                        let cpu =
+                            now.elapsed().saturating_sub(r.last_wait()).as_secs_f32() * 1000.0;
                         // Spans timed between frames (`idle`) come first.
                         let spans = horizon_client::spans::merge(&frame_spans);
                         let between = between.as_secs_f32() * 1000.0;
@@ -18438,11 +18407,11 @@ impl Game<'_> {
                         );
                         consumed = true;
                     }
-                    if let Some(result) =
-                        self.renderer
-                            .as_mut()
-                            .and_then(|r| r.wgpu_mut())
-                            .and_then(|r| r.capture_result.take())
+                    if let Some(result) = self
+                        .renderer
+                        .as_mut()
+                        .and_then(|r| r.wgpu_mut())
+                        .and_then(|r| r.capture_result.take())
                         && let Some(reply) = self.pending_render_capture.take()
                     {
                         let value = result.unwrap_or_else(|e| serde_json::json!({ "error": e }));
@@ -21020,11 +20989,7 @@ impl Loading {
         event_loop.set_control_flow(ControlFlow::Poll);
     }
     fn draw(&mut self) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| r.surface_size())
-        else {
+        let Some(size) = self.renderer.as_ref().map(|r| r.surface_size()) else {
             return;
         };
         let mut batch = HudBatch::new(size);

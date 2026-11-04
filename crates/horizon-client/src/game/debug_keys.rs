@@ -405,7 +405,12 @@ impl Game<'_> {
         d.line("Filtering: None");
         d.line(format!(
             "Terrain Rendering: {}",
-            if self.renderer.as_ref().and_then(|r| r.wgpu()).is_some_and(|r| r.multi_draw) {
+            if self
+                .renderer
+                .as_ref()
+                .and_then(|r| r.wgpu())
+                .is_some_and(|r| r.multi_draw)
+            {
                 "multidrawindirect"
             } else {
                 "naive"
