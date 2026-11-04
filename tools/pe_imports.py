@@ -28,7 +28,8 @@ def win7_findings(result):
             if symbol in POST_WIN7.get(dll.lower(), set())]
 
 
-def imports(data):
+def imports(data, include_slots=False):
+    """Read normal imports. With include_slots, return (name, IAT RVA) pairs."""
     def u16(offset):
         return struct.unpack_from('<H', data, offset)[0]
 
@@ -97,9 +98,10 @@ def imports(data):
                 if entry == 0:
                     break
                 if entry & (1 << (word * 8 - 1)):
-                    symbols.append(f'ordinal:{entry & 0xffff}')
+                    symbol = f'ordinal:{entry & 0xffff}'
                 else:
-                    symbols.append(string(offset(entry) + 2))
+                    symbol = string(offset(entry) + 2)
+                symbols.append((symbol, first + len(symbols) * word) if include_slots else symbol)
             result.append((dll, symbols))
         return result
     except (struct.error, UnicodeError, OverflowError) as error:

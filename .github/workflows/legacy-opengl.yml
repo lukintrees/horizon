@@ -14,6 +14,7 @@ on:
       - 'crates/horizon-client-render/examples/legacy_scene_replay.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
+      - 'tools/pe_import_references.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
       - 'tools/win7_link_inputs.py'
@@ -34,6 +35,7 @@ on:
       - 'crates/horizon-client-render/examples/legacy_scene_replay.rs'
       - 'tools/legacy_gl_*'
       - 'tools/pe_imports.py'
+      - 'tools/pe_import_references.py'
       - 'tools/win7_symbol_users.py'
       - 'tools/win7_link_trace.ps1'
       - 'tools/win7_link_inputs.py'
@@ -256,5 +258,6 @@ jobs:
           path: |
             ${{ runner.temp }}/win7-link-trace.txt
             ${{ runner.temp }}/win7-link-inputs.txt
+            ${{ runner.temp }}/win7-client.map
           if-no-files-found: ignore
           retention-days: 2

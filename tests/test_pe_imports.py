@@ -1,7 +1,11 @@
 import importlib.util
 from pathlib import Path
 import struct
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+import pe_import_references as refs
 
 spec = importlib.util.spec_from_file_location('pe_imports', Path(__file__).resolve().parents[1] / 'tools/pe_imports.py')
 pe = importlib.util.module_from_spec(spec)
@@ -35,6 +39,25 @@ class ImportTests(unittest.TestCase):
     def test_32_and_64_bit_named_and_ordinal_imports(self):
         for bits in (32, 64):
             self.assertEqual(pe.imports(fixture(bits)), [('KERNEL32.dll', ['ExitTest', 'ordinal:7'])])
+
+    def test_import_slots_and_candidate_x86_calls(self):
+        data = bytearray(fixture(32))
+        coff = 0x84
+        optional = coff + 20
+        section = optional + 0xe0
+        struct.pack_into('<H', data, coff, 0x14c)
+        struct.pack_into('<I', data, optional + 28, 0x400000)
+        struct.pack_into('<I', data, section + 36, 0x20000000)
+        data[0x320:0x326] = b'\xff\x15' + struct.pack('<I', 0x401040)
+        self.assertEqual(pe.imports(data, include_slots=True), [
+            ('KERNEL32.dll', [('ExitTest', 0x1040), ('ordinal:7', 0x1044)])])
+        symbols = ' 0001:00000000 _test_function 00401000 f object.obj\n'
+        result = refs.find_references(data, 'kernel32.DLL', 'ExitTest', symbols)
+        self.assertEqual(result, [(0x401122, 'indirect call', 0x401040,
+                                  (0x401000, '_test_function', 'f object.obj'))])
+        self.assertEqual(refs.find_references(data, 'kernel32.dll', 'missing', symbols), [])
+        with self.assertRaises(ValueError):
+            refs.find_references(fixture(64), 'kernel32.dll', 'ExitTest')
 
     def test_flags_known_new_imports_case_insensitively_by_dll(self):
         result = [('KERNEL32.dll', ['ExitTest', 'GetSystemTimePreciseAsFileTime']),

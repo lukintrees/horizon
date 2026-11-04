@@ -8,6 +8,7 @@ if (-not $vs) { throw 'Visual Studio C++ tools were not found' }
 $env:HORIZON_VCVARS = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
 $env:HORIZON_LINK_TRACE = Join-Path $env:RUNNER_TEMP 'win7-link-trace.txt'
 $env:HORIZON_INPUT_TRACE = Join-Path $env:RUNNER_TEMP 'win7-link-inputs.txt'
+$env:HORIZON_MAP_TRACE = Join-Path $env:RUNNER_TEMP 'win7-client.map'
 $env:HORIZON_INPUT_INSPECTOR = Join-Path $PSScriptRoot 'win7_link_inputs.py'
 $sysroot = (& rustc +nightly --print sysroot).Trim()
 $env:HORIZON_LLVM_NM = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-nm.exe'
@@ -28,10 +29,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not inspect original client imports' }
 call "%HORIZON_VCVARS%" x86 >nul 2>&1
 if errorlevel 1 exit /b %errorlevel%
 python "%HORIZON_INPUT_INSPECTOR%" %* > "%HORIZON_INPUT_TRACE%" 2>&1
-link.exe /VERBOSE:LIB %* > "%HORIZON_LINK_TRACE%" 2>&1
+link.exe /VERBOSE:LIB /MAP:"%HORIZON_MAP_TRACE%" %* > "%HORIZON_LINK_TRACE%" 2>&1
 exit /b %errorlevel%
 '@ | Set-Content -Encoding ASCII $wrapper
-& cargo +nightly rustc -Z build-std=std,panic_abort --locked -p horizon-client --no-default-features --features legacy-scene --bin horizon-client --target i686-win7-windows-msvc -- -C "linker=$wrapper"
+& cargo +nightly rustc -Z build-std=std,panic_abort --locked -p horizon-client --no-default-features --features legacy-live --bin horizon-client --target i686-win7-windows-msvc -- -C "linker=$wrapper"
 $code = $LASTEXITCODE
 if (-not (Test-Path $env:HORIZON_LINK_TRACE)) { throw 'Linker did not write its trace' }
 if ($code -eq 0) {
@@ -39,6 +40,17 @@ if ($code -eq 0) {
     if ($LASTEXITCODE -ne 0) { throw 'Could not inspect relinked client imports' }
     $newHash = (Get-FileHash $binary -Algorithm SHA256).Hash
     Write-Host "::notice::Relinked client: time import before=$beforeImport after=$afterImport; hash changed=$($newHash -ne $originalHash)"
+    if (Test-Path $env:HORIZON_MAP_TRACE) {
+        $references = & python tools/pe_import_references.py $binary $env:HORIZON_MAP_TRACE 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $summary = (($references | Select-Object -First 25) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::notice::IAT candidate references: $summary"
+        } else {
+            Write-Host "::warning::Could not inspect time import references: $references"
+        }
+    } else {
+        Write-Host "::warning::Linker map was not generated"
+    }
 }
 # Print context around direct users, without filling CI's log with the whole trace.
 $matches = Select-String -Path $env:HORIZON_LINK_TRACE -Pattern 'GetSystemTimePreciseAsFileTime' -Context 3,4
