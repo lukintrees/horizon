@@ -120,17 +120,19 @@ jobs:
             if (-not $sevenZip) { $sevenZip = 'C:\Program Files\7-Zip\7z.exe' }
             & $sevenZip x mesa.7z -omesa -y | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE (using $sevenZip)" }
-            $root = (Resolve-Path mesa).Path
-            $dlls = @(Get-ChildItem -Path mesa -Recurse -Filter opengl32.dll)
-            $listing = ($dlls | ForEach-Object { $_.FullName.Substring($root.Length) }) -join ' ; '
-            Write-Output "::notice title=mesa::opengl32.dll in the archive: $listing"
-            $gl = $dlls | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
-            if (-not $gl -and $dlls.Count -eq 1) { $gl = $dlls[0] }
-            if (-not $gl) { throw 'no x64 opengl32.dll in the Mesa archive' }
+            # Mesa on Windows builds its software driver as opengl32sw.dll; the probe needs it under the
+            # name opengl32.dll, which is what the exe loads and what Windows searches for first.
+            $names = @(Get-ChildItem -Path mesa -Recurse -Filter '*.dll' | ForEach-Object { $_.Name } | Sort-Object -Unique)
+            Write-Output "::notice title=mesa::DLL names in the archive: $($names -join ' ')"
+            $candidates = @(Get-ChildItem -Path mesa -Recurse -Filter 'opengl32*.dll')
+            $gl = $candidates | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            if (-not $gl -and $candidates.Count -eq 1) { $gl = $candidates[0] }
+            if (-not $gl) { throw 'no x64 opengl32*.dll in the Mesa archive' }
             $source = $gl.DirectoryName
             $dllFiles = @(Get-ChildItem -Path $source -Filter '*.dll')
             $dllFiles | Copy-Item -Destination crates/horizon-gl2/target/release/
-            Write-Output "::notice title=mesa::copied $($dllFiles.Count) DLLs from $source"
+            Copy-Item -Path $gl.FullName -Destination crates/horizon-gl2/target/release/opengl32.dll -Force
+            Write-Output "::notice title=mesa::copied $($dllFiles.Count) DLLs from $source; $($gl.Name) as opengl32.dll"
           } catch {
             Write-Output "::error title=mesa::$($_.Exception.Message)"
             exit 1
