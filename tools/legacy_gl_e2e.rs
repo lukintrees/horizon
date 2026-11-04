@@ -654,6 +654,64 @@ fn main() {
         gui.draw_ordered(&mixed.vertices, &mixed.draws(), &identity)
             .unwrap();
         assert_eq!(rgb(sample(16)), [40, 255, 255], "HUD mixed blend order");
+        // Two depth-tested quads, then a separately cleared preview with the
+        // same scissor. Pixels outside the preview stay untouched.
+        let mut depth = hud::HudBatch::new([32, 32]);
+        depth.quad(positions, uvs, 0xff00_00ff);
+        for v in &mut depth.vertices[0..6] {
+            v.depth = 0.2;
+        }
+        depth.quad(positions, uvs, 0xff00_ff00);
+        for v in &mut depth.vertices[6..12] {
+            v.depth = 0.8;
+        }
+        depth
+            .blends
+            .push((0..12, hud::Blend::Depth([8, 8, 16, 16])));
+        let first = legacy::hud::build(&gui_atlas, &depth, [32, 32]).unwrap();
+        let invalid = [horizon_legacy_gl::Draw {
+            batch: first.runs[0].batch,
+            pass: horizon_legacy_gl::Pass::HudDepth {
+                scissor: [0, 0, 0, 8],
+                clear: true,
+            },
+        }];
+        assert_eq!(
+            gui.draw_ordered(&first.vertices, &invalid, &identity),
+            Err(horizon_legacy_gl::Error::InvalidScissor)
+        );
+        clear_color(0.1, 0.2, 0.3, 1.);
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&first.vertices, &first.draws(), &identity)
+            .unwrap();
+        assert_eq!(rgb(sample(16)), [255, 0, 0], "preview depth test");
+        let outside = rgb(sample(4));
+        assert!(
+            outside[0].abs_diff(26) <= 1
+                && outside[1].abs_diff(51) <= 1
+                && outside[2].abs_diff(77) <= 1,
+            "scissor {outside:?}"
+        );
+        depth.quad(positions, uvs, 0xffff_0000);
+        for v in &mut depth.vertices[12..18] {
+            v.depth = 0.9;
+        }
+        depth
+            .blends
+            .push((12..18, hud::Blend::Depth([8, 8, 16, 16])));
+        let both = legacy::hud::build(&gui_atlas, &depth, [32, 32]).unwrap();
+        gui.draw_ordered(&both.vertices, &both.draws(), &identity)
+            .unwrap();
+        assert_eq!(
+            rgb(sample(16)),
+            [0, 0, 255],
+            "separate preview clears depth even for identical scissors"
+        );
+        assert_eq!(rgb(sample(4)), outside);
+        // Drawing a plain HUD pass afterwards must not retain the scissor.
+        gui.draw_ordered(&gui_mesh.vertices, &gui_mesh.draws(), &identity)
+            .unwrap();
+        assert_eq!(rgb(sample(4)), [200, 0, 0], "scissor leaked");
         gui.destroy();
 
         // Real tiled UV encoding on a merged face: a two-texel stripe must

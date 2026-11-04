@@ -50,6 +50,7 @@ pub enum Error {
     MissingUniform(&'static str),
     InvalidPage,
     InvalidBatch,
+    InvalidScissor,
     TooManyVertices,
     ObjectCreation(&'static str),
     Gl(u32),
@@ -76,6 +77,14 @@ pub enum Pass {
     HudAlpha,
     HudInvert,
     HudAdditive,
+    /// GUI preview using the current framebuffer's depth buffer. `scissor` is
+    /// in OpenGL bottom-left pixel coordinates. `clear` starts a new preview and
+    /// clears depth within that rectangle. This destroys scene depth there: use
+    /// only after all world passes that need it, or with a separate depth target.
+    HudDepth {
+        scissor: [i32; 4],
+        clear: bool,
+    },
 }
 
 /// Terrain fog parameters, matching the existing renderer's spherical and
@@ -160,6 +169,9 @@ gl_functions! {
     depth_func: "glDepthFunc" => (u32) -> (),
     depth_mask: "glDepthMask" => (u8) -> (),
     depth_range: "glDepthRange" => (f64, f64) -> (),
+    scissor: "glScissor" => (i32, i32, i32, i32) -> (),
+    clear_depth: "glClearDepth" => (f64) -> (),
+    clear: "glClear" => (u32) -> (),
     color_mask: "glColorMask" => (u8, u8, u8, u8) -> (),
     blend_func_separate: "glBlendFuncSeparate" => (u32, u32, u32, u32) -> (),
     blend_equation: "glBlendEquation" => (u32) -> (),
@@ -543,6 +555,10 @@ impl Renderer {
     ) -> Result<(), Error> {
         validate_batches(vertices, &[], self.textures.len())?;
         for draw in draws.clone() {
+            if matches!(draw.pass, Pass::HudDepth { scissor: [_, _, w, h], .. } if w <= 0 || h <= 0)
+            {
+                return Err(Error::InvalidScissor);
+            }
             validate_batches(
                 vertices,
                 std::slice::from_ref(&draw.batch),
@@ -575,6 +591,7 @@ impl Renderer {
             (gl.depth_range)(0.0, 1.0);
             (gl.color_mask)(1, 1, 1, 1);
             (gl.disable)(0x0b44); // culling is not yet selected per material
+            (gl.disable)(0x0c11); // do not inherit a previous scissor
             (gl.active_texture)(0x84c0);
             (gl.bind_buffer)(GL_ARRAY_BUFFER, self.buffer);
             (gl.buffer_data)(
@@ -596,7 +613,9 @@ impl Renderer {
             let mut current_pass = None;
             let mut current_page = None;
             for draw in draws {
-                if current_pass != Some(draw.pass) {
+                if current_pass != Some(draw.pass)
+                    || matches!(draw.pass, Pass::HudDepth { clear: true, .. })
+                {
                     set_pass(gl, self.alpha_cutoff, draw.pass);
                     let terrain =
                         matches!(draw.pass, Pass::Solid { .. } | Pass::Translucent { .. });
@@ -615,6 +634,7 @@ impl Renderer {
             for index in 0..4 {
                 (gl.disable_attrib)(index);
             }
+            (gl.disable)(0x0c11); // do not leak the HUD preview scissor
             (gl.depth_mask)(1); // subsequent clears must write depth
             let error = (gl.get_error)();
             if error != 0 {
@@ -647,16 +667,21 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
         let cutoff = match pass {
             Pass::Solid { alpha_cutoff } | Pass::Translucent { alpha_cutoff } => alpha_cutoff,
             Pass::HudInvert => 0.0001,
-            Pass::HudAlpha | Pass::HudAdditive => 0.004,
+            Pass::HudAlpha | Pass::HudAdditive | Pass::HudDepth { .. } => 0.004,
         };
         (gl.uniform_1f)(uniform, cutoff);
+        if !matches!(pass, Pass::HudDepth { .. }) {
+            (gl.disable)(0x0c11);
+        }
         match pass {
             Pass::Solid { .. } => {
+                (gl.depth_func)(0x0201);
                 (gl.enable)(0x0b71);
                 (gl.disable)(0x0be2);
                 (gl.depth_mask)(1);
             }
             Pass::Translucent { .. } | Pass::HudAlpha => {
+                (gl.depth_func)(0x0201);
                 if matches!(pass, Pass::HudAlpha) {
                     (gl.disable)(0x0b71);
                 } else {
@@ -673,6 +698,23 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
                 (gl.blend_equation)(0x8006);
                 (gl.blend_func_separate)(0x0307, 0x0301, 1, 0);
                 (gl.depth_mask)(0);
+            }
+            Pass::HudDepth {
+                scissor: [x, y, w, h],
+                clear,
+            } => {
+                (gl.enable)(0x0c11);
+                (gl.scissor)(x, y, w, h);
+                (gl.enable)(0x0b71);
+                (gl.depth_func)(0x0203); // less or equal, like the HUD pipeline
+                (gl.depth_mask)(1);
+                if clear {
+                    (gl.clear_depth)(1.0);
+                    (gl.clear)(0x0100); // clear only the scissored depth region
+                }
+                (gl.enable)(0x0be2);
+                (gl.blend_equation)(0x8006);
+                (gl.blend_func_separate)(0x0302, 0x0303, 1, 0x0303);
             }
             Pass::HudAdditive => {
                 (gl.disable)(0x0b71);

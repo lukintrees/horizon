@@ -1,8 +1,9 @@
 //! A limited, paged HUD path for GL 2.1. The shared GUI atlas is often wider
 //! than old GPUs support, so split it into power-of-two pages and clip each
 //! triangle in UV space. Consecutive runs preserve transparent draw order.
-//! Glint, depth-scissored 3D previews and other special HUD pipelines are not
-//! implemented; they return an error instead of silently drawing incorrectly.
+//! Glint and other special HUD pipelines are not implemented; they return an
+//! error rather than silently drawing incorrectly. Depth previews need the
+//! caller to give up the framebuffer depth in their scissor rectangles.
 use crate::hud::{Blend, HudAtlas as SourceAtlas, HudBatch};
 use horizon_legacy_gl::{Batch, Pass, Vertex};
 
@@ -165,13 +166,18 @@ pub enum UiBlend {
     Alpha,
     Invert,
     Additive,
+    Depth([i32; 4]),
 }
 impl UiBlend {
-    pub fn pass(self) -> Pass {
+    pub fn pass(self, clear_depth: bool) -> Pass {
         match self {
             Self::Alpha => Pass::HudAlpha,
             Self::Invert => Pass::HudInvert,
             Self::Additive => Pass::HudAdditive,
+            Self::Depth(scissor) => Pass::HudDepth {
+                scissor,
+                clear: clear_depth,
+            },
         }
     }
 }
@@ -179,6 +185,8 @@ impl UiBlend {
 pub struct Run {
     pub batch: Batch,
     pub blend: UiBlend,
+    /// True at the first emitted draw of an independently cleared preview.
+    pub clear_depth: bool,
 }
 #[derive(Default, Debug)]
 pub struct Mesh {
@@ -193,7 +201,7 @@ impl Mesh {
             .iter()
             .map(|run| horizon_legacy_gl::Draw {
                 batch: run.batch,
-                pass: run.blend.pass(),
+                pass: run.blend.pass(run.clear_depth),
             })
             .collect()
     }
@@ -204,6 +212,7 @@ struct Point {
     pos: [f32; 2],
     uv: [f32; 2],
     color: [f32; 4],
+    depth: f32,
 }
 impl Point {
     fn lerp(self, other: Self, t: f32) -> Self {
@@ -211,6 +220,7 @@ impl Point {
             pos: std::array::from_fn(|i| self.pos[i] + (other.pos[i] - self.pos[i]) * t),
             uv: std::array::from_fn(|i| self.uv[i] + (other.uv[i] - self.uv[i]) * t),
             color: std::array::from_fn(|i| self.color[i] + (other.color[i] - self.color[i]) * t),
+            depth: self.depth + (other.depth - self.depth) * t,
         }
     }
 }
@@ -250,7 +260,11 @@ fn clip(poly: &[Point], axis: usize, limit: f32, lower: bool) -> Vec<Point> {
 /// Atlas patch uploads are a separate step: apply `batch.patches` via
 /// `Atlas::update_rect`, then update the returned pages on the GPU.
 pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, Error> {
-    if window.contains(&0) || !batch.scale.is_finite() || batch.scale <= 0.0 {
+    if window.contains(&0)
+        || window.iter().any(|&side| side > i32::MAX as u32)
+        || !batch.scale.is_finite()
+        || batch.scale <= 0.0
+    {
         return Err(Error::InvalidViewport);
     }
     let mut mesh = Mesh::default();
@@ -260,6 +274,13 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
             Blend::Alpha => UiBlend::Alpha,
             Blend::Invert => UiBlend::Invert,
             Blend::Additive => UiBlend::Additive,
+            Blend::Depth([x, y, w, h]) => {
+                let x = x.min(window[0]);
+                let y = y.min(window[1]);
+                let w = w.min(window[0] - x);
+                let h = h.min(window[1] - y);
+                UiBlend::Depth([x as i32, (window[1] - y - h) as i32, w as i32, h as i32])
+            }
             _ => return Err(Error::UnsupportedBlend),
         };
         let start = range.start as usize;
@@ -273,6 +294,10 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
             return Err(Error::InvalidTriangles);
         }
         expected = end;
+        let mut needs_depth_clear = matches!(blend, UiBlend::Depth(_));
+        if matches!(blend, UiBlend::Depth([_, _, 0, _] | [_, _, _, 0])) {
+            continue;
+        }
         for triangle in batch.vertices[start..end].as_chunks::<3>().0 {
             let mut points = Vec::with_capacity(3);
             for v in triangle {
@@ -281,11 +306,21 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
                 {
                     return Err(Error::UnsupportedUv);
                 }
+                if matches!(blend, UiBlend::Depth(_))
+                    && (!v.depth.is_finite() || !(0.0..=1.0).contains(&v.depth))
+                {
+                    return Err(Error::InvalidTriangles);
+                }
                 let rgba = v.color.to_le_bytes();
                 points.push(Point {
                     pos: v.pos,
                     uv: [v.uv[0] * atlas.width as f32, v.uv[1] * atlas.height as f32],
                     color: rgba.map(|c| f32::from(c) / 255.0),
+                    depth: if matches!(blend, UiBlend::Depth(_)) {
+                        v.depth
+                    } else {
+                        0.5
+                    },
                 });
             }
             let tile = |axis: usize, value: f32| -> u32 {
@@ -328,10 +363,11 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
                         if mesh.vertices.len() > i32::MAX as usize - 3 {
                             return Err(Error::SizeOverflow);
                         }
-                        if mesh
-                            .runs
-                            .last()
-                            .is_none_or(|r| r.batch.page != page || r.blend != blend)
+                        if needs_depth_clear
+                            || mesh
+                                .runs
+                                .last()
+                                .is_none_or(|r| r.batch.page != page || r.blend != blend)
                         {
                             mesh.runs
                                 .try_reserve(1)
@@ -343,7 +379,9 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
                                     count: 0,
                                 },
                                 blend,
+                                clear_depth: needs_depth_clear,
                             });
+                            needs_depth_clear = false;
                         }
                         mesh.vertices
                             .try_reserve(3)
@@ -353,7 +391,7 @@ pub fn build(atlas: &Atlas, batch: &HudBatch, window: [u32; 2]) -> Result<Mesh, 
                                 position: [
                                     p.pos[0] * batch.scale * 2.0 / window[0] as f32 - 1.0,
                                     1.0 - p.pos[1] * batch.scale * 2.0 / window[1] as f32,
-                                    0.0,
+                                    p.depth * 2.0 - 1.0,
                                 ],
                                 sprite_uv: [
                                     (p.uv[0] - x) / atlas.side as f32,
@@ -454,6 +492,35 @@ mod tests {
         let mesh = build(&atlas, &batch, [32, 32]).unwrap();
         assert_eq!(mesh.vertices.len(), 6);
         assert!(mesh.runs.iter().all(|r| r.batch.page == 1));
+    }
+
+    #[test]
+    fn depth_previews_preserve_depth_and_restart_even_with_the_same_clip() {
+        let atlas = Atlas::new(8, 4, &[255; 8 * 4 * 4], 4).unwrap();
+        let mut batch = make_batch();
+        for vertex in &mut batch.vertices {
+            vertex.depth = 0.25;
+        }
+        batch.blends.push((0..3, Blend::Depth([2, 3, 12, 10])));
+        batch.blends.push((3..6, Blend::Depth([2, 3, 12, 10])));
+        let mesh = build(&atlas, &batch, [32, 32]).unwrap();
+        assert_eq!(mesh.runs.iter().filter(|run| run.clear_depth).count(), 2);
+        assert!(
+            mesh.runs
+                .iter()
+                .all(|run| run.blend == UiBlend::Depth([2, 19, 12, 10]))
+        );
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|v| (v.position[2] + 0.5).abs() < 1e-6)
+        );
+
+        batch.vertices[0].depth = f32::NAN;
+        assert!(matches!(
+            build(&atlas, &batch, [32, 32]),
+            Err(Error::InvalidTriangles)
+        ));
     }
 
     #[test]
