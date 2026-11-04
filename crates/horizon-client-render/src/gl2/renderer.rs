@@ -295,12 +295,16 @@ impl Renderer {
 
         // The translucent quads last: blended over the solid world, section by section from the
         // farthest, without depth writes so that a section does not hide the one behind it.
-        if visible.iter().any(|(_, _, placed)| placed.translucent.is_some()) {
+        if visible
+            .iter()
+            .any(|(_, _, placed)| placed.translucent.is_some())
+        {
             visible.sort_by(|a, b| b.0.total_cmp(&a.0));
             // SAFETY: the context is current on this thread.
             unsafe {
                 self.gl.enable(glow::BLEND);
-                self.gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                self.gl
+                    .blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
                 self.gl.depth_mask(false);
             }
             self.terrain.set_translucent(&self.gl, true);
@@ -333,15 +337,10 @@ impl Renderer {
 
     fn free_section(&mut self, key: SectionKey) {
         if let Some(placed) = self.sections.remove(&key) {
-            self.free_placed(placed);
+            free_placed(&self.terrain, &self.gl, placed);
         }
     }
 
-    fn free_placed(&self, placed: Placed) {
-        for section in placed.solid.into_iter().chain(placed.translucent) {
-            self.terrain.free_section(&self.gl, section);
-        }
-    }
 }
 
 impl Drop for Renderer {
@@ -349,7 +348,7 @@ impl Drop for Renderer {
         // The GL objects go while their context is current. `platform` drops after this body.
         make_current(&self.platform);
         for (_, placed) in self.sections.drain() {
-            self.free_placed(placed);
+            free_placed(&self.terrain, &self.gl, placed);
         }
         self.terrain.free(&self.gl);
         self.hud.free(&self.gl);
@@ -365,6 +364,14 @@ fn to_gl_clip() -> Mat4 {
         Vec4::new(0.0, 0.0, 2.0, 0.0),
         Vec4::new(0.0, 0.0, -1.0, 1.0),
     )
+}
+
+/// Frees both buffers of a section. A free function, so that the sections can be drained while the
+/// terrain and the context are borrowed.
+fn free_placed(terrain: &Terrain, gl: &glow::Context, placed: Placed) {
+    for section in placed.solid.into_iter().chain(placed.translucent) {
+        terrain.free_section(gl, section);
+    }
 }
 
 fn full_section() -> [Vec3; 2] {
@@ -545,7 +552,12 @@ mod gpu_tests {
             .map(|pos| TerrainVertex::new(pos, [0.5, 0.5], 0, 0xFF_FFFF, 0xF0F0))
             .to_vec();
         // A translucent quad in front of it, in the same section: the blended pass draws it too.
-        let near = [[0.0, 0.0, 4.0], [16.0, 0.0, 4.0], [16.0, 16.0, 4.0], [0.0, 16.0, 4.0]];
+        let near = [
+            [0.0, 0.0, 4.0],
+            [16.0, 0.0, 4.0],
+            [16.0, 16.0, 4.0],
+            [0.0, 16.0, 4.0],
+        ];
         mesh.translucent = near
             .map(|pos| TerrainVertex::new(pos, [0.5, 0.5], 0, 0xFF_FFFF, 0xF0F0))
             .to_vec();
