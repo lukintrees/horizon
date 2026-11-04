@@ -66,7 +66,23 @@ jobs:
           cargo clippy --offline --all-targets -- -D warnings
 
       - name: PR 2b gate (full workspace, crates.io available here)
-        run: cargo check -p horizon-client --features legacy-gl --no-default-features
+        run: |
+          set +e
+          cargo check -p horizon-client --features legacy-gl --no-default-features > /tmp/gate.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; t=Path("/tmp/gate.log").read_text(errors="replace")[-8000:]; print("::error::"+t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+            exit "$rc"
+          fi
+          tail -20 /tmp/gate.log
 
       - name: gfx21 unit tests inside horizon-client-render
-        run: cargo test -p horizon-client-render --lib gfx21 --features legacy-gl
+        run: |
+          set +e
+          cargo test -p horizon-client-render --lib gfx21 --features legacy-gl > /tmp/gfx21-test.log 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            python3 -c 'from pathlib import Path; t=Path("/tmp/gfx21-test.log").read_text(errors="replace")[-8000:]; print("::error::"+t.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+            exit "$rc"
+          fi
+          tail -30 /tmp/gfx21-test.log
