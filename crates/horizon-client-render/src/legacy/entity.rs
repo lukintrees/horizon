@@ -1,10 +1,10 @@
 //! Ordinary entity/item quad conversion for the partial GL backend.
-//! Uses the shared paged HUD atlas. Special overlays (glint, hurt, text,
+//! Uses the shared paged HUD atlas. Special overlays (glint, text,
 //! translucent item materials and others) are rejected, not silently dropped.
 //! Geometry is camera-relative as in `gfx::Frame::entities`.
 use super::{hud::Atlas, terrain::lightmap_rgb};
 use crate::mesher::Vertex as SourceVertex;
-use horizon_legacy_gl::{Batch, Draw, Faces, Pass, Vertex};
+use horizon_legacy_gl::{Batch, Draw, EntityOverlay, Faces, Pass, Vertex};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -27,6 +27,7 @@ struct Point {
     pos: [f32; 3],
     uv: [f32; 2],
     color: [f32; 4],
+    light: [f32; 3],
 }
 impl Point {
     fn lerp(self, other: Self, t: f32) -> Self {
@@ -34,6 +35,7 @@ impl Point {
             pos: std::array::from_fn(|i| self.pos[i] + (other.pos[i] - self.pos[i]) * t),
             uv: std::array::from_fn(|i| self.uv[i] + (other.uv[i] - self.uv[i]) * t),
             color: std::array::from_fn(|i| self.color[i] + (other.color[i] - self.color[i]) * t),
+            light: std::array::from_fn(|i| self.light[i] + (other.light[i] - self.light[i]) * t),
         }
     }
 }
@@ -78,10 +80,9 @@ fn directional(normal: [i8; 4], nether: bool, back: bool) -> f32 {
 
 /// Expand game quads to paged triangles and bake ordinary entity lighting.
 /// A quad crossing pages is UV-clipped; input order is preserved. Two-sided
-/// normals emit front/back draws with separate colors. The GL path multiplies
-/// vertex tint and light before interpolation, an approximation when both vary
-/// within a triangle. Dynamic/colored lights and special overlays are not yet
-/// supported. It is a partial adapter, not the game's selectable renderer.
+/// normals emit front/back draws with separate colors. Tint and lightmap values
+/// interpolate independently, as in the existing shader. Hurt and white flashes
+/// are supported; dynamic/colored lights and other overlays are not yet supported. It is a partial adapter, not the game's selectable renderer.
 pub fn build(
     atlas: &Atlas,
     vertices: &[SourceVertex],
@@ -100,9 +101,13 @@ pub fn build(
         {
             return Err(Error::MixedMaterial);
         }
-        if overlay != 0 {
-            return Err(Error::UnsupportedOverlay(overlay));
-        }
+        let overlay = match overlay {
+            0 => EntityOverlay::None,
+            1 => EntityOverlay::Hurt,
+            5 => EntityOverlay::White(crate::overlay::white_alpha(15)),
+            16..=31 => EntityOverlay::White(crate::overlay::white_alpha(overlay - 16)),
+            value => return Err(Error::UnsupportedOverlay(value)),
+        };
         if quad.iter().any(|v| {
             v.pos.iter().any(|p| !p.is_finite())
                 || v.uv
@@ -129,17 +134,13 @@ pub fn build(
                 Point {
                     pos: v.pos,
                     uv: [v.uv[0] * atlas.width as f32, v.uv[1] * atlas.height as f32],
-                    color: [
-                        rgba[0] * light[0] * shade,
-                        rgba[1] * light[1] * shade,
-                        rgba[2] * light[2] * shade,
-                        rgba[3],
-                    ],
+                    color: [rgba[0] * shade, rgba[1] * shade, rgba[2] * shade, rgba[3]],
+                    light,
                 }
             });
             for indices in [[0, 1, 2], [0, 2, 3]] {
                 let triangle = indices.map(|i| points[i]);
-                emit_triangle(atlas, &mut mesh, &triangle, faces)?;
+                emit_triangle(atlas, &mut mesh, &triangle, Pass::Entity { faces, overlay })?;
             }
         }
     }
@@ -150,7 +151,7 @@ fn emit_triangle(
     atlas: &Atlas,
     mesh: &mut Mesh,
     points: &[Point; 3],
-    faces: Faces,
+    pass: Pass,
 ) -> Result<(), Error> {
     let tile = |axis: usize, value: f32| -> u32 {
         let count = if axis == 0 { atlas.columns } else { atlas.rows };
@@ -193,7 +194,6 @@ fn emit_triangle(
                 if mesh.vertices.len() > i32::MAX as usize - 3 {
                     return Err(Error::TooManyVertices);
                 }
-                let pass = Pass::Entity { faces };
                 if mesh
                     .draws
                     .last()
@@ -221,7 +221,7 @@ fn emit_triangle(
                             (p.uv[0] - x) / atlas.side as f32,
                             (p.uv[1] - y) / atlas.side as f32,
                         ],
-                        atlas_rect: [0., 0., 1., 1.],
+                        atlas_rect: [p.light[0], p.light[1], p.light[2], 0.],
                         color: p.color,
                     });
                 }
@@ -258,20 +258,26 @@ mod tests {
         assert!(mesh.draws.iter().any(|d| d.batch.page == 0
             && d.pass
                 == Pass::Entity {
-                    faces: Faces::Front
+                    faces: Faces::Front,
+                    overlay: EntityOverlay::None
                 }));
-        assert!(
-            mesh.draws
-                .iter()
-                .any(|d| d.batch.page == 1 && d.pass == Pass::Entity { faces: Faces::Back })
-        );
+        assert!(mesh.draws.iter().any(|d| d.batch.page == 1
+            && d.pass
+                == Pass::Entity {
+                    faces: Faces::Back,
+                    overlay: EntityOverlay::None
+                }));
         for draw in &mesh.draws {
             let red = mesh.vertices[draw.batch.first].color[0];
             match draw.pass {
                 Pass::Entity {
                     faces: Faces::Front,
+                    overlay: EntityOverlay::None,
                 } => assert!((red - 1.).abs() < 1e-6),
-                Pass::Entity { faces: Faces::Back } => assert!((red - 0.4).abs() < 1e-6),
+                Pass::Entity {
+                    faces: Faces::Back,
+                    overlay: EntityOverlay::None,
+                } => assert!((red - 0.4).abs() < 1e-6),
                 _ => panic!("unexpected pass"),
             }
         }
@@ -317,18 +323,18 @@ mod tests {
         let nether = build(&atlas, &q, &[255; 1024], true).unwrap();
         assert!(standard.draws.iter().all(|d| d.pass
             == Pass::Entity {
-                faces: Faces::Front
+                faces: Faces::Front,
+                overlay: EntityOverlay::None
             }));
         assert!(standard.vertices[0].color[0] > nether.vertices[0].color[0]);
         for v in &mut q {
             v.normal = [0, 0, 0, 0];
         }
         let unlit = build(&atlas, &q, &[255; 1024], false).unwrap();
-        assert!(
-            unlit
-                .draws
-                .iter()
-                .all(|d| d.pass == Pass::Entity { faces: Faces::Both })
-        );
+        assert!(unlit.draws.iter().all(|d| d.pass
+            == Pass::Entity {
+                faces: Faces::Both,
+                overlay: EntityOverlay::None
+            }));
     }
 }

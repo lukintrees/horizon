@@ -21,8 +21,9 @@ pub mod window;
 pub const TERRAIN_VERTEX_SHADER: &str = include_str!("terrain.vert");
 pub const TERRAIN_FRAGMENT_SHADER: &str = include_str!("terrain.frag");
 
-/// Interleaved GLSL attributes. Positions are relative to a section; include
-/// its origin in the transform. All vertices in a quad share `atlas_rect`.
+/// Interleaved GLSL attributes. Terrain positions are relative to a section;
+/// include its origin in the transform. For entity passes `atlas_rect.xyz`
+/// instead carries the per-vertex lightmap RGB; the page fills the texture.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vertex {
@@ -77,6 +78,7 @@ pub enum Pass {
     /// Face selection lets the CPU supply different colors for the two sides.
     Entity {
         faces: Faces,
+        overlay: EntityOverlay,
     },
     /// GUI drawn over the world, with no depth test or depth writes.
     HudAlpha,
@@ -100,6 +102,14 @@ pub enum Faces {
     Both,
     Front,
     Back,
+}
+
+/// Vanilla entity overlay; the byte is the alpha of a white overlay texel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityOverlay {
+    None,
+    Hurt,
+    White(u8),
 }
 
 /// Terrain fog parameters, matching the existing renderer's spherical and
@@ -251,6 +261,8 @@ pub struct Renderer {
     fog_color: i32,
     fog_ranges: i32,
     fog_enabled: i32,
+    entity_mode: i32,
+    entity_overlay: i32,
     section_offset: i32,
     atlas: i32,
     _thread: PhantomData<Rc<()>>,
@@ -332,6 +344,8 @@ impl Renderer {
             let fog_color = uniform(c"fog_color");
             let fog_ranges = uniform(c"fog_ranges");
             let fog_enabled = uniform(c"fog_enabled");
+            let entity_mode = uniform(c"entity_mode");
+            let entity_overlay = uniform(c"entity_overlay");
             let section_offset = uniform(c"section_offset");
             for (name, value) in [
                 ("view_projection", view_projection),
@@ -340,6 +354,8 @@ impl Renderer {
                 ("fog_color", fog_color),
                 ("fog_ranges", fog_ranges),
                 ("fog_enabled", fog_enabled),
+                ("entity_mode", entity_mode),
+                ("entity_overlay", entity_overlay),
                 ("section_offset", section_offset),
             ] {
                 if value < 0 {
@@ -374,6 +390,8 @@ impl Renderer {
                 fog_color,
                 fog_ranges,
                 fog_enabled,
+                entity_mode,
+                entity_overlay,
                 section_offset,
                 atlas,
                 _thread: PhantomData,
@@ -650,6 +668,32 @@ impl Renderer {
                     || matches!(draw.pass, Pass::HudDepth { clear: true, .. })
                 {
                     set_pass(gl, self.alpha_cutoff, draw.pass);
+                    let overlay = match draw.pass {
+                        Pass::Entity {
+                            overlay: EntityOverlay::Hurt,
+                            ..
+                        } => [1.0, 0.0, 0.0, 178.0 / 255.0],
+                        Pass::Entity {
+                            overlay: EntityOverlay::White(alpha),
+                            ..
+                        } => [1.0, 1.0, 1.0, f32::from(alpha) / 255.0],
+                        _ => [1.0; 4],
+                    };
+                    (gl.uniform_1f)(
+                        self.entity_mode,
+                        if matches!(draw.pass, Pass::Entity { .. }) {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                    );
+                    (gl.uniform_4f)(
+                        self.entity_overlay,
+                        overlay[0],
+                        overlay[1],
+                        overlay[2],
+                        overlay[3],
+                    );
                     let terrain = matches!(
                         draw.pass,
                         Pass::Solid { .. } | Pass::Translucent { .. } | Pass::Entity { .. }
@@ -723,7 +767,7 @@ unsafe fn set_pass(gl: &Gl, uniform: i32, pass: Pass) {
             (gl.disable)(0x0c11);
         }
         match pass {
-            Pass::Entity { faces } => {
+            Pass::Entity { faces, .. } => {
                 (gl.depth_func)(0x0203); // LEQUAL in the conventional GL depth range
                 (gl.enable)(0x0b71);
                 (gl.enable)(0x0be2);

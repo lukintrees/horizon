@@ -71,6 +71,8 @@ mod mesher {
         pub _other: (),
     }
 }
+#[path = "../crates/horizon-client-render/src/overlay.rs"]
+mod overlay;
 mod sprites {
     pub struct Sprites {
         pub size: u32,
@@ -679,6 +681,36 @@ fn main() {
         gui.draw_ordered(&culled.vertices, &culled.draws, &identity)
             .unwrap();
         assert_eq!(rgb(sample(5)), [0, 0, 0], "back-face culling");
+        let mut hurt_quad = entity_quad;
+        for v in &mut hurt_quad {
+            v.layer = 1;
+            v.normal = [0; 4];
+        }
+        let hurt = legacy::entity::build(&gui_atlas, &hurt_quad, &[128; 1024], false).unwrap();
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&hurt.vertices, &hurt.draws, &identity)
+            .unwrap();
+        let hurt_pixel = rgb(sample(26));
+        assert!(
+            hurt_pixel[0].abs_diff(39) <= 1
+                && hurt_pixel[1].abs_diff(70) <= 1
+                && hurt_pixel[2] <= 1,
+            "hurt overlay then lightmap: {hurt_pixel:?}"
+        );
+        for v in &mut hurt_quad {
+            v.layer = 31;
+        }
+        let flash = legacy::entity::build(&gui_atlas, &hurt_quad, &[128; 1024], false).unwrap();
+        clear(0x4000 | 0x0100);
+        gui.draw_ordered(&flash.vertices, &flash.draws, &identity)
+            .unwrap();
+        let white_pixel = rgb(sample(26));
+        assert!(
+            white_pixel[0].abs_diff(96) <= 1
+                && white_pixel[1].abs_diff(121) <= 1
+                && white_pixel[2].abs_diff(96) <= 1,
+            "white flash then lightmap: {white_pixel:?}"
+        );
         let mut gui_batch = hud::HudBatch::new([32, 32]);
         gui_batch.quad(
             [[0., 0.], [32., 0.], [32., 32.], [0., 32.]],
