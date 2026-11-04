@@ -474,7 +474,7 @@ mod tests {
             .iter()
             .filter(|call| call.starts_with("draw "))
             .count();
-        assert_eq!(draws, 2, "one draw per section, one sprite each");
+        assert_eq!(draws, 3, "one draw per section, and the present quad");
         // One state for the solid pass, one for the present quad's reset.
         assert_eq!(states, 2, "{:?}", device.calls);
     }
@@ -499,11 +499,12 @@ mod tests {
             .iter()
             .filter(|call| call.starts_with("state "))
             .collect();
-        let wanted = "sky, solid, and the present quad's reset";
-        assert_eq!(states.len(), 3, "{wanted}: {states:?}");
+        let wanted = "sky, solid, see-through, and the present quad's reset";
+        assert_eq!(states.len(), 4, "{wanted}: {states:?}");
         assert!(states[0].contains("glDisable(DEPTH_TEST)"), "{states:?}");
         assert!(states[1].contains("glDepthMask(1)"), "{states:?}");
-        assert!(states[2].contains("glDepthMask(0)"), "{states:?}");
+        assert!(states[2].contains("glBlendFunc(GL_SRC_ALPHA"), "{states:?}");
+        assert!(states[3].contains("glDepthMask(1)"), "the reset: {states:?}");
         // The sky's draw is the first one, before the world's.
         let draws: Vec<&String> = device
             .calls
@@ -572,8 +573,9 @@ mod tests {
             .filter(|c| c.starts_with("draw hud"))
             .count();
         assert_eq!(hud_draws, 3, "0..2 alpha, 2..6 invert, 6..10 alpha");
-        // The last alpha run repeats the first run's state: three runs, two states.
-        assert_eq!(hud_states, 2, "{:?}", device.calls);
+        // Three runs, three states: the last alpha run repeats the first one's state, but the
+        // invert run in between changed it, so it has to be set again.
+        assert_eq!(hud_states, 3, "{:?}", device.calls);
         assert!(device.calls.iter().any(|call| call == "hud linear false"));
     }
 
