@@ -63,6 +63,17 @@ C01 должен опубликовать точные пути новых facad
   изменения; большие work items из плана делятся на a/b/c.
 - Любой task PR начинается как draft с `Task-ID`, `Depends-on`, scope и тестами. Зависимость считается
   доступной после интеграции/объявленного baseline, а не только по наличию открытого PR.
+- Metadata читает `tools/ci/legacy_scope.py` построчно: `Поле: значение` **с начала строки**, без
+  `**выделения**`, маркеров списка и склейки нескольких полей в одной строке. Все пять полей обязательны,
+  `Contract-Version` сверяется с `legacy-gl-policy.json`:
+
+  ```text
+  Task-ID: M01a
+  Variant: A
+  Depends-on: C01
+  Scope: docs/design/legacy-gl-c01.md
+  Contract-Version: 1
+  ```
 - Не переписывать историю после интеграторских fixups: merge актуального base, без force-push/rebase,
   в соответствии с CONTRIBUTING.md. Не cherry-pick одну реализацию в несколько конкурирующих веток.
 
