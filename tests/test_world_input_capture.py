@@ -81,6 +81,7 @@ struct HudBatch { scale: f32 }
 impl HudBatch { fn new(_size: [u32; 2]) -> Self { Self { scale: 2.0 } } }
 struct Config { width: u32, height: u32 }
 struct Renderer { config: Config }
+impl Renderer { fn surface_size(&self) -> [u32; 2] { [self.config.width, self.config.height] } }
 #[derive(Default)]
 struct Window { grabs: Cell<u32>, visible: Cell<bool>, fail: bool, warps: Cell<u32>, at: Cell<(f64, f64)> }
 impl Window {
