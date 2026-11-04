@@ -627,7 +627,7 @@ mod tests {
             1,
         )
         .unwrap();
-        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let page = build_page(&layout, 0, &[&[255, 255, 255, 128]]).unwrap();
         let mut renderer = TerrainHudRenderer::new(
             Context::new("osmesa", [64; 2]).unwrap(),
             layout,
@@ -709,7 +709,7 @@ mod tests {
                     ],
                     [0.5; 2],
                     0,
-                    0x80ff0000,
+                    0xffff0000,
                     0,
                 )
             }));
