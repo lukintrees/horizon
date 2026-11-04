@@ -237,12 +237,6 @@ impl Renderer {
         }
         self.drawn = drawn;
         drawn
-
-        // SAFETY: the context is current; the HUD is drawn without depth testing, over the terrain.
-        unsafe { self.gl.disable(glow::DEPTH_TEST) };
-        self.draw_hud(frame.hud);
-        present(&self.platform);
-        Ok(true)
     }
 
     /// Writes the HUD's changed atlas patches and draws its batch.
