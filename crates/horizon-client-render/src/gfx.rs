@@ -183,7 +183,7 @@ pub mod panorama;
 mod readback;
 mod resident;
 mod reuse;
-mod stars;
+pub(crate) mod stars;
 pub mod submit;
 mod sunrise_fan;
 mod timing;

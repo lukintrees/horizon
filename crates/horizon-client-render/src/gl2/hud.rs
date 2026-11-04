@@ -51,6 +51,11 @@ pub struct Hud {
 }
 
 impl Hud {
+    /// The atlas texture: the shared atlas the sky, the weather and the lightning sample too.
+    pub fn atlas(&self) -> glow::Texture {
+        self.atlas
+    }
+
     /// Uploads the atlas (`width` by `height` RGBA8 texels) and builds the program. Needs a current
     /// context.
     pub fn new(gl: &glow::Context, pixels: &[u8], width: u32, height: u32) -> Result<Self, String> {

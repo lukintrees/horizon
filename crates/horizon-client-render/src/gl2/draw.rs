@@ -139,6 +139,11 @@ impl Terrain {
         unsafe { gl.delete_buffer(section.buffer) };
     }
 
+    /// The lightmap texture, which the weather samples too.
+    pub fn lightmap(&self) -> glow::Texture {
+        self.lightmap
+    }
+
     /// Replaces the lightmap's texels (RGBA, 16 by 16).
     pub fn set_lightmap(&self, gl: &glow::Context, pixels: &[u8; 16 * 16 * 4]) {
         // SAFETY: the context is current on this thread and the lightmap was made on it.

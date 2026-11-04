@@ -1,7 +1,9 @@
 //! The OpenGL 2 renderer: the frame the wgpu renderer draws, on a legacy OpenGL context made on the
 //! game's own window. M2 draws the terrain: each section's solid quads in one float buffer, the atlas
-//! pages, the lightmap, the fog, CPU culling by section, and the HUD. Everything else the enum forwards
-//! lives in `stubs.rs` and does nothing until its milestone (docs/plans/opengl21-radeon-x1650.md).
+//! pages, the lightmap, the fog, CPU culling by section, and the HUD. M3 adds the sky (`sky`): the
+//! stars, the sun and the moon, the clouds, the lightning, the rain and the snow. Everything else the
+//! enum forwards lives in `stubs.rs` and does nothing until its milestone
+//! (docs/plans/opengl21-radeon-x1650.md).
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,10 +15,12 @@ use super::atlas::{self, Atlas};
 use super::batch;
 use super::draw::{Fog, Section, Terrain};
 use super::hud::Hud;
+use super::sky::{self, Sky, SkyScene};
 #[cfg(windows)]
 use super::wgl;
 use crate::Result;
 use crate::chunk::ColumnLayout;
+use crate::clouds;
 use crate::gfx::{Frame, Frustum, SectionKey, View, ViewSet};
 use crate::hud::HudBatch;
 use crate::mesher::SectionMesh;
@@ -41,6 +45,9 @@ pub struct Renderer {
     atlas: Atlas,
     terrain: Terrain,
     hud: Hud,
+    sky: Sky,
+    /// The clouds' mesh, rebuilt when the clouds move into a new cell (`clouds::Mesh::prepare`).
+    cloud_mesh: clouds::Mesh,
     sections: HashMap<SectionKey, Placed>,
     /// The lightmap as last uploaded, so a frame uploads it only when it changed.
     lightmap: [u8; 16 * 16 * 4],
@@ -84,6 +91,7 @@ impl Renderer {
         let lightmap = [255u8; 16 * 16 * 4];
         let terrain = Terrain::new(&gl, &atlas, &lightmap)?;
         let hud = Hud::new(&gl, hud_atlas.0, hud_atlas.1, hud_atlas.2)?;
+        let sky = Sky::new(&gl, hud.atlas(), [hud_atlas.1, hud_atlas.2])?;
         let inner = window.inner_size();
         Ok(Self {
             gl,
@@ -91,6 +99,8 @@ impl Renderer {
             atlas,
             terrain,
             hud,
+            sky,
+            cloud_mesh: clouds::Mesh::default(),
             sections: HashMap::new(),
             lightmap,
             drawn: 0,
@@ -234,7 +244,16 @@ impl Renderer {
             self.lightmap = pixels;
         }
 
-        self.draw_world(view_proj, frame.camera, fog_color, fog_range);
+        let scene = SkyScene {
+            stars: frame.stars,
+            celestial: frame.celestial,
+            clouds: frame.clouds.as_ref(),
+            cloud_end: frame.fog.map_or(2048.0, |fog| fog.cloud_end),
+            weather: frame.weather,
+            weather_time: frame.weather_time,
+            lightning: Some(&frame.lightning),
+        };
+        self.draw_world(view_proj, frame.camera, fog_color, fog_range, scene);
 
         // SAFETY: the context is current; the HUD is drawn without depth testing, over the terrain.
         unsafe { self.gl.disable(glow::DEPTH_TEST) };
@@ -243,14 +262,16 @@ impl Renderer {
         Ok(true)
     }
 
-    /// Clears to the fog colour and draws the sections whose bounds lie inside the frustum of
-    /// `view_proj`, seen from `camera`. Returns how many were drawn.
+    /// Clears to the fog colour, draws the sky and the sections whose bounds lie inside the frustum of
+    /// `view_proj`, seen from `camera`, then the clouds, the translucent quads, the lightning and the
+    /// weather. Returns how many sections were drawn.
     fn draw_world(
         &mut self,
         view_proj: Mat4,
         camera: DVec3,
         fog_color: [f32; 3],
         fog_range: [f32; 4],
+        scene: SkyScene<'_>,
     ) -> usize {
         let frustum = Frustum::of(view_proj);
         let clip = to_gl_clip() * view_proj;
@@ -275,6 +296,12 @@ impl Renderer {
             range: fog_range,
             color: fog_color,
         };
+        // The stars, the sun and the moon are at infinity: drawn first, over the cleared frame, and the
+        // terrain covers them wherever it is nearer.
+        if let Some((rotation, brightness)) = scene.stars {
+            self.sky.stars(&self.gl, clip * rotation, brightness);
+        }
+        self.sky.bodies(&self.gl, clip, scene.celestial, &fog, false);
         self.terrain.begin(&self.gl, &clip.to_cols_array(), fog);
         let mut drawn = 0;
         // The visible sections with their distance, for the translucent pass.
@@ -292,6 +319,20 @@ impl Renderer {
             visible.push((origin.length_squared(), origin.to_array(), placed));
         }
         self.drawn = drawn;
+
+        // The clouds come after the solid terrain, which hides them where it is nearer.
+        if let Some(input) = scene.clouds {
+            let (rebuilt, uniform) = self.cloud_mesh.prepare(input);
+            let vertices = &self.cloud_mesh.vertices;
+            self.sky.clouds(
+                &self.gl,
+                clip,
+                vertices,
+                &uniform,
+                scene.cloud_end,
+                rebuilt,
+            );
+        }
 
         // The translucent quads last: blended over the solid world, section by section from the
         // farthest, without depth writes so that a section does not hide the one behind it.
@@ -320,6 +361,19 @@ impl Renderer {
                 self.gl.depth_mask(true);
             }
         }
+        // The lightning, then the rain and the snow, which are drawn over the translucent quads.
+        if let Some(input) = scene.lightning {
+            let bolts = sky::lightning_vertices(input, camera);
+            self.sky.bodies(&self.gl, clip, &bolts, &fog, true);
+        }
+        self.sky.weather(
+            &self.gl,
+            clip,
+            self.terrain.lightmap(),
+            scene.weather,
+            scene.weather_time,
+            &fog,
+        );
         drawn
     }
 
@@ -349,6 +403,7 @@ impl Drop for Renderer {
         for (_, placed) in self.sections.drain() {
             free_placed(&self.terrain, &self.gl, placed);
         }
+        self.sky.free(&self.gl);
         self.terrain.free(&self.gl);
         self.hud.free(&self.gl);
     }
@@ -489,7 +544,7 @@ mod gpu_tests {
     use winit::window::WindowId;
 
     use super::*;
-    use crate::mesher::TerrainVertex;
+    use crate::mesher::{TerrainVertex, Vertex as EntityVertex};
 
     /// Makes the window on the test's own thread, which is not the main thread.
     #[derive(Default)]
@@ -573,6 +628,7 @@ mod gpu_tests {
             camera,
             [0.5, 0.5, 0.5],
             [1.0e9; 4],
+            SkyScene::nothing(),
         );
         assert_eq!(drawn, 1, "the section lies in front of the camera");
 
@@ -601,6 +657,126 @@ mod gpu_tests {
         assert!(
             bright > 1000,
             "the quad covers the frame: {bright} bright pixels"
+        );
+    }
+
+    /// A square of the sky's quads `z` blocks ahead, `half` blocks to each side, in the given layer.
+    fn sky_quad(z: f32, half: f32, layer: u32) -> Vec<EntityVertex> {
+        let mut out = Vec::new();
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            out.push(EntityVertex {
+                pos: [x * half, y * half, z],
+                uv: [0.5, 0.5],
+                layer,
+                color: u32::MAX,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.0; 2],
+            });
+        }
+        out
+    }
+
+    /// A square of rain `z` blocks ahead: one white texel of the atlas, lit by full light.
+    fn rain(z: f32, half: f32) -> Vec<crate::weather::Vertex> {
+        let mut out = Vec::new();
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            out.push(crate::weather::Vertex {
+                pos: [x * half, y * half, z],
+                uv: [0.5, 0.5],
+                rect: [0.0, 0.0, 1.0, 1.0],
+                animation: [0.0; 4],
+                bases: [0; 4],
+                color: u32::MAX,
+                light: 0xF0F0,
+                snow: 0,
+            });
+        }
+        out
+    }
+
+    /// The bright pixels of the surface: the sky's additions and the white quads show on black.
+    fn bright_pixels(renderer: &Renderer) -> usize {
+        let [width, height] = renderer.size;
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        // SAFETY: the context is current on this thread and `pixels` holds the whole surface.
+        unsafe {
+            renderer.gl.read_pixels(
+                0,
+                0,
+                width as i32,
+                height as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(Some(&mut pixels)),
+            );
+        }
+        pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > 200 && p[1] > 200)
+            .count()
+    }
+
+    #[test]
+    fn the_sun_the_rain_and_the_clouds_are_drawn_over_black() {
+        let (_event_loop, window) = window();
+        let sprite = vec![255u8; 16 * 16 * 4];
+        let hud = vec![255u8; 4 * 4 * 4];
+        let mut renderer = Renderer::new(&window, &sprite, 16, 1, (&hud, 4, 4))
+            .expect("the OpenGL 2 renderer starts on the window's context");
+        let [width, height] = renderer.size;
+        let view = View::screen(0.0, 0.0, 70.0, width as f32 / height as f32, 512.0);
+        let view_proj = view.view_proj(Mat4::IDENTITY);
+        assert!(make_current(&renderer.platform));
+        let black = [0.0; 3];
+        let fog_range = [1.0e9; 4];
+
+        // The sun: a white quad 30 blocks across, 100 blocks ahead, on the atlas's white texel.
+        let sun = sky_quad(100.0, 30.0, 2);
+        let scene = SkyScene {
+            celestial: &sun,
+            ..SkyScene::nothing()
+        };
+        renderer.draw_world(view_proj, DVec3::ZERO, black, fog_range, scene);
+        let sun_pixels = bright_pixels(&renderer);
+        assert!(sun_pixels > 1000, "the sun shows: {sun_pixels} pixels");
+
+        // The rain: a white square 5 blocks across, 20 blocks ahead.
+        let drops = rain(20.0, 5.0);
+        let scene = SkyScene {
+            weather: &drops,
+            weather_time: crate::weather::Time::new(0, 0.0),
+            ..SkyScene::nothing()
+        };
+        renderer.draw_world(view_proj, DVec3::ZERO, black, fog_range, scene);
+        let rain_pixels = bright_pixels(&renderer);
+        assert!(rain_pixels > 1000, "the rain shows: {rain_pixels} pixels");
+
+        // The clouds: a white quad 10 blocks across, 30 blocks ahead, blended over the black frame.
+        renderer.draw_world(
+            view_proj,
+            DVec3::ZERO,
+            black,
+            fog_range,
+            SkyScene::nothing(),
+        );
+        let cloud = sky_quad(30.0, 10.0, 4);
+        let uniform = crate::clouds::Uniform {
+            offset: [0.0; 4],
+            colors: [[1.0; 4]; 4],
+        };
+        renderer.sky.clouds(
+            &renderer.gl,
+            to_gl_clip() * view_proj,
+            &cloud,
+            &uniform,
+            2048.0,
+            true,
+        );
+        let cloud_pixels = bright_pixels(&renderer);
+        assert!(
+            cloud_pixels > 1000,
+            "the clouds show: {cloud_pixels} pixels"
         );
     }
 }
