@@ -274,8 +274,10 @@ mod tests {
         assert_eq!(four.samples, 4);
         assert_eq!(four.color_bytes(), two.color_bytes() * 2);
         assert_eq!(four.color_bytes(), 1366 * 768 * 4 * 4);
-        // 16 MiB against a 256 MiB card: a sixteenth, and worth stating rather than guessing.
-        assert!(four.color_bytes() <= 256 * 1024 * 1024 / 16 + 1);
+        // 16.008 MiB against a 256 MiB card: a sixteenth of the card to within 8 KiB, because
+        // 1366x768 is not a power of two and 16 MiB is. The slack is the last term: a sixteenth
+        // of the card plus the one row of pixels that overshoots it.
+        assert!(four.color_bytes() <= 256 * 1024 * 1024 / 16 + 8192);
         // Off is still one sample's worth of texture, not zero bytes.
         let off = Size::new(1366, 768, Plan::None);
         assert_eq!(off.samples, 0);

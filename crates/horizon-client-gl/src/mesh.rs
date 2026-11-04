@@ -391,7 +391,10 @@ mod tests {
         assert_eq!(&bytes[20..24], &[0x0D, 0x0C, 0x0B, 0x0A]);
         assert_eq!(bytes[24], 255, "sky 15 is the maximum");
         assert_eq!(bytes[25], 4 * 17, "block 4 out of 15");
-        assert_eq!(f32::from_le_bytes(bytes[28..32].try_into().unwrap()), 1.0);
+        // 20..24 is the colour, 24..26 the light, and `a_extra` is the atlas: `placed(2)` puts
+        // every sprite in atlas 0, so the float at 28 is 0.0 -- `layer: 1` above is the sprite
+        // index, not the atlas, and reading 1.0 here expected the two to be the same thing.
+        assert_eq!(f32::from_le_bytes(bytes[28..32].try_into().unwrap()), 0.0);
     }
 
     #[test]
@@ -495,8 +498,11 @@ mod tests {
         let mut placement = AtlasPlacement::default();
         assert_eq!(placement.place(0, 2), Err(MeshError::NoSuchAtlas { atlas: 2 }));
         assert_eq!(placement.place(0, UNPLACED), Err(MeshError::NoSuchAtlas { atlas: UNPLACED }));
-        assert_eq!(placement.place(0, ATLAS_COUNT as u8 - 1), Ok(()));
+        // The two refusals above decided that; the accepted placement below has to be asked
+        // about *before* it, or the assertion that follows is about it and not about them.
         assert!(placement.is_empty(), "a refused placement writes nothing");
+        assert_eq!(placement.place(0, ATLAS_COUNT as u8 - 1), Ok(()));
+        assert!(!placement.is_empty(), "an accepted placement writes the slot");
         assert!(MeshError::NoSuchAtlas { atlas: 5 }.to_string().contains('2'));
     }
 

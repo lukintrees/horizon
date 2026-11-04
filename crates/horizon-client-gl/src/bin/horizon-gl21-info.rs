@@ -35,7 +35,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let json = args.iter().any(|a| a == "--json");
     let strict = args.iter().any(|a| a == "--strict")
-        || std::env::var("HORIZON_GL21_STRICT").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
+        || std::env::var("HORIZON_GL21_STRICT")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false);
 
     let want_probe = args.iter().any(|a| a == "--probe");
     let want_shaders = args.iter().any(|a| a == "--check-shaders");

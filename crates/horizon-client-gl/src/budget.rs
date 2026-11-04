@@ -682,14 +682,17 @@ mod tests {
 
     #[test]
     fn the_targets_budget_refuses_what_llvmpipe_would_accept() {
+        // The shape of terrain.wgsl's Globals on the wgpu side: two matrices, four `vec4`s,
+        // then four arrays (16, 32, 128, 32 entries of four components). 16 + 16 + 16 + 64 + 128
+        // + 512 + 128 = 880 components against the target's 512 -- the comment here said 936,
+        // which is 56 more than the expression below adds up to, and the assertion copied it.
         let mut src = String::from("uniform mat4 view_proj; uniform mat4 inverse_view;\n");
-        // The measured shape of terrain.wgsl's Globals on the wgpu side: 936 components.
         src.push_str("uniform vec4 fog; uniform vec4 sky;\n");
         src.push_str("uniform vec4 misc; uniform vec4 sunrise;\n");
         src.push_str("uniform vec4 dynamic_lights[16]; uniform vec4 colored_lights[32];\n");
         src.push_str("uniform vec4 emissive_layers[128]; uniform vec4 sunrise_fan[32];\n");
         let m = measure(&src, Stage::Vertex);
-        assert_eq!(m.uniform_components, 936);
+        assert_eq!(m.uniform_components, 880);
         assert!(check(&m, Stage::Vertex, &Limits::X1650).is_err());
         // The same source is fine on a 3.3 driver, which is why the check has to run here.
         assert!(check(&m, Stage::Vertex, &Limits::GL33).is_ok());
