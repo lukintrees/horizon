@@ -3,6 +3,16 @@ name: Legacy GL branch validation
 on:
   push:
     branches: ['arena/a7e96628-horizon']
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/horizon-render-api/**'
+      - 'crates/horizon-legacy-render/**'
+      - 'crates/horizon-client-render/**'
+      - 'tools/legacy-gl-probe/**'
+      - 'tools/legacy_gl_smoke.py'
+      - 'tests/test_legacy_gl_smoke.py'
+      - '.github/workflows/legacy-gl-branch.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,13 +38,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-gl-branch
-      - name: Compile and test the actual game bridge
+      - name: Compile the game bridges and check the full client
         shell: bash
         run: |
           mkdir -p target/legacy-branch
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
+          if [ "$status" -eq 0 ]; then
+            cargo check --locked -p horizon-client --no-default-features --features horizon-client-render/legacy-gl --message-format=json > target/legacy-branch/full-client.jsonl 2>> target/legacy-branch/cargo.stderr
+            status=$?
+          fi
           cat target/legacy-branch/cargo.stderr
           # Standard check annotations make compiler failures readable through the
           # checks API, even when downloading full logs/artifacts is unavailable.
@@ -44,7 +58,7 @@ jobs:
           def escape(value):
               return str(value).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           count = 0
-          for line in Path('target/legacy-branch/compiler.jsonl').read_text().splitlines():
+          for line in (Path('target/legacy-branch/compiler.jsonl').read_text() + '\n' + (Path('target/legacy-branch/full-client.jsonl').read_text() if Path('target/legacy-branch/full-client.jsonl').exists() else '')).splitlines():
               try:
                   record = json.loads(line)
               except ValueError:
@@ -109,3 +123,25 @@ jobs:
         with:
           name: legacy-branch-gl2-report
           path: target/legacy-gl-probe/report.json
+
+  windows-x86-abi:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.88.0'
+          targets: i686-pc-windows-msvc
+          components: clippy
+      - name: Compile and link the native x86 probe (not Win7 qualification)
+        run: |
+          cargo clippy --offline --locked --manifest-path tools/legacy-gl-probe/Cargo.toml --target i686-pc-windows-msvc --all-targets -- -D warnings
+          cargo build --offline --locked --manifest-path tools/legacy-gl-probe/Cargo.toml --release --target i686-pc-windows-msvc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-modern-windows-x86-not-win7-qualified
+          path: tools/legacy-gl-probe/target/i686-pc-windows-msvc/release/horizon-legacy-gl-probe.exe
+          if-no-files-found: error
