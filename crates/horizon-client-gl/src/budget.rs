@@ -517,7 +517,9 @@ pub fn check(measured: &Measured, stage: Stage, limits: &Limits) -> Result<()> {
 /// undefined values.
 pub fn check_linked(vertex: &Measured, fragment: &Measured) -> Result<()> {
     for v in &vertex.uniforms {
-        let Some(f) = fragment.uniform(&v.name) else { continue };
+        let Some(f) = fragment.uniform(&v.name) else {
+            continue;
+        };
         if f.ty == v.ty && f.count == v.count {
             continue;
         }

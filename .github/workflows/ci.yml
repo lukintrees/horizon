@@ -293,7 +293,10 @@ jobs:
           set -e
           if [ "$clippy_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
             echo "::error::launcher: clippy $clippy_status, cargo test $test_status"
-            tail -n 40 launcher-test.log | sed 's/^/::error:: '
+            # One annotation with the tail, not forty: GitHub keeps around ten error
+            # annotations per step and drops the rest, which is how "test result: ok" became
+            # the only thing a failing run told us. The reporter puts libtest's verdict first.
+            python ../tools/gl21_annotate_rustc.py launcher-test.log
             exit 1
           fi
   # Most pull requests leave the harnesses to parity-main, which runs them on main a batch of merges at a time
