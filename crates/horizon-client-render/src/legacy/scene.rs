@@ -201,6 +201,8 @@ pub struct FramePlan<'a> {
     pub terrain: Vec<SectionDraw<'a>>,
     pub solid_count: usize,
     pub entities: entity::Mesh,
+    pub translucent_items: entity::Mesh,
+    pub particles: entity::Mesh,
     pub static_entities: Vec<StaticEntityDraw>,
     pub omitted_static_overlays: Vec<(u32, usize)>,
     /// Nonempty only for `prepare_supported_frame`; these quads are not drawn.
@@ -279,16 +281,21 @@ fn prepare_frame_inner<'a>(
         entity::build_celestial(gui.atlas(), &frame.celestial[..count], skip_unsupported)
             .map_err(FrameError::Entity)?
     };
-    let entities = if frame.title {
-        entity::BuildReport::default()
-    } else if skip_unsupported {
-        entity::build_supported(gui.atlas(), frame.entities, &lights, frame.nether_lighting)
-            .map_err(FrameError::Entity)?
+    let (entities, translucent_items, particles) = if frame.title {
+        (
+            entity::BuildReport::default(),
+            entity::Mesh::default(),
+            entity::Mesh::default(),
+        )
     } else {
-        entity::BuildReport {
-            mesh: entities(gui.atlas(), frame, &lights).map_err(FrameError::Entity)?,
-            omitted: Vec::new(),
-        }
+        entity::build_frame(
+            gui.atlas(),
+            frame.entities,
+            &lights,
+            frame.nether_lighting,
+            skip_unsupported,
+        )
+        .map_err(FrameError::Entity)?
     };
     let mut static_entities = Vec::new();
     let mut omitted_static_overlays: Vec<(u32, usize)> = Vec::new();
@@ -411,6 +418,8 @@ fn prepare_frame_inner<'a>(
         terrain,
         solid_count,
         entities: entities.mesh,
+        translucent_items,
+        particles,
         static_entities,
         omitted_static_overlays,
         omitted_entity_overlays: entities.omitted,

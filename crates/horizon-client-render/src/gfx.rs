@@ -6047,6 +6047,16 @@ impl Renderer {
     /// Standard packs need every bridge stage; native packs, frame generation and
     /// native observers of the CPU entity stream retain their existing fallback.
     pub fn skins_entities(&self) -> bool {
+        // The GL preview consumes CPU vertices and cannot execute wgpu's
+        // compute skinning. Ask gameplay for CPU-posed models while it is
+        // active; if preview fails, wgpu can still render those vertices.
+        #[cfg(all(
+            feature = "legacy-live",
+            any(target_os = "linux", target_os = "windows")
+        ))]
+        if self.legacy_live.is_some() {
+            return false;
+        }
         self.entity_skin.is_some()
             && !self.frame_gen.on
             && self.pack_post.as_ref().is_none_or(|(_, post)| {
@@ -6533,7 +6543,8 @@ impl Renderer {
                 ) {
                     Ok(report) => {
                         if !self.legacy_live_omissions_reported
-                            && (!report.omitted_entity_overlays.is_empty()
+                            && (report.omitted_gpu_skinning
+                                || !report.omitted_entity_overlays.is_empty()
                                 || !report.omitted_celestial_overlays.is_empty()
                                 || !report.omitted_static_overlays.is_empty()
                                 || !report.omitted_hand_overlays.is_empty()
@@ -6541,7 +6552,8 @@ impl Renderer {
                                 || !report.omitted_hud_blends.is_empty())
                         {
                             log::warn!(
-                                "Experimental GL preview omitted entity overlays {:?}, celestial overlays {:?}, static overlays {:?}, hand overlays {:?}, {} screen quads, and HUD blends {:?}",
+                                "Experimental GL preview omitted GPU skinning {}, entity overlays {:?}, celestial overlays {:?}, static overlays {:?}, hand overlays {:?}, {} screen quads, and HUD blends {:?}",
+                                report.omitted_gpu_skinning,
                                 report.omitted_entity_overlays,
                                 report.omitted_celestial_overlays,
                                 report.omitted_static_overlays,

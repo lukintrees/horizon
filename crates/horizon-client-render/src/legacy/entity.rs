@@ -97,7 +97,7 @@ pub fn build(
     lightmap: &[u8; 1024],
     nether: bool,
 ) -> Result<Mesh, Error> {
-    Ok(build_inner(atlas, vertices, lightmap, nether, false, false)?.mesh)
+    Ok(build_inner(atlas, vertices, lightmap, nether, false, false, Stage::All)?.mesh)
 }
 
 /// Explicitly omit unsupported materials while reporting their codes and quad
@@ -109,7 +109,7 @@ pub fn build_supported(
     lightmap: &[u8; 1024],
     nether: bool,
 ) -> Result<BuildReport, Error> {
-    build_inner(atlas, vertices, lightmap, nether, true, false)
+    build_inner(atlas, vertices, lightmap, nether, true, false, Stage::All)
 }
 
 /// Build unlit additive sky bodies, retaining page clipping and reporting any
@@ -119,7 +119,65 @@ pub fn build_celestial(
     vertices: &[SourceVertex],
     skip_unsupported: bool,
 ) -> Result<BuildReport, Error> {
-    build_inner(atlas, vertices, &[255; 1024], false, skip_unsupported, true)
+    build_inner(
+        atlas,
+        vertices,
+        &[255; 1024],
+        false,
+        skip_unsupported,
+        true,
+        Stage::All,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum Stage {
+    All,
+    Ordinary,
+    Items,
+    Particles,
+}
+
+/// Split translucent-layer particle quads (overlay 15) from all other
+/// supported entity geometry. They write depth and must be rendered after
+/// translucent terrain; translucent item quads (32) stay before it.
+pub fn build_frame(
+    atlas: &Atlas,
+    vertices: &[SourceVertex],
+    lightmap: &[u8; 1024],
+    nether: bool,
+    skip_unsupported: bool,
+) -> Result<(BuildReport, Mesh, Mesh), Error> {
+    let ordinary = build_inner(
+        atlas,
+        vertices,
+        lightmap,
+        nether,
+        skip_unsupported,
+        false,
+        Stage::Ordinary,
+    )?;
+    let items = build_inner(
+        atlas,
+        vertices,
+        lightmap,
+        nether,
+        skip_unsupported,
+        false,
+        Stage::Items,
+    )?
+    .mesh;
+    let particles = build_inner(
+        atlas,
+        vertices,
+        lightmap,
+        nether,
+        skip_unsupported,
+        false,
+        Stage::Particles,
+    )?
+    .mesh;
+    Ok((ordinary, items, particles))
 }
 
 fn build_inner(
@@ -129,6 +187,7 @@ fn build_inner(
     nether: bool,
     skip_unsupported: bool,
     celestial: bool,
+    stage: Stage,
 ) -> Result<BuildReport, Error> {
     if !vertices.len().is_multiple_of(4) {
         return Err(Error::IncompleteQuad);
@@ -143,6 +202,12 @@ fn build_inner(
         {
             return Err(Error::MixedMaterial);
         }
+        if matches!(stage, Stage::Ordinary) && (overlay == 15 || overlay == 32)
+            || matches!(stage, Stage::Items) && overlay != 32
+            || matches!(stage, Stage::Particles) && overlay != 15
+        {
+            continue;
+        }
         if quad.iter().any(|v| {
             v.pos.iter().any(|p| !p.is_finite())
                 || v.uv
@@ -154,7 +219,7 @@ fn build_inner(
         let unlit = overlay == 2;
         let overlay = match (celestial, overlay) {
             (_, 2) => EntityOverlay::None,
-            (false, 0) => EntityOverlay::None,
+            (false, 0 | 15 | 32) => EntityOverlay::None,
             (false, 1) => EntityOverlay::Hurt,
             (false, 5) => EntityOverlay::White(crate::overlay::white_alpha(15)),
             (false, 16..=31) => EntityOverlay::White(crate::overlay::white_alpha(overlay - 16)),
@@ -408,6 +473,35 @@ mod tests {
             build_supported(&atlas, &bad, &[255; 1024], false),
             Err(Error::MixedMaterial)
         ));
+    }
+
+    #[test]
+    fn frame_stages_items_before_and_particles_after_translucent_terrain() {
+        let atlas = Atlas::new(1, 1, &[255; 4], 4).unwrap();
+        let normal = quad();
+        let mut item = normal;
+        let mut particle = normal;
+        let mut unsupported = normal;
+        for v in &mut item {
+            v.layer = 32;
+        }
+        for v in &mut particle {
+            v.layer = 15;
+        }
+        for v in &mut unsupported {
+            v.layer = 7;
+        }
+        let source = [particle, normal, item, unsupported, particle].concat();
+        let (ordinary, items, particles) =
+            build_frame(&atlas, &source, &[255; 1024], false, true).unwrap();
+        assert_eq!(ordinary.omitted, [(7, 1)]);
+        assert_eq!(ordinary.mesh.vertices.len(), 12); // two-sided
+        assert_eq!(items.vertices.len(), 12);
+        assert_eq!(particles.vertices.len(), 24);
+        assert_eq!(
+            build_frame(&atlas, &source, &[255; 1024], false, false).unwrap_err(),
+            Error::UnsupportedOverlay(7)
+        );
     }
 
     #[test]

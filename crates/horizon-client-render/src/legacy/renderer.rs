@@ -29,8 +29,12 @@ pub struct FrameReport {
     pub sky_vertices: usize,
     pub celestial_vertices: usize,
     pub star_vertices: usize,
+    /// The preview cannot pose the GPU skinning stream; callers should supply CPU vertices.
+    pub omitted_gpu_skinning: bool,
     pub omitted_celestial_overlays: Vec<(u32, usize)>,
     pub entity_vertices: usize,
+    pub translucent_item_vertices: usize,
+    pub particle_vertices: usize,
     pub static_entity_draws: usize,
     pub hand_vertices: usize,
     pub screen_vertices: usize,
@@ -320,6 +324,14 @@ impl Renderer {
             )
             .map_err(|e| format!("entities: {e}"))?;
         self.surface
+            .draw_ordered(
+                &plan.translucent_items.vertices,
+                &plan.translucent_items.draws,
+                &plan.view_projection,
+                Some(plan.fog),
+            )
+            .map_err(|e| format!("translucent items: {e}"))?;
+        self.surface
             .select_atlas(self.terrain_atlas)
             .map_err(|e| e.to_string())?;
         for draw in translucent {
@@ -330,6 +342,14 @@ impl Renderer {
         self.surface
             .select_atlas(self.gui_atlas)
             .map_err(|e| e.to_string())?;
+        self.surface
+            .draw_ordered(
+                &plan.particles.vertices,
+                &plan.particles.draws,
+                &plan.view_projection,
+                Some(plan.fog),
+            )
+            .map_err(|e| format!("particles: {e}"))?;
         if let Some(transform) = plan.hand_view_projection {
             self.surface
                 .clear_depth()
@@ -368,8 +388,13 @@ impl Renderer {
             sky_vertices: plan.sky.as_ref().map_or(0, |sky| sky.vertices.len()),
             celestial_vertices: plan.celestial.vertices.len(),
             star_vertices,
+            omitted_gpu_skinning: frame
+                .skin
+                .is_some_and(|skin| skin.vertices > 0 || skin.outline_vertices > 0),
             omitted_celestial_overlays: plan.omitted_celestial_overlays,
             entity_vertices: plan.entities.vertices.len(),
+            translucent_item_vertices: plan.translucent_items.vertices.len(),
+            particle_vertices: plan.particles.vertices.len(),
             static_entity_draws: plan.static_entities.len(),
             hand_vertices: plan.hand.vertices.len(),
             screen_vertices: plan.screen.vertices.len(),
@@ -457,6 +482,16 @@ mod tests {
             frame.dark_disc = true;
             frame.stars = Some((glam::Mat4::IDENTITY, 0.5));
             frame.hand = &hand;
+            let particle = hand.map(|mut v| {
+                v.layer = 15;
+                v
+            });
+            let item = hand.map(|mut v| {
+                v.layer = 32;
+                v
+            });
+            let entities = [particle, hand, item].concat();
+            frame.entities = &entities;
             let celestial = hand.map(|mut v| {
                 v.layer = 2;
                 v
@@ -496,6 +531,8 @@ mod tests {
             assert_ne!(report.star_vertices, 0);
             assert!(report.omitted_celestial_overlays.is_empty());
             assert_ne!(report.hand_vertices, 0);
+            assert_eq!(report.translucent_item_vertices, 6);
+            assert_eq!(report.particle_vertices, 6);
             assert_eq!(report.static_entity_draws, 1);
             assert_eq!(report.screen_vertices, 6);
             assert_eq!(report.omitted_screen_quads, 0);
