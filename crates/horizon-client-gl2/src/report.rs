@@ -18,6 +18,8 @@ pub struct Report {
     pub frame_ms_sum: f64,
     /// The terrain's cost in the last frame; `None` for the flat scene.
     pub terrain: Option<Stats>,
+    /// The fewest and the most draw calls of any frame so far.
+    pub draw_calls_range: Option<(u32, u32)>,
     pub error: Option<String>,
     /// The checks of the last frame.
     pub checks: Vec<Check>,
@@ -25,6 +27,14 @@ pub struct Report {
 
 impl Report {
     /// Passing needs no error, at least one frame, and every required check passing.
+    /// Records a frame's draw calls in the range.
+    pub fn note_draw_calls(&mut self, calls: u32) {
+        self.draw_calls_range = Some(match self.draw_calls_range {
+            None => (calls, calls),
+            Some((low, high)) => (low.min(calls), high.max(calls)),
+        });
+    }
+
     pub fn passed(&self) -> bool {
         self.error.is_none()
             && self.frames > 0
@@ -41,6 +51,7 @@ impl Report {
                 "drawn": t.drawn,
                 "draw_calls": t.draw_calls,
                 "triangles": t.triangles,
+                "buffer_bytes": t.buffer_bytes,
                 "frame_ms_last": t.frame_ms,
             })
         });
@@ -55,6 +66,8 @@ impl Report {
             "frames": self.frames,
             "frame_ms_avg": frame_ms_avg,
             "terrain": terrain,
+            "draw_calls_min": self.draw_calls_range.map(|(low, _)| low),
+            "draw_calls_max": self.draw_calls_range.map(|(_, high)| high),
             "checks": self.checks.iter().map(|check| serde_json::json!({
                 "name": check.name,
                 "required": check.required,
@@ -101,12 +114,23 @@ mod tests {
     }
 
     #[test]
+    fn the_draw_call_range_follows_every_frame() {
+        let mut report = Report::default();
+        for calls in [68, 41, 90, 77] {
+            report.note_draw_calls(calls);
+        }
+        let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+        assert_eq!(json["draw_calls_min"], 41);
+        assert_eq!(json["draw_calls_max"], 90);
+    }
+
+    #[test]
     fn the_report_carries_the_terrain_budget_and_the_average_frame_time() {
         let report = Report {
             scene: "terrain",
             frames: 4,
             frame_ms_sum: 100.0,
-            terrain: Some(Stats { sections: 128, empty: 20, culled: 40, drawn: 68, draw_calls: 68, triangles: 9000, frame_ms: 25.0 }),
+            terrain: Some(Stats { sections: 128, empty: 20, culled: 40, drawn: 68, draw_calls: 68, triangles: 9000, buffer_bytes: 1_000_000, frame_ms: 25.0 }),
             ..Report::default()
         };
         let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();

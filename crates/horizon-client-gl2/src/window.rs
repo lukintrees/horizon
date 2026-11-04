@@ -27,7 +27,7 @@ const HEIGHT: u32 = 480;
 pub enum Scene {
     /// Gate G1: a clear and one textured quad.
     Flat,
-    /// The GL2 terrain of `world::World::procedural`, seen from `Camera::overview`.
+    /// The GL2 terrain of `world::World::procedural`, seen from `Camera::orbit`.
     Terrain,
 }
 
@@ -125,7 +125,7 @@ impl App {
                 (pixels, checks, None)
             }),
             Drawer::Terrain(terrain) => terrain
-                .draw(&running.gl, size.width, size.height, &Camera::overview())
+                .draw(&running.gl, size.width, size.height, &Camera::orbit(self.report.frames))
                 .map(|(pixels, stats)| {
                     let checks = terrain::checks(&pixels, &stats);
                     (pixels, checks, Some(stats))
@@ -134,6 +134,9 @@ impl App {
         match drawn {
             Ok((pixels, checks, stats)) => {
                 self.report.checks = checks;
+                if let Some(stats) = stats {
+                    self.report.note_draw_calls(stats.draw_calls);
+                }
                 self.report.terrain = stats;
                 self.report.window = Some((size.width, size.height));
                 self.last = Some(pixels);

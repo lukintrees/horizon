@@ -63,11 +63,16 @@ pub struct Camera {
 }
 
 impl Camera {
-    /// The fixed view of the terrain check: above the hills, looking down over the ground at the centre.
-    pub fn overview() -> Self {
+    /// The view of the terrain check on frame `frame`: above the hills, looking down at the centre of the
+    /// world from 62 blocks out, and circling it at 3 degrees a frame from the south-west corner. Frame 0
+    /// is at (20, 26, 20), so the culling changes from frame to frame, as it does when the player moves.
+    pub fn orbit(frame: u32) -> Self {
+        let centre = [64.0, 10.0, 64.0];
+        let angle = (225.0 + 3.0 * frame as f32).to_radians();
+        let radius = 62.0;
         Self {
-            eye: [20.0, 26.0, 20.0],
-            target: [64.0, 10.0, 64.0],
+            eye: [centre[0] + radius * angle.cos(), 26.0, centre[2] + radius * angle.sin()],
+            target: centre,
             fovy: 60.0,
             near: 0.5,
             far: 300.0,
@@ -88,6 +93,8 @@ pub struct Stats {
     pub drawn: u32,
     pub draw_calls: u32,
     pub triangles: u64,
+    /// Bytes of vertex data on the GPU for the whole terrain, not per frame.
+    pub buffer_bytes: u64,
     pub frame_ms: f64,
 }
 
@@ -104,6 +111,7 @@ pub struct Terrain {
     sections: Vec<Section>,
     total: u32,
     empty: u32,
+    buffer_bytes: u64,
 }
 
 impl Terrain {
@@ -112,7 +120,7 @@ impl Terrain {
         let program = frame::link(gl, VERTEX_SHADER, FRAGMENT_SHADER, &[(0, "a_pos"), (1, "a_uv"), (2, "a_shade")])?;
         let atlas = upload_atlas(gl)?;
         let mut sections = Vec::new();
-        let (mut total, mut empty) = (0, 0);
+        let (mut total, mut empty, mut buffer_bytes) = (0, 0, 0u64);
         let sections_xz = world.size_xz() / world::SECTION;
         for sy in 0..world.size_y() / world::SECTION {
             for sz in 0..sections_xz {
@@ -124,6 +132,7 @@ impl Terrain {
                         continue;
                     }
                     let bytes: Vec<u8> = mesh.vertices.iter().flat_map(|v| v.to_ne_bytes()).collect();
+                    buffer_bytes += bytes.len() as u64;
                     // SAFETY: the context is current, as the caller guarantees.
                     let buffer = unsafe {
                         let buffer = gl.create_buffer()?;
@@ -137,7 +146,7 @@ impl Terrain {
                 }
             }
         }
-        Ok(Self { program, atlas, sections, total, empty })
+        Ok(Self { program, atlas, sections, total, empty, buffer_bytes })
     }
 
     /// Draws the terrain from `camera` into a `width` x `height` window and reads the frame back.
@@ -149,7 +158,7 @@ impl Terrain {
         let view_proj: Mat4 = math::mul(&proj, &view);
         let planes = math::frustum_planes(&view_proj);
 
-        let mut stats = Stats { sections: self.total, empty: self.empty, ..Stats::default() };
+        let mut stats = Stats { sections: self.total, empty: self.empty, buffer_bytes: self.buffer_bytes, ..Stats::default() };
         // SAFETY: the context is current on this thread; every handle was made on it.
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
@@ -334,7 +343,7 @@ mod tests {
     }
 
     fn stats(sections: u32, empty: u32, culled: u32, drawn: u32) -> Stats {
-        Stats { sections, empty, culled, drawn, draw_calls: drawn, triangles: 0, frame_ms: 0.0 }
+        Stats { sections, empty, culled, drawn, draw_calls: drawn, ..Stats::default() }
     }
 
     fn passed(checks: &[Check]) -> Vec<&'static str> {
@@ -362,6 +371,18 @@ mod tests {
         let pixels = frame_with(64, 64, |_, y| if y < 45 { [120, 90, 60, 255] } else { SKY });
         let result = checks(&pixels, &stats(128, 20, 108, 0));
         assert!(!result.iter().find(|c| c.name == "terrain_sections_drawn").unwrap().ok);
+    }
+
+    #[test]
+    fn the_orbit_starts_at_the_first_view_and_keeps_its_height_and_distance() {
+        let start = Camera::orbit(0);
+        assert!((start.eye[0] - 20.0).abs() < 1e-3 && (start.eye[2] - 20.0).abs() < 1e-3, "{:?}", start.eye);
+        for frame in [1, 17, 59] {
+            let c = Camera::orbit(frame);
+            assert_eq!(c.eye[1], 26.0);
+            let horizontal = ((c.eye[0] - 64.0).powi(2) + (c.eye[2] - 64.0).powi(2)).sqrt();
+            assert!((horizontal - 62.0).abs() < 1e-3, "frame {frame}: {horizontal}");
+        }
     }
 
     #[test]

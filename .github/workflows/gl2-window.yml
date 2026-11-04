@@ -94,6 +94,37 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: "120"
         run: .\target\release\horizon-client-gl2.exe --scene terrain --frames 60 --out out\terrain.json --png out\terrain.png
 
+      # The frame as text, because the artifact cannot be fetched from the sandbox: one character per
+      # 8x16 pixels of the PNG, a space for sky. Decoding it also proves the PNG is valid.
+      - name: Terrain frame as text (from the PNG)
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Drawing
+          $bmp = [System.Drawing.Bitmap]::new((Resolve-Path out\terrain.png).Path)
+          $cols = 80; $rows = 30
+          $ramp = ' .:-=+*#@'
+          $lines = @()
+          for ($r = 0; $r -lt $rows; $r++) {
+            $y = [int](($r + 0.5) * $bmp.Height / $rows)
+            $line = ''
+            for ($c = 0; $c -lt $cols; $c++) {
+              $x = [int](($c + 0.5) * $bmp.Width / $cols)
+              $p = $bmp.GetPixel($x, $y)
+              if ([math]::Abs($p.R - 153) -le 4 -and [math]::Abs($p.G - 204) -le 4 -and [math]::Abs($p.B - 255) -le 4) {
+                $line += ' '
+              } else {
+                $lum = 0.3 * $p.R + 0.59 * $p.G + 0.11 * $p.B
+                $line += $ramp[[math]::Min($ramp.Length - 1, [int]($lum / 256 * $ramp.Length))]
+              }
+            }
+            $lines += $line
+          }
+          $size = "$($bmp.Width)x$($bmp.Height)"
+          $bmp.Dispose()
+          $text = ($lines -join '%0A')
+          Write-Output "::notice title=terrain frame ($size as text)::$text"
+
       - name: Every frame must pass
         env:
           TESTS_OUTCOME: ${{ steps.tests.outcome }}
@@ -116,6 +147,10 @@ jobs:
             $summary = ($checks | ForEach-Object { if ($_.ok) { "$($_.name)=ok" } else { "$($_.name)=FAIL" } }) -join ' '
             $avg = if ($null -ne $r.frame_ms_avg) { [math]::Round($r.frame_ms_avg, 1) } else { '-' }
             Write-Output "::notice title=$name::scene $($r.scene) | GL $($r.gl_version) | $($r.renderer) | window $($r.window.width)x$($r.window.height) | frames $($r.frames) | cpu ms/frame (llvmpipe, not the X1650) $avg | error: $($r.error) | checks: $summary"
+            if ($r.terrain -and $null -ne $r.draw_calls_min -and $r.draw_calls_min -eq $r.draw_calls_max) {
+              Write-Output "::error title=$name::the draw calls never changed ($($r.draw_calls_min)): the culling is not following the camera"
+              $failed = $true
+            }
             if ($r.terrain) {
               $t = $r.terrain
               Write-Output "::notice title=$name::terrain: $($t.sections) sections, $($t.empty) empty, $($t.culled) culled, $($t.drawn) drawn in $($t.draw_calls) draw calls, $($t.triangles) triangles in the last frame"
