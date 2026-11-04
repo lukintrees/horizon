@@ -159,6 +159,8 @@ class ContractTests(unittest.TestCase):
         )
         self.assertIn("gl21_clear", source)
         self.assertIn("xvfb-run", source)
+        self.assertIn("HORIZON_GLSL_DIALECT", source)
+        self.assertIn("HORIZON_GLSL_DIALECT", EXAMPLE.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

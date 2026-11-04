@@ -455,13 +455,16 @@ xvfb-run -s '-screen 0 800x600x24' \
   cargo run --profile fast -p horizon-client --no-default-features --features legacy-gl -- --legacy-gl
 ```
 
-Отдельный прогон с `MESA_GL_VERSION_OVERRIDE=2.0 / MESA_GLSL_VERSION_OVERRIDE=110` проверяет профиль L0.
-Пока игры под `legacy-gl` ещё нет, этот же Xvfb-прогон в CI запускает отдельный пример с реальным контекстом:
+Отдельный прогон с `MESA_GL_VERSION_OVERRIDE=2.0` проверяет профиль L0. Mesa 26.0.8 на `ubuntu-latest`
+не отдаёт `GL_SHADING_LANGUAGE_VERSION=1.10` при `MESA_GLSL_VERSION_OVERRIDE=110` (падение внутри
+`shading_language_version()`), поэтому GLSL-override оставляем `120`, а диалект 110 задаём примеру явно через
+`HORIZON_GLSL_DIALECT=110`. Пока игры под `legacy-gl` ещё нет, этот же Xvfb-прогон в CI запускает отдельный
+пример с реальным контекстом:
 
 ```sh
-for spec in "2.1 120" "2.0 110"; do
+for spec in "2.1 120 120" "2.0 120 110"; do
   set -- $spec
-  MESA_GL_VERSION_OVERRIDE="$1" MESA_GLSL_VERSION_OVERRIDE="$2" \
+  MESA_GL_VERSION_OVERRIDE="$1" MESA_GLSL_VERSION_OVERRIDE="$2" HORIZON_GLSL_DIALECT="$3" \
     xvfb-run -a -s '-screen 0 800x600x24' \
     cargo run -p horizon-client-render --example gl21_clear --features legacy-gl
 done
@@ -486,8 +489,8 @@ python3 tools/gl21_caps.py --label ci-gl21 --check --no-write --stdout
 workflow ветки [`arena-legacy-gl.yml`](../../.github/workflows/arena-legacy-gl.yml): на ранере GitHub доступны
 crates.io и Rust 1.99 (≥1.95), поэтому там запускаются `cargo check -p horizon-client --features legacy-gl
 --no-default-features`, `cargo test -p horizon-client-render --lib gfx21 --features legacy-gl`, `rustfmt`,
-`clippy` и `cargo run --example gl21_clear` с `MESA_GL_VERSION_OVERRIDE=2.1/2.0`. Чужие actions, PR и workflow
-не просматриваются и не меняются.
+`clippy` и `cargo run --example gl21_clear` с `MESA_GL_VERSION_OVERRIDE=2.1/2.0` и
+`HORIZON_GLSL_DIALECT=120/110`. Чужие actions, PR и workflow не просматриваются и не меняются.
 
 ### 7.2 Проверки
 

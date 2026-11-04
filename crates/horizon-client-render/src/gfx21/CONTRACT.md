@@ -123,6 +123,9 @@ selects `ShaderDialect::Glsl120` or `Glsl110`, links one smoke-triangle
 program, draws it and checks `glGetError() == GL_NO_ERROR`. The optional
 `glow`/`glutin`/`glutin-winit`/`raw-window-handle` dependencies and their
 notices are recorded in `THIRD_PARTY_NOTICES.md`; no upstream source was copied.
+Mesa 26 cannot report GLSL 1.10 through `MESA_GLSL_VERSION_OVERRIDE=110`, so CI
+keeps the GLSL override at 120 and forces the 110 shader pair with
+`HORIZON_GLSL_DIALECT=110` for the GL 2.0 frame.
 
 `program.rs` + `shaders/` ship the same triangle as `#version 120` and
 `#version 110` pairs. `validate()` rejects a mismatched `#version`, GL3+

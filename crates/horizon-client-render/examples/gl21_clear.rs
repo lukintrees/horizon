@@ -49,6 +49,14 @@ fn dialect_from_glsl(text: &str) -> ShaderDialect {
     }
 }
 
+fn requested_dialect(glsl: &str) -> ShaderDialect {
+    match std::env::var("HORIZON_GLSL_DIALECT").as_deref() {
+        Ok("110") | Ok("1.10") | Ok("Glsl110") => ShaderDialect::Glsl110,
+        Ok("120") | Ok("1.20") | Ok("Glsl120") => ShaderDialect::Glsl120,
+        _ => dialect_from_glsl(glsl),
+    }
+}
+
 fn gl_config_picker(mut configs: Box<dyn Iterator<Item = Config> + '_>) -> Config {
     configs.next().expect("no OpenGL 2.x config available")
 }
@@ -211,7 +219,7 @@ impl ApplicationHandler for App {
         }
         println!("shader validation: OK");
 
-        let dialect = dialect_from_glsl(&glsl);
+        let dialect = requested_dialect(&glsl);
         println!("DIALECT: {dialect:?}");
         let (vertex_source, fragment_source) = match program::smoke_program(dialect) {
             Some(pair) => pair,
