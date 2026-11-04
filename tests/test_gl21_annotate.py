@@ -66,6 +66,34 @@ class LinterTests(unittest.TestCase):
             gl21_annotate.annotations("cargo", "")
 
 
+class TestRunTests(unittest.TestCase):
+    CARGO_TEST = """   Compiling horizon-client-render v0.1.0
+error[E0425]: cannot find function `layer_split_with` in this scope
+   --> crates/horizon-client-render/src/gfx.rs:1289:5
+    |
+running 900 tests
+thread 'gl21::atlas::tests::a_layer' panicked at crates/x/src/gl21/atlas.rs:190:9:
+assertion `left == right` failed
+crates/horizon-client-render/src/gl21/draws.rs:120:13: error: mismatched types
+error: could not compile `horizon-client-render` (lib test) due to 1 previous error
+"""
+
+    def test_a_failed_test_and_a_compile_error_both_carry_their_place(self):
+        found = gl21_annotate.annotations("test", self.CARGO_TEST)
+        self.assertEqual(
+            [(f, line) for f, line, _m in found],
+            [
+                ("crates/horizon-client-render/src/gfx.rs", 1289),
+                ("crates/x/src/gl21/atlas.rs", 190),
+                ("crates/horizon-client-render/src/gl21/draws.rs", 120),
+            ],
+        )
+        self.assertIn("E0425", found[0][2])
+        self.assertIn("a_layer", found[1][2])
+        # The "could not compile" summary has no place of its own and is not one.
+        self.assertEqual(len(found), 3)
+
+
 class OutputTests(unittest.TestCase):
     def test_workflow_commands_escape_what_github_reads(self):
         # `%`, newlines and carriage returns are what break a workflow command.
@@ -76,10 +104,18 @@ class OutputTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
+        import contextlib
+        import io
+
         with tempfile.TemporaryDirectory() as folder:
             empty = Path(folder) / "empty.txt"
             empty.write_text("error: something the pattern does not know\n", encoding="utf-8")
-            self.assertEqual(gl21_annotate.main(["x", "fmt", str(empty)]), 1)
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                status = gl21_annotate.main(["x", "fmt", str(empty)])
+        self.assertEqual(status, 1)
+        # Silence is not green: the step reports even when it cannot name a place.
+        self.assertIn("::error::", printed.getvalue())
 
 
 if __name__ == "__main__":

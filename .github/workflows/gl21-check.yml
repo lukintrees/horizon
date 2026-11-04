@@ -56,3 +56,16 @@ jobs:
       - name: Turn the linter's complaints into annotations
         if: steps.clippy.outputs.status != '0'
         run: python tools/gl21_annotate.py clippy /tmp/clippy.txt
+      # The crate's own tests, which is where `checks` fails next: a failed assertion is a line in a
+      # file, and `gl21_annotate.py test` puts it back on the file.
+      - name: Tests
+        id: tests
+        run: |
+          set +e
+          cargo +stable test -p horizon-client-render --lib > /tmp/test.txt 2>&1
+          status=$?
+          tail -60 /tmp/test.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Turn the test failures into annotations
+        if: steps.tests.outputs.status != '0'
+        run: python tools/gl21_annotate.py test /tmp/test.txt

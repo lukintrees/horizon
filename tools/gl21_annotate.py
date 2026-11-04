@@ -9,16 +9,19 @@ API does return.
 Usage:
     python3 tools/gl21_annotate.py fmt /tmp/fmt.diff
     python3 tools/gl21_annotate.py clippy /tmp/clippy.txt
+    python3 tools/gl21_annotate.py test /tmp/test.txt
 
 Exits 1 when it found something to annotate and 0 when it found nothing, so the step it runs in is
 red exactly when the build is.
 
-The two formats:
+The three formats:
 
 - `cargo fmt --check` writes a diff whose hunks start with `Diff in <path> at line <n>:` (newer
   rustfmt) or `Diff in <path> at line <n>:` without a column, followed by `@@`-less `+`/`-` lines.
 - `cargo clippy --message-format=short` writes `path:line:col: error[kind]: message` (and the same
   with `warning`).
+- `cargo test` writes a panic as `thread '<name>' panicked at <path>:<line>:<col>:` and a compile
+  error as `error[E0425]: ...` followed by ` --> <path>:<line>:<col>`.
 """
 
 import re
@@ -33,6 +36,13 @@ SHORT = re.compile(
     r"^(?P<file>[^:]+\.rs):(?P<line>\d+):(?P<col>\d+): (?P<kind>error|warning)"
     r"(?:\[[^\]]+\])?: (?P<message>.*)$"
 )
+
+# `thread 'gl21::draws::tests::a_test' panicked at crates/x/src/y.rs:12:5:`
+PANIC = re.compile(r"^thread '(?P<name>[^']+)' panicked at (?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+):?")
+# The location a rustc diagnostic points at: ` --> crates/x/src/y.rs:12:5`.
+LOCATION = re.compile(r"^\s*--> (?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+)$")
+# `error[E0425]: cannot find value `x`` / `error: could not compile ...`
+COMPILE = re.compile(r"^error(?:\[(?P<code>E\d+)\])?: (?P<message>.+)$")
 
 GITHUB_LIMIT = 50
 
@@ -87,11 +97,60 @@ def clippy_annotations(text):
     return out
 
 
+def test_annotations(text):
+    """(file, line, message) for each failed test and each compile error of a `cargo test` run."""
+    out = []
+    lines = text.splitlines()
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        panic = PANIC.match(line)
+        if panic:
+            out.append(
+                (
+                    panic.group("file"),
+                    int(panic.group("line")),
+                    f"{panic.group('name')} panicked",
+                )
+            )
+            continue
+        compile_error = COMPILE.match(line)
+        if compile_error and "could not compile" not in compile_error.group("message"):
+            # `error[..]` on its own line; the location is the `-->` under it.
+            where = None
+            for below in lines[index + 1 : index + 6]:
+                where = LOCATION.match(below.strip())
+                if where:
+                    break
+            if where:
+                code = compile_error.group("code") or ""
+                out.append(
+                    (
+                        where.group("file"),
+                        int(where.group("line")),
+                        f"{code} {compile_error.group('message')}".strip(),
+                    )
+                )
+            continue
+        # A single line diagnostic (`path:line:col: error: ..`), same as clippy's short format.
+        short = SHORT.match(line)
+        if short:
+            out.append(
+                (
+                    short.group("file"),
+                    int(short.group("line")),
+                    f"{short.group('kind')}: {short.group('message')}",
+                )
+            )
+    return out
+
+
 def annotations(mode, text):
     if mode == "fmt":
         return fmt_annotations(text)
     if mode == "clippy":
         return clippy_annotations(text)
+    if mode == "test":
+        return test_annotations(text)
     raise SystemExit(f"gl21_annotate.py: {mode!r} is neither fmt nor clippy")
 
 
