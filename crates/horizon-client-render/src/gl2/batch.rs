@@ -47,6 +47,16 @@ const TRIANGLES: [usize; 6] = [0, 1, 2, 0, 2, 3];
 /// Batches the solid quads of a section (four vertices each, `SectionMesh::solid`). A quad whose layer
 /// the atlas does not have is dropped: its sprite cannot be drawn.
 pub fn solid(quads: &[TerrainVertex], atlas: &Atlas) -> Batch {
+    batch(quads, atlas, true)
+}
+
+/// Batches the translucent quads of a section (`SectionMesh::translucent`, the fluids) in the order
+/// the mesher wrote them, so that the order of the quads holds. A run breaks where the page changes.
+pub fn translucent(quads: &[TerrainVertex], atlas: &Atlas) -> Batch {
+    batch(quads, atlas, false)
+}
+
+fn batch(quads: &[TerrainVertex], atlas: &Atlas, by_page: bool) -> Batch {
     let mut order: Vec<(u32, usize)> = Vec::with_capacity(quads.len() / 4);
     for quad in 0..quads.len() / 4 {
         let layer = usize::from(quads[quad * 4].layer & !OPAQUE_LAYER);
@@ -54,7 +64,9 @@ pub fn solid(quads: &[TerrainVertex], atlas: &Atlas) -> Batch {
             order.push((placement.page, quad));
         }
     }
-    order.sort_by_key(|&(page, _)| page);
+    if by_page {
+        order.sort_by_key(|&(page, _)| page);
+    }
 
     let mut batch = Batch { vertices: Vec::with_capacity(order.len() * 6), runs: Vec::new() };
     for &(page, quad) in &order {
@@ -114,6 +126,15 @@ mod tests {
             positions,
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
         );
+    }
+
+    #[test]
+    fn translucent_quads_keep_the_order_the_mesher_wrote_them_in() {
+        let atlas = two_pages();
+        let mut quads = quad(1, 0, 0xFF_FFFF).to_vec();
+        quads.extend(quad(0, 0, 0xFF_FFFF));
+        let batch = translucent(&quads, &atlas);
+        assert_eq!(batch.runs, vec![Run { page: 1, first: 0, count: 6 }, Run { page: 0, first: 6, count: 6 }]);
     }
 
     #[test]

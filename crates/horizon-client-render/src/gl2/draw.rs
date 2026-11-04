@@ -51,6 +51,7 @@ const FRAGMENT_SHADER: &str = r#"#version 120
 uniform sampler2D u_page;
 uniform sampler2D u_lightmap;
 uniform float u_page_size;
+uniform float u_blend;
 uniform vec3 u_fog_color;
 uniform vec4 u_fog;
 varying vec2 v_uv;
@@ -71,7 +72,9 @@ void main() {
     // The texel of the sprite at this point: the sprite repeats every whole unit of uv.
     vec2 cell = floor(fract(v_uv) * v_sprite);
     vec4 texel = texture2D(u_page, (v_origin + cell + 0.5) / u_page_size);
-    if (texel.a < 0.5 && v_opaque < 0.5) {
+    // The solid pass cuts out the texels under half alpha; the translucent pass (u_blend 1) keeps them
+    // and blends with the texel's alpha.
+    if (u_blend < 0.5 && texel.a < 0.5 && v_opaque < 0.5) {
         discard;
     }
     // sample_lightmap in terrain.wgsl: x is block light, y is sky light, 16 texels per level.
@@ -80,7 +83,8 @@ void main() {
     vec3 lit = texel.rgb * v_tint * texture2D(u_lightmap, light).rgb;
     float fogged = max(linear_fog(v_spherical, u_fog.x, u_fog.y),
                        linear_fog(v_cylindrical, u_fog.z, u_fog.w));
-    gl_FragColor = vec4(mix(lit, u_fog_color, fogged), 1.0);
+    float alpha = u_blend > 0.5 ? texel.a : 1.0;
+    gl_FragColor = vec4(mix(lit, u_fog_color, fogged), alpha);
 }
 "#;
 
@@ -172,11 +176,22 @@ impl Terrain {
             );
             gl.uniform_3_f32(gl.get_uniform_location(self.program, "u_fog_color").as_ref(), fog.color[0], fog.color[1], fog.color[2]);
             gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_page_size").as_ref(), PAGE as f32);
+            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_blend").as_ref(), 0.0);
             gl.uniform_1_i32(gl.get_uniform_location(self.program, "u_page").as_ref(), 0);
             gl.uniform_1_i32(gl.get_uniform_location(self.program, "u_lightmap").as_ref(), 1);
             gl.active_texture(glow::TEXTURE1);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.lightmap));
             gl.active_texture(glow::TEXTURE0);
+        }
+    }
+
+    /// Switches between the solid pass (`false`) and the translucent pass (`true`): the cut-out is
+    /// off and the alpha of the texel is kept. The caller sets the blend state.
+    pub fn set_translucent(&self, gl: &glow::Context, on: bool) {
+        // SAFETY: the context is current on this thread and the program was made on it.
+        unsafe {
+            gl.use_program(Some(self.program));
+            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_blend").as_ref(), if on { 1.0 } else { 0.0 });
         }
     }
 

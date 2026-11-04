@@ -27,9 +27,11 @@ type Platform = wgl::Context;
 #[cfg(not(windows))]
 type Platform = ();
 
-/// A section on the GPU: its buffer, and its bounds in section-local blocks.
+/// A section on the GPU: its solid and translucent buffers (either may be absent), and its bounds in
+/// section-local blocks.
 struct Placed {
-    section: Section,
+    solid: Option<Section>,
+    translucent: Option<Section>,
     bounds: [Vec3; 2],
 }
 
@@ -130,16 +132,36 @@ impl Renderer {
     pub fn upload(&mut self, key: SectionKey, mesh: &SectionMesh) {
         make_current(&self.platform);
         self.free_section(key);
-        if mesh.solid.is_empty() {
+        if mesh.solid.is_empty() && mesh.translucent.is_empty() {
             return;
         }
-        let batch = batch::solid(&mesh.solid, &self.atlas);
-        match self.terrain.upload(&self.gl, &batch) {
-            Ok(section) => {
-                let bounds = mesh.bounds.unwrap_or_else(full_section);
-                self.sections.insert(key, Placed { section, bounds });
+        let solid = self.upload_batch(&batch::solid(&mesh.solid, &self.atlas));
+        let translucent = self.upload_batch(&batch::translucent(&mesh.translucent, &self.atlas));
+        if solid.is_none() && translucent.is_none() {
+            return;
+        }
+        let bounds = mesh.bounds.unwrap_or_else(full_section);
+        self.sections.insert(
+            key,
+            Placed {
+                solid,
+                translucent,
+                bounds,
+            },
+        );
+    }
+
+    /// Uploads one batch into a new buffer; an empty batch has none.
+    fn upload_batch(&self, batch: &batch::Batch) -> Option<Section> {
+        if batch.vertices.is_empty() {
+            return None;
+        }
+        match self.terrain.upload(&self.gl, batch) {
+            Ok(section) => Some(section),
+            Err(error) => {
+                log::warn!("a section does not upload: {error}");
+                None
             }
-            Err(error) => log::warn!("a section does not upload: {error}"),
         }
     }
 
@@ -255,17 +277,45 @@ impl Renderer {
         };
         self.terrain.begin(&self.gl, &clip.to_cols_array(), fog);
         let mut drawn = 0;
+        // The visible sections with their distance, for the translucent pass.
+        let mut visible: Vec<(f32, [f32; 3], &Placed)> = Vec::new();
         for (key, placed) in &self.sections {
             let origin =
                 (DVec3::new(key.0 as f64, key.1 as f64, key.2 as f64) * 16.0 - camera).as_vec3();
             if !frustum.intersects(origin + placed.bounds[0], origin + placed.bounds[1]) {
                 continue;
             }
-            self.terrain
-                .draw(&self.gl, &placed.section, origin.to_array());
-            drawn += 1;
+            if let Some(section) = &placed.solid {
+                self.terrain.draw(&self.gl, section, origin.to_array());
+                drawn += 1;
+            }
+            visible.push((origin.length_squared(), origin.to_array(), placed));
         }
         self.drawn = drawn;
+
+        // The translucent quads last: blended over the solid world, section by section from the
+        // farthest, without depth writes so that a section does not hide the one behind it.
+        if visible.iter().any(|(_, _, placed)| placed.translucent.is_some()) {
+            visible.sort_by(|a, b| b.0.total_cmp(&a.0));
+            // SAFETY: the context is current on this thread.
+            unsafe {
+                self.gl.enable(glow::BLEND);
+                self.gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                self.gl.depth_mask(false);
+            }
+            self.terrain.set_translucent(&self.gl, true);
+            for (_, origin, placed) in &visible {
+                if let Some(section) = &placed.translucent {
+                    self.terrain.draw(&self.gl, section, *origin);
+                }
+            }
+            self.terrain.set_translucent(&self.gl, false);
+            // SAFETY: as above.
+            unsafe {
+                self.gl.disable(glow::BLEND);
+                self.gl.depth_mask(true);
+            }
+        }
         drawn
     }
 
@@ -283,7 +333,13 @@ impl Renderer {
 
     fn free_section(&mut self, key: SectionKey) {
         if let Some(placed) = self.sections.remove(&key) {
-            self.terrain.free_section(&self.gl, placed.section);
+            self.free_placed(placed);
+        }
+    }
+
+    fn free_placed(&self, placed: Placed) {
+        for section in placed.solid.into_iter().chain(placed.translucent) {
+            self.terrain.free_section(&self.gl, section);
         }
     }
 }
@@ -293,7 +349,7 @@ impl Drop for Renderer {
         // The GL objects go while their context is current. `platform` drops after this body.
         make_current(&self.platform);
         for (_, placed) in self.sections.drain() {
-            self.terrain.free_section(&self.gl, placed.section);
+            self.free_placed(placed);
         }
         self.terrain.free(&self.gl);
         self.hud.free(&self.gl);
@@ -486,6 +542,11 @@ mod gpu_tests {
         ];
         let mut mesh = SectionMesh::default();
         mesh.solid = corners
+            .map(|pos| TerrainVertex::new(pos, [0.5, 0.5], 0, 0xFF_FFFF, 0xF0F0))
+            .to_vec();
+        // A translucent quad in front of it, in the same section: the blended pass draws it too.
+        let near = [[0.0, 0.0, 4.0], [16.0, 0.0, 4.0], [16.0, 16.0, 4.0], [0.0, 16.0, 4.0]];
+        mesh.translucent = near
             .map(|pos| TerrainVertex::new(pos, [0.5, 0.5], 0, 0xFF_FFFF, 0xF0F0))
             .to_vec();
         renderer.upload((0, 0, 0), &mesh);
