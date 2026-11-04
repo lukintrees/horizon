@@ -16564,9 +16564,7 @@ impl Game<'_> {
     fn lod_distance(&self) -> u32 {
         let (distance, _) = self.far_terrain_choice();
         match &self.renderer {
-            Some(renderer) => {
-                horizon_client::graphics::lod_distance_capped(distance, &renderer.info)
-            }
+            Some(renderer) => horizon_client::renderer_facade::lod_distance(renderer, distance),
             None => distance.min(horizon_client::lod::MAX_CHUNKS),
         }
     }
@@ -16906,7 +16904,7 @@ impl Game<'_> {
             );
             if let (Some(lod), Some(player)) = (&mut self.lod, &self.player) {
                 let lod_distance =
-                    horizon_client::graphics::lod_distance_capped(far_distance, &renderer.info);
+                    horizon_client::renderer_facade::lod_distance(renderer, far_distance);
                 lod.set_near_loading(self.streaming.terrain_loading());
                 lod.set_reduced_detail(far_reduced);
                 // The covered columns change only with the complete ones and

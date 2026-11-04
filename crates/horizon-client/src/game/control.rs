@@ -1282,21 +1282,17 @@ impl Game<'_> {
         });
         let renderer = self.renderer.as_ref().map(|r| {
             let [arena_bytes, section_vertex_bytes] = r.section_vertex_bytes();
+            let gpu = horizon_client::renderer_facade::gpu_info(r);
+            let [width, height] = horizon_client::renderer_facade::drawable_size(r);
             // Device memory by the backend's allocator (Vulkan; absent elsewhere).
             let memory = r.device.generate_allocator_report();
             json!({
-                "gpu": r.info.name,
-                "vendor": vendor_name(r.info.vendor),
-                "driver": format!("{} {}", r.info.driver, r.info.driver_info).trim(),
-                "device_type": match r.info.device_type {
-                    wgpu::DeviceType::IntegratedGpu => "integrated",
-                    wgpu::DeviceType::DiscreteGpu => "discrete",
-                    wgpu::DeviceType::VirtualGpu => "virtual",
-                    wgpu::DeviceType::Cpu => "cpu",
-                    wgpu::DeviceType::Other => "other",
-                },
-                "backend": format!("{:?}", r.info.backend),
-                "size": [r.config.width, r.config.height],
+                "gpu": gpu.name,
+                "vendor": vendor_name(gpu.vendor),
+                "driver": gpu.driver,
+                "device_type": gpu.device_type,
+                "backend": gpu.backend,
+                "size": [width, height],
                 "present_mode": format!("{:?}", r.config.present_mode),
                 "drawn_sections": r.drawn_sections,
                 "section_draws": r.section_draws,

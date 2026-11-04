@@ -190,6 +190,46 @@ impl<'a> RendererFacade<'a> {
     }
 }
 
+/// Adapter facts in backend-neutral terms: what far terrain caps on and what
+/// `horizon-ctl` reports. Game reads this instead of `wgpu::AdapterInfo`, so a
+/// legacy context (G01) can fill the same shape from its GL strings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GpuInfo {
+    pub name: String,
+    /// PCI vendor id, 0 when the backend has only a string.
+    pub vendor: u32,
+    /// `integrated`, `discrete`, `virtual`, `cpu` or `other`.
+    pub device_type: &'static str,
+    /// The graphics API, as `wgpu`/GL name it.
+    pub backend: String,
+    pub driver: String,
+}
+/// The adapter's facts, read-only: `horizon-ctl` and logs ask here rather than
+/// touching `Renderer` fields.
+pub fn gpu_info(renderer: &gfx::Renderer) -> GpuInfo {
+    let info = &renderer.info;
+    GpuInfo {
+        name: info.name.clone(),
+        vendor: info.vendor,
+        device_type: match info.device_type {
+            wgpu::DeviceType::IntegratedGpu => "integrated",
+            wgpu::DeviceType::DiscreteGpu => "discrete",
+            wgpu::DeviceType::VirtualGpu => "virtual",
+            wgpu::DeviceType::Cpu => "cpu",
+            wgpu::DeviceType::Other => "other",
+        },
+        backend: format!("{:?}", info.backend),
+        driver: format!("{} {}", info.driver, info.driver_info)
+            .trim()
+            .to_owned(),
+    }
+}
+/// `distance` as far terrain applies it on this adapter. Legacy has no adapter
+/// class of its own yet, so G01 adds the same cap once it can classify the GPU.
+pub fn lod_distance(renderer: &gfx::Renderer, distance: u32) -> u32 {
+    crate::graphics::lod_distance_capped(distance, &renderer.info)
+}
+
 /// Compatibility seam while Game still owns concrete modern state. Keeps
 /// modern errors intact and its existing offscreen/frame_drawn bool semantics.
 pub fn render_modern(renderer: &mut gfx::Renderer, frame: &Frame<'_>) -> Result<bool> {
