@@ -15,6 +15,7 @@ varying vec2 uv;
 varying vec2 light_uv;
 varying vec4 tint;
 varying float distance_to_eye;
+varying float cylindrical_distance;
 void main() {
     vec3 relative = position + origin;
     gl_Position = matrix * vec4(relative, 1.0);
@@ -25,4 +26,5 @@ void main() {
     foil_uv = foilcoord;
     vertex_light = light_color;
     distance_to_eye = length(relative);
+    cylindrical_distance = max(length(relative.xz), abs(relative.y));
 }

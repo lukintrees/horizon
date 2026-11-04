@@ -18,6 +18,8 @@ use horizon_render_api::{
     scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
 
+pub mod frame;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub gpu: Budget,
@@ -240,6 +242,24 @@ impl TerrainHudRenderer {
             },
         )
     }
+    /// Draw the supported classic subset of the actual game frame. Unimplemented
+    /// requested passes are errors, never silently hidden. Startup/resource and
+    /// visibility scheduling still belong to the caller, not this coordinator.
+    pub fn render_game_frame(
+        &mut self,
+        source: &crate::gfx::Frame<'_>,
+        visible: frame::VisibleSections<'_>,
+        options: frame::Options,
+    ) -> Result<(), String> {
+        let size = self.size();
+        let prepared = frame::Prepared::new(source, size, visible, self.limits, options)
+            .map_err(|error| error.to_string())?;
+        if prepared.lightmap.as_slice() != self.lightmap {
+            self.update_lightmap(&prepared.lightmap)?;
+        }
+        self.render_geometry(&prepared.world, prepared.hud, &prepared.geometry())
+    }
+
     pub fn render_geometry(
         &mut self,
         world: &SceneFrame<'_>,
@@ -500,6 +520,145 @@ mod tests {
         IDENTITY,
         atlas::{SpriteSize, build_page, pack_atlas},
     };
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_actual_frame_drives_projection_static_depth_fog_lightmap_hand_and_hud() {
+        use crate::{block_entity_render::StaticSectionSnapshot, mesher::Vertex};
+        use std::sync::Arc;
+        let atlas = HudAtlas::boot();
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[64, 128, 192, 255]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits::default(),
+        )
+        .unwrap();
+        let positions = |extent, z| {
+            [
+                [-extent, -extent, z],
+                [extent, -extent, z],
+                [extent, extent, z],
+                [-extent, extent, z],
+            ]
+        };
+        let mut mesh = SectionMesh::default();
+        mesh.solid.extend(
+            positions(4., 4.).map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, u32::MAX, 0)),
+        );
+        let key = [1_875_000, 0, 0];
+        renderer.upload_section(key, &mesh).unwrap();
+        let quad = |extent, z, color| {
+            positions(extent, z).map(|pos| Vertex {
+                pos,
+                uv: [atlas.white.u0, atlas.white.v0],
+                layer: 0,
+                color,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            })
+        };
+        let snapshots = [StaticSectionSnapshot {
+            section: key,
+            origin: [30_000_000, 0, 0],
+            revision: 1,
+            entities: 1,
+            vertices: Arc::from(quad(0.5, 2., 0xff00ff00)),
+        }];
+        let dynamic = quad(1., 3., 0xff0000ff); // farther red must NOT cover nearer static green
+        let hand = quad(0.5, 8., 0xffff0000); // farther blue still draws AFTER depth clear
+        let mut hud = HudBatch::new([64; 2]);
+        hud.fill(&atlas, 6., 6., 8., 8., 0xff306010);
+        let mut source = frame::tests::source(&hud);
+        source.camera = glam::DVec3::new(30_000_000.25, 0., 0.);
+        source.yaw = 0.;
+        source.pitch = 0.;
+        source.fov_degrees = 90.;
+        source.sky.ambient_light_color = [0.5; 3];
+        source.entities = &dynamic;
+        source.static_block_entities = &snapshots;
+        source.visible_static_block_entity_sections = &[key];
+        let visible = frame::VisibleSections {
+            solid: &[key],
+            translucent: &[],
+        };
+        let near = |renderer: &mut TerrainHudRenderer, at: [u32; 2], expected: [u8; 3]| {
+            let actual = renderer.read_rgba([at[0], at[1], 1, 1]).unwrap();
+            assert!(
+                actual[..3]
+                    .iter()
+                    .zip(expected)
+                    .all(|(&a, b)| a.abs_diff(b) <= 2),
+                "{at:?}: {actual:?} != {expected:?}"
+            );
+        };
+        renderer
+            .render_game_frame(&source, visible, frame::Options::default())
+            .unwrap();
+        near(&mut renderer, [32, 32], [0, 127, 0]);
+        near(&mut renderer, [8, 32], [32, 64, 96]);
+        near(&mut renderer, [8, 56], [16, 96, 48]);
+        source.fog = Some(crate::fog::FogData {
+            color: [0.25, 0.5, 0.75, 0.5],
+            environmental_start: 0.,
+            environmental_end: 0.,
+            render_distance_start: f32::MAX,
+            render_distance_end: f32::MAX,
+            sky_end: 100.,
+            cloud_end: 100.,
+        });
+        renderer
+            .render_game_frame(&source, visible, frame::Options::default())
+            .unwrap();
+        near(&mut renderer, [32, 32], [32, 127, 96]);
+        source.hand = &hand;
+        renderer
+            .render_game_frame(&source, visible, frame::Options::default())
+            .unwrap();
+        near(&mut renderer, [32, 32], [0, 0, 127]);
+        near(&mut renderer, [8, 56], [16, 96, 48]);
+        let stable = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        source.skybox = true;
+        assert!(
+            renderer
+                .render_game_frame(&source, visible, frame::Options::default())
+                .unwrap_err()
+                .contains("sky")
+        );
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        source.skybox = false;
+        source.entities = &dynamic[..3];
+        assert!(
+            renderer
+                .render_game_frame(&source, visible, frame::Options::default())
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        source.entities = &dynamic;
+        let missing = frame::VisibleSections {
+            solid: &[[0; 3]],
+            translucent: &[],
+        };
+        assert!(
+            renderer
+                .render_game_frame(&source, missing, frame::Options::default())
+                .is_err()
+        );
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+    }
     #[test]
     #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
     fn bridge_coordinator_renders_and_unloads_actual_game_geometry() {
@@ -1294,6 +1453,7 @@ mod tests {
             camera: [0.; 3],
             clear: [0., 0., 0., 1.],
             fog: Some(horizon_render_api::Fog {
+                game: None,
                 color: [0., 0., 1.],
                 start: 0.,
                 end: 0.0001,

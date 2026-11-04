@@ -690,3 +690,44 @@ mod tests {
         assert_eq!(fog.environmental_end, 768.0);
     }
 }
+
+/// The world's color and (spherical start/end, cylindrical start/end) uniforms.
+/// Shared by wgpu and GL2; screen, sky and cloud fog use separate contracts.
+pub fn world_parameters(frame: &crate::gfx::Frame<'_>) -> ([f32; 4], [f32; 4]) {
+    if let Some(f) = frame.fog {
+        (
+            f.color,
+            [
+                f.environmental_start,
+                f.environmental_end,
+                f.render_distance_start,
+                f.render_distance_end,
+            ],
+        )
+    } else if frame.underwater {
+        (
+            [
+                frame.water_fog[0],
+                frame.water_fog[1],
+                frame.water_fog[2],
+                1.0,
+            ],
+            [-8.0, 96.0, -8.0, 96.0],
+        )
+    } else {
+        let d = frame.distance;
+        (
+            [
+                frame.sky.fog_color[0],
+                frame.sky.fog_color[1],
+                frame.sky.fog_color[2],
+                1.0,
+            ],
+            // FogRenderer: render-distance fog starts at max(d - 16, 0)... d.
+            {
+                let (start, end) = frame.environment_fog.unwrap_or((f32::MAX, f32::MAX));
+                [start, end, (d - d.min(64.0) * 0.25).max(0.0), d]
+            },
+        )
+    }
+}

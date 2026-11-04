@@ -83,8 +83,20 @@ pub struct Draw {
     /// Bottom-left pixel origin, width, height. None disables clipping.
     pub scissor: Option<[u32; 4]>,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GameFog {
+    /// Render-distance fog, evaluated on max(length(xz), abs(y)).
+    pub start: f32,
+    pub end: f32,
+    /// The game's fog color alpha, applied AFTER max(environment, distance).
+    pub alpha: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fog {
+    /// None retains the original spherical, opaque fog contract. Some enables
+    /// the game's dual-distance fog and permits equal (step/disabled) ranges.
+    pub game: Option<GameFog>,
     pub color: [f32; 3],
     pub start: f32,
     pub end: f32,
@@ -189,6 +201,16 @@ pub fn gl_projection(mut matrix: [f32; 16]) -> [f32; 16] {
     matrix
 }
 
+/// Convert REVERSED wgpu depth (near=w, far=0) to conventional desktop GL
+/// (near=-w, far=w). Unlike `gl_projection`, this also unreverses depth for
+/// the GL2 backend's LESS test and depth-clear value 1. Columns, not rows.
+pub fn gl_reversed_projection(mut matrix: [f32; 16]) -> [f32; 16] {
+    for column in matrix.chunks_exact_mut(4) {
+        column[2] = column[3] - 2.0 * column[2];
+    }
+    matrix
+}
+
 /// Existing mesher fixed-point sky/block light -> texel-centred 16x16 lightmap UV.
 pub fn light_uv(light: u16) -> [f32; 2] {
     let coord = |v: u16| (f32::from(v) / 256.0 + 0.5 / 16.0).clamp(0.5 / 16.0, 15.5 / 16.0);
@@ -213,6 +235,25 @@ mod tests {
         assert_eq!(gl[14], -1.);
         assert_eq!(gl[10] + gl[14], 1.);
         assert_eq!(gl[15], 1.);
+    }
+    #[test]
+    fn reversed_depth_maps_near_to_minus_w_and_far_to_plus_w() {
+        let gl = gl_reversed_projection(IDENTITY);
+        assert_eq!(gl[10] + gl[14], -1.); // source near z=w
+        assert_eq!(gl[14], 1.); // source far z=0
+        assert_eq!(gl[15], 1.);
+        let source = std::array::from_fn(|i| (i as f32 - 3.) / 7.);
+        let converted = gl_reversed_projection(source);
+        for i in 0..16 {
+            assert_eq!(
+                converted[i],
+                if i % 4 == 2 {
+                    source[i + 1] - 2. * source[i]
+                } else {
+                    source[i]
+                }
+            );
+        }
     }
     #[test]
     fn lightmap_centres_and_intermediate_smooth_light() {

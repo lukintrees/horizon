@@ -61,6 +61,7 @@ pub use horizon_world::json_folder;
 pub mod legacy_gfx;
 pub mod level_loading;
 pub mod light;
+pub mod lightmap;
 pub mod lod;
 pub mod logging;
 pub mod menu_blur;

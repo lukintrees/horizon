@@ -72,6 +72,7 @@ struct Uniforms {
     cutoff: i32,
     fog: i32,
     fog_end: i32,
+    game_fog: i32,
     force_opaque: i32,
     entity: i32,
     overlay: i32,
@@ -172,6 +173,7 @@ impl<'a> Renderer<'a> {
                 cutoff: -1,
                 fog: -1,
                 fog_end: -1,
+                game_fog: -1,
                 force_opaque: -1,
                 entity: -1,
                 overlay: -1,
@@ -201,6 +203,7 @@ impl<'a> Renderer<'a> {
                 cutoff: location(c"cutoff")?,
                 fog: location(c"fog")?,
                 fog_end: location(c"fog_end")?,
+                game_fog: location(c"game_fog")?,
                 force_opaque: location(c"force_opaque")?,
                 entity: location(c"entity_mode")?,
                 overlay: location(c"overlay")?,
@@ -546,7 +549,15 @@ impl RenderBackend for Renderer<'_> {
         if frame.fog.is_some_and(|f| {
             !f.start.is_finite()
                 || !f.end.is_finite()
-                || f.start >= f.end
+                || f.start > f.end
+                || (f.start == f.end && f.game.is_none())
+                || f.game.is_some_and(|g| {
+                    !g.start.is_finite()
+                        || !g.end.is_finite()
+                        || g.start > g.end
+                        || !g.alpha.is_finite()
+                        || !(0.0..=1.0).contains(&g.alpha)
+                })
                 || f.color.iter().any(|v| !v.is_finite())
         }) {
             return Err("invalid fog range/color".into());
@@ -588,6 +599,11 @@ impl RenderBackend for Renderer<'_> {
                 };
                 (self.gl.uniform4f)(self.uniforms.fog, color[0], color[1], color[2], start);
                 (self.gl.uniform1f)(self.uniforms.fog_end, end);
+                let game = match (frame.fog.and_then(|f| f.game), pass.is_overlay()) {
+                    (Some(g), false) => [g.start, g.end, g.alpha, 1.],
+                    _ => [0., 1., 0., 0.],
+                };
+                (self.gl.uniform4f)(self.uniforms.game_fog, game[0], game[1], game[2], game[3]);
                 let cutoff = match pass {
                     Pass::Entity(m) if matches!(m.kind, Kind::Shadow | Kind::WaterMask) => 0.,
                     Pass::Cutout | Pass::Entity(_) => 0.1,

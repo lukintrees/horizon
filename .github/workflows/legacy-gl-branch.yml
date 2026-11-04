@@ -47,6 +47,12 @@ jobs:
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
+          for filter in legacy_gfx::frame::tests:: lightmap::tests::; do
+            if [ "$status" -eq 0 ]; then
+              cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
+              status=$?
+            fi
+          done
           if [ "$status" -eq 0 ]; then
             cargo check --locked -p horizon-client --no-default-features --features horizon-client-render/legacy-gl --message-format=json > target/legacy-branch/full-client.jsonl 2>> target/legacy-branch/cargo.stderr
             status=$?

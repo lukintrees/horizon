@@ -229,6 +229,7 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     }];
     let mut fog_frame = frame(&fog_draws);
     fog_frame.fog = Some(Fog {
+        game: None,
         color: [0.25, 0.5, 0.75],
         start: 0.,
         end: 1.,
@@ -236,6 +237,72 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     renderer.render(&fog_frame)?;
     pixel(&mut renderer, [32, 32], [64, 128, 191])?;
     checks.push("backend_fog");
+
+    // On this z=0 quad, spherical distance is sqrt(2), cylindrical is 1
+    // at EVERY vertex. Interpolation therefore has an exact known oracle.
+    let dual = |environment: (f32, f32), render: (f32, f32), alpha| Fog {
+        color: [0., 0., 1.],
+        start: environment.0,
+        end: environment.1,
+        game: Some(horizon_render_api::GameFog {
+            start: render.0,
+            end: render.1,
+            alpha,
+        }),
+    };
+    for (fog, expected) in [
+        (dual((0., 2.), (0., 1.), 0.25), [191, 191, 255]), // cylindrical wins
+        (dual((0., 1.), (0., 4.), 0.5), [128, 128, 255]),  // spherical wins
+        (dual((f32::MAX, f32::MAX), (1., 1.), 1.), [255; 3]), // <= start first
+        (dual((f32::MAX, f32::MAX), (0.5, 0.5), 1.), [0, 0, 255]), // step range
+        (dual((0., 1.), (0., 1.), 0.), [255; 3]),
+    ] {
+        fog_frame.fog = Some(fog);
+        renderer.render(&fog_frame)?;
+        pixel(&mut renderer, [32, 32], expected)?;
+    }
+    for fog in [
+        dual((0., 1.), (2., 1.), 1.),
+        dual((1., 0.), (0., 1.), 1.),
+        dual((0., 1.), (0., 1.), f32::NAN),
+        dual((0., 1.), (0., 1.), -0.01),
+        dual((0., 1.), (0., 1.), 1.01),
+    ] {
+        fog_frame.fog = Some(fog);
+        require(
+            renderer.render(&fog_frame).is_err(),
+            "invalid game fog accepted",
+        )?;
+        pixel(&mut renderer, [32, 32], [255; 3])?;
+    }
+    let overlay = [Draw {
+        texture: red,
+        pass: Pass::Overlay,
+        ..draw
+    }];
+    let mut overlay_frame = frame(&overlay);
+    overlay_frame.fog = Some(dual((0., 1.), (0., 1.), 1.));
+    renderer.render(&overlay_frame)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?;
+    let reverse_near = mesh!(quad([1., 0., 0., 1.], 0.75, 1.));
+    let reverse_far = mesh!(quad([0., 0., 1., 1.], 0.25, 1.));
+    let reverse_draws = [
+        Draw {
+            mesh: reverse_near,
+            texture: white,
+            ..draw
+        },
+        Draw {
+            mesh: reverse_far,
+            texture: white,
+            ..draw
+        },
+    ];
+    let mut reverse_frame = frame(&reverse_draws);
+    reverse_frame.view_projection = horizon_render_api::gl_reversed_projection(IDENTITY);
+    renderer.render(&reverse_frame)?;
+    pixel(&mut renderer, [32, 32], [255, 0, 0])?;
+    checks.push("backend_game_frame_inputs");
 
     let small = mesh!(quad([1.; 4], 0., 0.2));
     let distant_draws = [Draw {
@@ -1327,6 +1394,7 @@ fn entity_layers(context: &Context) -> Result<(), String> {
     renderer.render(&clear_plate)?;
     let fogged = WorldView {
         fog: Some(Fog {
+            game: None,
             color: [0., 1., 0.],
             start: 0.,
             end: 0.4,
@@ -1569,6 +1637,7 @@ fn entity_glint(context: &Context) -> Result<(), String> {
     let fogged = WorldView {
         camera: [0.; 3],
         fog: Some(Fog {
+            game: None,
             color: [0., 0., 1.],
             start: 0.,
             end: 0.0001,

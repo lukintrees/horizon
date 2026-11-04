@@ -14,10 +14,18 @@ uniform float cutoff;
 uniform float force_opaque;
 uniform vec4 fog;
 uniform float fog_end;
+uniform vec4 game_fog;
 varying vec2 uv;
 varying vec2 light_uv;
 varying vec4 tint;
 varying float distance_to_eye;
+varying float cylindrical_distance;
+float linear_fog(float distance, float start, float end) {
+    // Branch order matches terrain.wgsl, including start == end and MAX pairs.
+    if (distance <= start) return 0.0;
+    if (distance >= end) return 1.0;
+    return (distance - start) / (end - start);
+}
 void main() {
     if (mask_only > 0.5) { gl_FragColor = vec4(0.0); return; }
     vec4 color = tint;
@@ -43,6 +51,9 @@ void main() {
             pixel.a = max(pixel.a, glint_strength);
         }
     } else pixel.rgb *= texture2D(lightmap, light_uv).rgb;
-    float amount = clamp((distance_to_eye - fog.a) / (fog_end - fog.a), 0.0, 1.0);
+    float amount = linear_fog(distance_to_eye, fog.a, fog_end);
+    if (game_fog.w > 0.5) {
+        amount = max(amount, linear_fog(cylindrical_distance, game_fog.x, game_fog.y)) * game_fog.z;
+    }
     gl_FragColor = vec4(mix(pixel.rgb, fog.rgb, amount), pixel.a);
 }

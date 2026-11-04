@@ -6271,41 +6271,17 @@ impl Renderer {
         flicker: f32,
         boss_darken: f32,
     ) {
-        // lightmap.fsh: per (block, sky) level.
-        let brightness = |level: f32| level / (4.0 - 3.0 * level);
-        let mut pixels = [0u8; 16 * 16 * 4];
-        for s in 0..16 {
-            for b in 0..16 {
-                let block_level = b as f32 / 15.0;
-                let sky_level = s as f32 / 15.0;
-                let block_brightness = brightness(block_level) * (1.4 + flicker);
-                let sky_brightness = brightness(sky_level) * sky.sky_light_factor;
-                // NightVisionColor defaults to 0x999999.
-                let mut color =
-                    Vec3::from(sky.ambient_light_color).max(Vec3::splat(0.6 * night_vision));
-                color += Vec3::from(sky.sky_light_color) * sky_brightness;
-                let parabolic = (2.0 * block_level - 1.0).powi(2);
-                let block_color = Vec3::from(sky.block_light_tint).lerp(Vec3::ONE, 0.9 * parabolic);
-                color += block_color * block_brightness;
-                // lightmap.fsh: a boss bar mixes the light toward 70/60/60%.
-                color = color.lerp(color * Vec3::new(0.7, 0.6, 0.6), boss_darken);
-                color -= Vec3::splat(darkness);
-                color = color.clamp(Vec3::ZERO, Vec3::ONE);
-                let max = color.max_element().max(1e-6);
-                let inverted = 1.0 - max;
-                let scaled = 1.0 - inverted.powi(4);
-                let not_gamma = color * (scaled / max);
-                color = color.lerp(not_gamma, gamma);
-                let i = (s * 16 + b) * 4;
-                pixels[i] = (color.x * 255.0) as u8;
-                pixels[i + 1] = (color.y * 255.0) as u8;
-                pixels[i + 2] = (color.z * 255.0) as u8;
-                pixels[i + 3] = 255;
-            }
-        }
-        if self.fullbright {
-            pixels.fill(255);
-        }
+        let pixels = crate::lightmap::pixels(
+            sky,
+            crate::lightmap::Parameters {
+                darkness,
+                gamma,
+                night_vision,
+                flicker,
+                boss_darken,
+                fullbright: self.fullbright,
+            },
+        );
         // The lightmap changes with the time of day, flicker and effects,
         // not every frame: upload only what differs from the texture.
         if pixels == self.lightmap_pixels && self.lightmap_uploaded {
@@ -6675,42 +6651,7 @@ impl Renderer {
         let sun_angle = frame.sky.sun_angle.to_radians();
         // Celestial bodies rotate around the X axis; angle 0 = noon.
         let sun = Vec3::new(0.0, sun_angle.cos(), -sun_angle.sin());
-        let (fog_color, fog) = if let Some(f) = frame.fog {
-            (
-                f.color,
-                [
-                    f.environmental_start,
-                    f.environmental_end,
-                    f.render_distance_start,
-                    f.render_distance_end,
-                ],
-            )
-        } else if frame.underwater {
-            (
-                [
-                    frame.water_fog[0],
-                    frame.water_fog[1],
-                    frame.water_fog[2],
-                    1.0,
-                ],
-                [-8.0, 96.0, -8.0, 96.0],
-            )
-        } else {
-            let d = frame.distance;
-            (
-                [
-                    frame.sky.fog_color[0],
-                    frame.sky.fog_color[1],
-                    frame.sky.fog_color[2],
-                    1.0,
-                ],
-                // FogRenderer: render-distance fog starts at max(d - 16, 0)... d.
-                {
-                    let (start, end) = frame.environment_fog.unwrap_or((f32::MAX, f32::MAX));
-                    [start, end, (d - d.min(64.0) * 0.25).max(0.0), d]
-                },
-            )
-        };
+        let (fog_color, fog) = crate::fog::world_parameters(frame);
         let globals = Globals {
             view_proj: jittered.to_cols_array_2d(),
             fog_color,
