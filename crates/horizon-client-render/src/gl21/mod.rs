@@ -8,11 +8,17 @@
 //! `docs/opengl21-plan.md` is the plan for the renderer that would run there (a separate one: the
 //! wgpu path needs OpenGL 3.3 core, `third_party/wgpu-hal/src/gles/adapter.rs`).
 //!
-//! This module is phase 0 of that plan and changes no picture: the profile is a description, and
+//! Phases 0–3 of that plan live here and change no picture: the profile is a description, and
 //! `HORIZON_GL_PROFILE=x1650` makes the *existing* feature detection take its poorest paths on any
 //! machine, so that the code which already degrades (CPU sprite animation, no occlusion culling,
 //! no flat draws, no translucent batching, the plain vertex layout) is exercised on hardware and
 //! in CI that do not have the card. Nothing here is reachable from a shader.
+//!
+//! The pieces of the renderer itself are pure data so that they can be tested without a GPU, and so
+//! that CI — which has no OpenGL 2.1 driver — still holds them: `atlas` packs the sprites into a
+//! power-of-two texture GL 2.1 can clamp, `vertex` inlines the sprite layer into a per-sprite run
+//! and lays a vertex out in what GLSL 1.20 can read, `draws` works out the frame's calls and their
+//! order. `*.vert` and `*.frag` here are that renderer's shaders.
 //!
 //! The switches are read on every call rather than cached: the game reads them when it opens the
 //! device, which is long after anything could have set them, and a typo must not be lost.
@@ -22,8 +28,15 @@
 //! no `in`/`out`, no `layout`, no `texture()`, no bit arithmetic, no vertex texture fetch. Writing
 //! one that needs a newer OpenGL is a test failure, not a surprise on a player's 2006 driver.
 
+pub mod atlas;
+pub mod draws;
 mod profile;
+pub mod vertex;
+
+pub use atlas::Atlas;
+pub use draws::{draw_calls, plan, section_runs, Pass, Plan, SectionDraw, SectionRuns};
 pub use profile::Profile;
+pub use vertex::{Batches, GlVertex};
 
 /// The profile named by `HORIZON_GL_PROFILE`, if the variable is set and names one. `x1650` is
 /// the only profile today. An unknown name is an error, not a silent fallback: a typo in a CI

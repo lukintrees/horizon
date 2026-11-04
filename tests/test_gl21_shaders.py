@@ -101,6 +101,16 @@ class RejectsTests(unittest.TestCase):
         self.check(HEADER + "in vec3 a_pos;\nvoid main() { gl_Position = vec4(a_pos, 1.0); }\n",
                    "attribute/varying")
 
+    def test_a_vertex_shader_may_call_its_own_helper(self):
+        # A function the shader declares itself is not a sample, whatever its name: only the
+        # driver's own texture functions are.
+        source = HEADER + """
+attribute vec2 a_uv;
+vec4 helper(vec2 p) { return vec4(p, 0.0, 1.0); }
+void main() { gl_Position = helper(a_uv); }
+"""
+        self.assertEqual(violations(source, "vertex"), [])
+
     def test_a_vertex_shader_cannot_sample(self):
         source = HEADER + """
 attribute vec2 a_uv;

@@ -145,13 +145,29 @@ def check_text(text, stage=None):
             (line_of(clean, match.start()), "`in`/`out` need GLSL 1.30; use attribute/varying")
         )
     if vertex:
-        # R500 has no texture unit in its vertex pipeline at all, whatever the driver quotes.
+        # R500 has no texture unit in its vertex pipeline at all, whatever the driver quotes. Its
+        # its own functions do not count: `texture2D` declared and called inside the shader is the
+        # shader's, not the driver's.
         for match in TEXTURE_FETCH.finditer(clean):
-            violations.append(
-                (line_of(clean, match.start()),
-                 "a vertex shader cannot sample on R500 (no vertex texture fetch)")
-            )
+            if not defined_in(clean, match.start()):
+                violations.append(
+                    (line_of(clean, match.start()),
+                     "a vertex shader cannot sample on R500 (no vertex texture fetch)")
+                )
     return sorted(set(violations))
+
+
+DEFINITION = re.compile(r"\b\w+\s+(\w+)\s*\(")
+
+
+def defined_in(text, offset):
+    """Whether the call at `offset` is to a function the shader declares itself, whose name is the
+    word before its `(`: `vec4 lightmap(vec2 levels)` declares `lightmap`."""
+    before = text[:offset]
+    name = re.search(r"(\w+)\s*$", before)
+    if not name:
+        return False
+    return bool(re.search(r"\b\w+\s+" + re.escape(name.group(1)) + r"\s*\([^;{]*\)\s*\{", text))
 
 
 def line_of(text, offset):

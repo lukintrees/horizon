@@ -62,4 +62,20 @@ separate one.
 `in`/`out`, no `layout`, no `texture()`, no bit arithmetic, no texture arrays, no `gl_VertexID`, no
 vertex texture fetch. Writing a shader that needs a newer OpenGL fails a test instead of a driver. The
 present pass (`present.vert`/`present.frag`) is the first one, the GL 2.1 copy of `world_post.wgsl`'s
-blit.
+blit; `terrain.vert`/`terrain.frag` are the port of `terrain.wgsl`'s terrain stages.
+
+## What of the renderer exists
+
+Not a renderer yet: no window, no context, nothing drawn. What is here is the part that can be
+checked without a GPU or a driver, and CI does check it (`cargo test -p horizon-client-render`):
+
+| File | What it decides |
+| --- | --- |
+| `gl21/atlas.rs` | Sprites in one square power-of-two texture instead of a texture array; a sprite is a rectangle (`u_sprite`). No padding yet, so the top mips cross the seam between neighbours. |
+| `gl21/vertex.rs` | A vertex in what GLSL 1.20 can read (28 bytes, four attributes), and a section's vertex list cut into one run per sprite — one draw call per sprite instead of a layer attribute. |
+| `gl21/draws.rs` | The frame's calls and their order: sky, then solid faces, then see-through ones farthest first, then the present quad; and how many calls that is. |
+| `gl21/terrain.vert|frag` | The port of `terrain.wgsl`: sprite × vertex colour × lightmap, one alpha test whose threshold is a uniform, fog over both distances, a section's fade-in. |
+
+What the GL path does not draw yet, and so what a player would notice: no HDR, no emissive
+overlays, no water mirror, no distant-terrain LOD, no RGSS/anisotropic modes, no dynamic or coloured
+lights. The plan's §5.4 lists them with the reason for each.
