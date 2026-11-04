@@ -55,6 +55,17 @@ class TypedBindingTests(unittest.TestCase):
         self.assertEqual(found(line), [])
 
 
+class StructLiteralTests(unittest.TestCase):
+    def test_a_struct_literal_with_long_fields_goes_one_a_line(self):
+        # CI turned `Viewport { width: 320, height: 240 }` into four lines.
+        line = "        let viewport = Viewport { width: 320, height: 240 };\n"
+        self.assertTrue(any("struct literal" in message for message in found(line)))
+
+    def test_a_short_one_stays(self):
+        line = "            solid: SectionRuns::new(0, 2),\n"
+        self.assertEqual(found(line), [])
+
+
 class MacroWidthTests(unittest.TestCase):
     def test_a_macro_call_with_too_many_argument_columns_goes_a_line_each(self):
         # CI turned this one-line equality into four lines.

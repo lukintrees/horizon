@@ -41,6 +41,8 @@ CHAIN_WIDTH = 60
 MAX_WIDTH = 100
 # The macros whose arguments rustfmt lays out with `chain_width`.
 MACRO = re.compile(r"\b(assert|assert_eq|assert_ne|debug_assert|debug_assert_eq)!\(")
+# rustfmt's `struct_lit_width`: a struct literal's fields past this many columns are one a line.
+STRUCT_LIT_WIDTH = 18
 # `let name: Vec<(u32, u32)> = ` — a binding whose type is written out, which is where a chain's
 # line is long before the chain starts.
 TYPED_LET = re.compile(r"^\s*let\s+\w+\s*:\s*[\w:<>()\[\];, &]+?\s*=\s*")
@@ -161,11 +163,33 @@ def chain_width(line):
     binding = TYPED_LET.match(code)
     if binding:
         body = code[binding.end():]
-        if len(re.findall(r"\.[a-z_][\w:]*\s*\(", body)) >= 3:
-            # From the receiver: `draws.runs.iter()..` is a chain 62 columns wide, not 57 from its
-            # second method.
+        calls = len(re.findall(r"\.[a-z_][\w:]*\s*\(", body))
+        if calls >= 3:
+            # From the receiver: `draws.runs.iter()..collect()` is a chain 62 columns wide. A chain
+            # that closes inside the line (`.chain(f(..));`) still counts — rustfmt keeps those only
+            # because they fit, which the width rule above says.
             return len(body)
     return None
+
+
+STRUCT_LIT = re.compile(r"\b(?:[A-Z]\w*|Self)\s*\{([^{}]*)\}")
+
+
+def wide_struct_literals(line):
+    """Struct literals on `line` whose fields are past `struct_lit_width` (18), as rustfmt sees it.
+
+    `Viewport { width: 320, height: 240 }` is 22 columns of fields and CI turned it into four lines;
+    `SectionRuns { first_run, runs }` is 16 and stays. The rule is rustfmt's default
+    `struct_lit_width`, and it is why a short-name struct stays on one line while a named-field one
+    does not.
+    """
+    code = code_of(line).rstrip()
+    out = []
+    for match in STRUCT_LIT.finditer(code):
+        fields = match.group(1).strip()
+        if len(fields) > STRUCT_LIT_WIDTH:
+            out.append(fields)
+    return out
 
 
 def merged_derives(text):
@@ -263,6 +287,14 @@ def check_text(text, name="<memory>"):
                     number,
                     f"`{called}!(..)` has {width} columns of arguments; rustfmt breaks a macro "
                     f"call past {CHAIN_WIDTH}: bind a value to a name first",
+                )
+            )
+        for fields in wide_struct_literals(raw):
+            problems.append(
+                (
+                    number,
+                    f"this struct literal's {len(fields)} columns of fields is past rustfmt's "
+                    f"{STRUCT_LIT_WIDTH}: one field a line",
                 )
             )
         names = unsorted_use(code)

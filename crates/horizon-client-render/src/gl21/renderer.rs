@@ -281,7 +281,10 @@ mod tests {
 
     impl Device for Recording {
         fn begin_frame(&mut self, viewport: Viewport, clear: [f32; 4]) {
-            self.push(format!("begin {}x{} clear {clear:?}", viewport.width, viewport.height));
+            self.push(format!(
+                "begin {}x{} clear {clear:?}",
+                viewport.width, viewport.height
+            ));
         }
 
         fn upload(&mut self, upload: Upload, vertices: &[GlVertex]) {
@@ -382,7 +385,10 @@ mod tests {
         let hud = hud_batch(6, Blend::Alpha);
         renderer.draw(
             &mut device,
-            Viewport { width: 800, height: 600 },
+            Viewport {
+            width: 800,
+            height: 600,
+        },
             [0.1, 0.2, 0.3, 1.0],
             &[section(1, &solid, &[])],
             None,
@@ -394,16 +400,21 @@ mod tests {
         assert_eq!(calls.last().map(String::as_str), Some("end"));
         // The upload comes before the first draw, and the program before the state.
         let upload = device.index_of("upload ").expect("an upload");
-        let program = device.index_of("program Terrain").expect("the terrain program");
+        let program = device
+            .index_of("program Terrain")
+            .expect("the terrain program");
         let state = device.index_of("state ").expect("a pass's state");
         let draw = device.index_of("draw 0+6").expect("the world's draw");
-        assert!(upload < program && program < state && state < draw, "{calls:?}");
+        let ordered = upload < program && program < state && state < draw;
+        assert!(ordered, "{calls:?}");
         // The HUD after the world, on its own program and buffer.
         let hud_upload = device.index_of("upload hud").expect("the hud's vertices");
         let hud_draw = device.index_of("draw hud").expect("the hud's draw");
         assert!(draw < hud_upload && hud_upload < hud_draw, "{calls:?}");
         // And the frame ends with the present quad, which is a draw of four vertices.
-        let present = device.index_of("program Present").expect("the present program");
+        let present = device
+            .index_of("program Present")
+            .expect("the present program");
         assert!(hud_draw < present, "{calls:?}");
         assert!(calls.contains(&"draw 0+4".to_string()), "{calls:?}");
         assert_eq!(renderer.frames(), 1);
@@ -418,14 +429,25 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport {
+            width: 320,
+            height: 240,
+        },
             [0.0; 4],
             &[section(1, &a, &[]), section(2, &b, &[])],
             None,
             None,
         );
-        let states = device.calls.iter().filter(|call| call.starts_with("state ")).count();
-        let draws = device.calls.iter().filter(|call| call.starts_with("draw ")).count();
+        let states = device
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("state "))
+            .count();
+        let draws = device
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("draw "))
+            .count();
         assert_eq!(draws, 2, "one draw per section, one sprite each");
         // One state for the solid pass, one for the present quad's reset.
         assert_eq!(states, 2, "{:?}", device.calls);
@@ -440,7 +462,10 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport {
+            width: 320,
+            height: 240,
+        },
             [0.0; 4],
             &[section(1, &solid, &translucent)],
             Some((&sky, 7)),
@@ -451,7 +476,8 @@ mod tests {
             .iter()
             .filter(|call| call.starts_with("state "))
             .collect();
-        assert_eq!(states.len(), 3, "sky, solid, and the present quad's reset: {states:?}");
+        let wanted = "sky, solid, and the present quad's reset";
+        assert_eq!(states.len(), 3, "{wanted}: {states:?}");
         assert!(states[0].contains("glDisable(DEPTH_TEST)"), "{states:?}");
         assert!(states[1].contains("glDepthMask(1)"), "{states:?}");
         assert!(states[2].contains("glDepthMask(0)"), "{states:?}");
@@ -472,7 +498,10 @@ mod tests {
         let solid = vertices(6, 3);
         let mut renderer = Renderer::new(1024);
         let mut device = Recording::default();
-        let viewport = Viewport { width: 320, height: 240 };
+        let viewport = Viewport {
+            width: 320,
+            height: 240,
+        };
         renderer.draw(&mut device, viewport, [0.0; 4], &[section(1, &solid, &[])], None, None);
         let uploads = |device: &Recording| {
             device.calls.iter().filter(|c| c.starts_with("upload ")).count()
@@ -509,18 +538,21 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport {
+            width: 320,
+            height: 240,
+        },
             [0.0; 4],
             &[],
             None,
             Some(&hud),
         );
-        let hud_states = device
+        let hud_states = device.calls.iter().filter(|call| call.starts_with("state")).count();
+        let hud_draws = device
             .calls
             .iter()
-            .filter(|call| call.starts_with("state glDepthTest") || call.starts_with("state "))
+            .filter(|c| c.starts_with("draw hud"))
             .count();
-        let hud_draws = device.calls.iter().filter(|c| c.starts_with("draw hud")).count();
         assert_eq!(hud_draws, 3, "0..2 alpha, 2..6 invert, 6..10 alpha");
         // The last alpha run repeats the first run's state: three runs, two states.
         assert_eq!(hud_states, 2, "{:?}", device.calls);
@@ -533,7 +565,10 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport {
+            width: 320,
+            height: 240,
+        },
             [0.5; 4],
             &[],
             None,
@@ -555,7 +590,10 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport {
+            width: 320,
+            height: 240,
+        },
             [0.0; 4],
             &[section(1, &solid, &translucent)],
             Some((&sky, 1)),
@@ -584,7 +622,10 @@ mod tests {
         let mut device = Recording::default();
         renderer.draw(
             &mut device,
-            Viewport { width: 320, height: 240 },
+            Viewport {
+            width: 320,
+            height: 240,
+        },
             [0.0; 4],
             &[],
             Some((&sky, 3)),
