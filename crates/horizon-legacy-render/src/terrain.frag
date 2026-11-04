@@ -4,6 +4,7 @@ uniform sampler2D lightmap;
 uniform sampler2D foil;
 uniform float glint_strength;
 uniform float gui_glint;
+uniform float screen_mode;
 varying vec2 foil_uv;
 uniform float entity_mode;
 uniform float mask_only;
@@ -31,6 +32,13 @@ void main() {
     vec4 color = tint;
     if (entity_mode > 0.5 && !gl_FrontFacing) color = back_tint;
     vec4 sample_color = texture2D(image, uv);
+    if (screen_mode > 0.5) {
+        vec4 result = sample_color * tint;
+        if (screen_mode > 1.5) result.a = 1.0;
+        else if (result.a <= 0.0) discard;
+        gl_FragColor = result;
+        return;
+    }
     if (gui_glint > 0.5) {
         // HUD glint is a separate, alpha-masked layer, NOT an entity composite.
         // Ignore vertex tint, lightmap and foil alpha, including strength zero.

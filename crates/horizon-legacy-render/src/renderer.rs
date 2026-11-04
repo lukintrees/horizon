@@ -79,6 +79,7 @@ struct Uniforms {
     mask: i32,
     glint: i32,
     gui_glint: i32,
+    screen: i32,
 }
 
 pub struct Renderer<'a> {
@@ -180,6 +181,7 @@ impl<'a> Renderer<'a> {
                 mask: -1,
                 glint: -1,
                 gui_glint: -1,
+                screen: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -210,6 +212,7 @@ impl<'a> Renderer<'a> {
                 mask: location(c"mask_only")?,
                 glint: location(c"glint_strength")?,
                 gui_glint: location(c"gui_glint")?,
+                screen: location(c"screen_mode")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -218,6 +221,9 @@ impl<'a> Renderer<'a> {
         }
         this.check()?;
         Ok(this)
+    }
+    pub fn max_texture_size(&self) -> u32 {
+        self.max_texture
     }
     pub fn stats(&self) -> Stats {
         self.stats
@@ -375,6 +381,7 @@ impl<'a> Renderer<'a> {
         // object. One nonconstant texture cannot be both linear atlas and nearest
         // lightmap in the same draw. A 1x1 white texture is equivalent either way.
         if draw.pass.pipeline() == Pass::OverlayVignette
+            && !matches!(draw.pass, Pass::Screen(_))
             && draw.texture == draw.lightmap
             && self.textures[&draw.texture].size != [1, 1]
         {
@@ -398,9 +405,9 @@ impl RenderBackend for Renderer<'_> {
         }
         if [image.width, image.height]
             .iter()
-            .any(|&n| !n.is_power_of_two() || n > self.max_texture)
+            .any(|&n| n > self.max_texture)
         {
-            return Err("texture must be power-of-two and within driver limits".into());
+            return Err("texture exceeds driver size limit".into());
         }
         charge(self.stats.texture_bytes, bytes, self.budget.texture_bytes)?;
         let id = TextureId(id()?);
@@ -590,6 +597,15 @@ impl RenderBackend for Renderer<'_> {
             (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
             for draw in frame.draws {
                 let pass = draw.pass.pipeline();
+                let screen = match draw.pass {
+                    Pass::Screen(material) => Some(material),
+                    _ => None,
+                };
+                let mode = screen.map_or(0., |m| match m.blend {
+                    horizon_render_api::screen::Blend::Alpha => 1.,
+                    horizon_render_api::screen::Blend::Vignette => 2.,
+                });
+                (self.gl.uniform1f)(self.uniforms.screen, mode);
                 let mesh = &self.meshes[&draw.mesh];
                 let offset = self.validate_draw(draw, frame)?;
                 (self.gl.uniform3f)(self.uniforms.origin, offset[0], offset[1], offset[2]);
@@ -726,16 +742,22 @@ impl RenderBackend for Renderer<'_> {
                 for (unit, id) in [(0x84C0, draw.texture), (0x84C1, draw.lightmap)] {
                     (self.gl.active_texture)(unit);
                     (self.gl.bind_texture)(0x0DE1, self.textures[&id].name);
-                    for parameter in [0x2802, 0x2803] {
-                        (self.gl.tex_parameter)(0x0DE1, parameter, 0x812F);
+                    // Screen's shader does not read lightmap. Do not change its
+                    // sampler here: it may legally alias the image texture.
+                    if unit == 0x84C1 && screen.is_some() {
+                        continue;
                     }
-                    // The credits vignette uses a linear atlas sampler. Restore
-                    // nearest on every other draw, including the lightmap.
-                    let filter = if unit == 0x84C0 && pass == Pass::OverlayVignette {
-                        0x2601
+                    let address = if unit == 0x84C0 && screen.is_some_and(|m| !m.clamp) {
+                        0x2901 // REPEAT on the extracted sprite, never the atlas
                     } else {
-                        0x2600
+                        0x812F
                     };
+                    for parameter in [0x2802, 0x2803] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, address);
+                    }
+                    let linear = unit == 0x84C0
+                        && screen.map_or(pass == Pass::OverlayVignette, |m| m.linear);
+                    let filter = if linear { 0x2601 } else { 0x2600 };
                     (self.gl.tex_parameter)(0x0DE1, 0x2800, filter);
                     (self.gl.tex_parameter)(0x0DE1, 0x2801, filter);
                 }

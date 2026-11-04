@@ -452,6 +452,8 @@ pub fn run(context: &Context) -> Result<Vec<&'static str>, String> {
     checks.push("backend_entity_glint");
     gui_glint(context)?;
     checks.push("backend_gui_glint");
+    screen_sampling(context)?;
+    checks.push("backend_screen_sampling");
     surface_lifecycle(context)?;
     checks.push("backend_surface_lifecycle");
 
@@ -1971,6 +1973,169 @@ fn gui_glint(context: &Context) -> Result<(), String> {
     require(
         renderer.stats() == Stats::default(),
         "GUI foil resources not reclaimed",
+    )
+}
+
+fn screen_sampling(context: &Context) -> Result<(), String> {
+    use horizon_render_api::screen::{Blend, Material};
+    let mut renderer = Renderer::new(
+        context,
+        Budget {
+            texture_bytes: 32,
+            mesh_bytes: 188,
+        },
+    )?;
+    let rgba: [u8; 24] = [
+        255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128, 0, 255, 255, 255, 255, 0,
+        255, 0,
+    ];
+    let image = renderer.create_texture(Image {
+        width: 3,
+        height: 2,
+        rgba: &rgba,
+    })?;
+    let white = renderer.create_texture(Image {
+        width: 1,
+        height: 1,
+        rgba: &[255; 4],
+    })?;
+    let vertices = [
+        ([-1., -1., 0.], [-1.25, -0.75]),
+        ([1., -1., 0.], [2.75, -0.75]),
+        ([1., 1., 0.], [2.75, 1.25]),
+        ([-1., 1., 0.], [-1.25, 1.25]),
+    ]
+    .map(|(pos, uv)| Vertex {
+        pos,
+        uv,
+        color: [0.5, 0.75, 0.25, 0.5],
+        light_uv: [0.; 2],
+    });
+    let mesh = renderer.create_mesh(&vertices, &[0, 1, 2, 0, 2, 3])?;
+    let sample = |u: f64, v: f64, linear: bool, clamp: bool| -> [f64; 4] {
+        let texel = |x: i32, y: i32, c: usize| {
+            let coord = |n: i32, size: i32| {
+                if clamp {
+                    n.clamp(0, size - 1)
+                } else {
+                    n.rem_euclid(size)
+                }
+            };
+            f64::from(rgba[(coord(y, 2) * 3 + coord(x, 3)) as usize * 4 + c]) / 255.
+        };
+        if !linear {
+            return std::array::from_fn(|c| {
+                texel((u * 3.).floor() as i32, (v * 2.).floor() as i32, c)
+            });
+        }
+        let (x, y) = (u * 3. - 0.5, v * 2. - 0.5);
+        let (i, j) = (x.floor() as i32, y.floor() as i32);
+        let (a, b) = (x - x.floor(), y - y.floor());
+        std::array::from_fn(|c| {
+            (texel(i, j, c) * (1. - a) + texel(i + 1, j, c) * a) * (1. - b)
+                + (texel(i, j + 1, c) * (1. - a) + texel(i + 1, j + 1, c) * a) * b
+        })
+    };
+    for linear in [false, true] {
+        for clamp in [false, true] {
+            for blend in [Blend::Alpha, Blend::Vignette] {
+                // Intentionally alias lightmap: it is unused, and must not undo sampler state.
+                let draws = [Draw {
+                    mesh,
+                    texture: image,
+                    lightmap: image,
+                    origin: [0.; 3],
+                    pass: Pass::Screen(Material {
+                        blend,
+                        linear,
+                        clamp,
+                    }),
+                    scissor: None,
+                }];
+                let mut view = frame(&draws);
+                view.clear = Clear::ColorDepth([64. / 255., 96. / 255., 160. / 255., 0.4]);
+                view.fog = Some(Fog {
+                    game: None,
+                    color: [0., 0., 1.],
+                    start: 0.,
+                    end: 0.01,
+                });
+                renderer.render(&view)?;
+                for y in [5, 19, 37, 55] {
+                    for x in [1, 11, 25, 41, 61] {
+                        let tex = sample(
+                            (f64::from(x) + 0.5) / 64. * 4. - 1.25,
+                            (f64::from(y) + 0.5) / 64. * 2. - 0.75,
+                            linear,
+                            clamp,
+                        );
+                        let a = tex[3] * 0.5;
+                        let tint = [0.5, 0.75, 0.25];
+                        let background = [64., 96., 160.];
+                        let expected = std::array::from_fn(|c| {
+                            if blend == Blend::Alpha {
+                                (tex[c] * tint[c] * a * 255. + background[c] * (1. - a)).round()
+                                    as u8
+                            } else {
+                                (background[c] * (1. - tex[c] * tint[c])).round() as u8
+                            }
+                        });
+                        pixel(&mut renderer, [x, y], expected)?;
+                        let actual = renderer.read_rgba([x, y, 1, 1])?;
+                        let alpha = if blend == Blend::Alpha {
+                            ((a + 0.4 * (1. - a)) * 255.).round() as u8
+                        } else {
+                            102
+                        };
+                        require(
+                            actual[3].abs_diff(alpha) <= 2,
+                            "screen alpha blend mismatch",
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+    renderer.remove_mesh(mesh)?;
+    // Ordinary overlay resets screen shader AND address/filter state on the same image.
+    let ordinary = quad([1.; 4], 0., 1.).map(|mut v| {
+        v.uv = [2.25, 0.25];
+        v
+    });
+    let mesh = renderer.create_mesh(&ordinary, &[0, 1, 2, 0, 2, 3])?;
+    renderer.render(&frame(&[Draw {
+        mesh,
+        texture: image,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Overlay,
+        scissor: None,
+    }]))?;
+    pixel(&mut renderer, [32, 32], [0, 0, 255])?;
+    renderer.remove_mesh(mesh)?;
+    let mesh = renderer.create_mesh(&quad([1., 1., 1., 0.003], 0., 1.), &[0, 1, 2, 0, 2, 3])?;
+    renderer.render(&frame(&[Draw {
+        mesh,
+        texture: white,
+        lightmap: white,
+        origin: [0.; 3],
+        pass: Pass::Screen(Material {
+            blend: Blend::Alpha,
+            linear: false,
+            clamp: false,
+        }),
+        scissor: None,
+    }]))?;
+    require(
+        renderer.read_rgba([32, 32, 1, 1])?[0] > 0,
+        "screen incorrectly applied GUI alpha cutoff",
+    )?;
+    renderer.remove_mesh(mesh)?;
+    renderer.remove_texture(image)?;
+    renderer.remove_texture(white)?;
+    require(
+        renderer.stats() == Stats::default(),
+        "screen fixture resource leak",
     )
 }
 

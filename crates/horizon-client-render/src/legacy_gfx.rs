@@ -19,6 +19,7 @@ use horizon_render_api::{
 };
 
 pub mod frame;
+mod screen;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -32,6 +33,9 @@ pub struct Limits {
     pub hud_resident_pages: usize,
     pub hud_backing_bytes: usize,
     pub hud_page_count: usize,
+    pub screen_quads: usize,
+    /// Extracted sprite bytes plus one decoded virtual-atlas page.
+    pub screen_bytes: usize,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -46,6 +50,8 @@ impl Default for Limits {
             hud_resident_pages: 8,
             hud_backing_bytes: 128 << 20,
             hud_page_count: 4096,
+            screen_quads: 256,
+            screen_bytes: 8 << 20,
         }
     }
 }
@@ -94,6 +100,7 @@ pub struct TerrainHudRenderer {
     glint_textures: Option<GlintTextures>,
     retired_glint: Vec<TextureId>,
     limits: Limits,
+    screen: screen::Resources,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
     format!("legacy terrain/HUD: {error:?}")
@@ -140,6 +147,7 @@ impl TerrainHudRenderer {
             glint_textures: None,
             retired_glint: Vec::new(),
             limits,
+            screen: screen::Resources::default(),
         })
     }
 
@@ -257,7 +265,12 @@ impl TerrainHudRenderer {
         if prepared.lightmap.as_slice() != self.lightmap {
             self.update_lightmap(&prepared.lightmap)?;
         }
-        self.render_geometry(&prepared.world, prepared.hud, &prepared.geometry())
+        self.render_geometry_with_screen(
+            &prepared.world,
+            prepared.hud,
+            &prepared.geometry(),
+            prepared.screen,
+        )
     }
 
     pub fn render_geometry(
@@ -265,6 +278,15 @@ impl TerrainHudRenderer {
         world: &SceneFrame<'_>,
         hud: &HudBatch,
         geometry: &Geometry<'_>,
+    ) -> Result<(), String> {
+        self.render_geometry_with_screen(world, hud, geometry, &[])
+    }
+    fn render_geometry_with_screen(
+        &mut self,
+        world: &SceneFrame<'_>,
+        hud: &HudBatch,
+        geometry: &Geometry<'_>,
+        screen_quads: &[crate::screen_effects::ScreenQuad],
     ) -> Result<(), String> {
         let strength = entity::Strength::new(geometry.glint.strength).map_err(diagnostic)?;
         if !geometry.glint.ticks.is_finite() {
@@ -369,11 +391,42 @@ impl TerrainHudRenderer {
             .hud
             .patch(&hud.patches, self.limits.glyph_patch_bytes)?;
         self.cache.invalidate(&changed);
+        let screens = screen::Prepared::new(
+            screen_quads,
+            &self.hud,
+            self.limits.screen_quads,
+            self.limits.screen_bytes,
+            self.world.backend_mut().max_texture_size(),
+        )?;
+        self.screen.collect(self.world.backend_mut())?;
         self.collect_hud()?;
         self.world.collect_garbage().map_err(diagnostic)?;
         self.cache.collect_garbage(self.world.backend_mut())?;
         self.collect_glint()?;
+        // Screen sprites and virtual GUI pages never coexist on the GPU. Empty
+        // the cache before sizing, and again between the hand and overlays.
+        if !screens.is_empty() {
+            self.cache.release(self.world.backend_mut())?;
+        }
         let remaining = self.world.backend_mut().remaining();
+        let paged = !runs.is_empty()
+            || !body.is_empty()
+            || !particles.is_empty()
+            || !hand.is_empty()
+            || !see_through.is_empty();
+        if !screens.is_empty()
+            && (remaining.textures == 0
+                || remaining.meshes == 0
+                || remaining.mesh_bytes < 188
+                || remaining.texture_bytes
+                    < screens.largest_texture().max(if paged {
+                        self.hud.layout().page_bytes()
+                    } else {
+                        0
+                    }))
+        {
+            return Err("no transient screen texture/mesh capacity".into());
+        }
         if runs.iter().any(|run| {
             std::mem::size_of_val(run.geometry.vertices.as_slice())
                 + std::mem::size_of_val(run.geometry.indices.as_slice())
@@ -446,6 +499,11 @@ impl TerrainHudRenderer {
                 })
                 .map_err(diagnostic)?;
         }
+        if !screens.is_empty() {
+            self.cache.release(self.world.backend_mut())?;
+            self.screen
+                .render(self.world.backend_mut(), &screens, self.white)?;
+        }
         self.cache
             .render_gui(self.world.backend_mut(), &runs, self.white, |page| {
                 backing.load(page)
@@ -498,6 +556,7 @@ impl TerrainHudRenderer {
 }
 impl Drop for TerrainHudRenderer {
     fn drop(&mut self) {
+        let _ = self.screen.collect(self.world.backend_mut());
         if let Some(textures) = self.glint_textures.take() {
             self.retired_glint.extend([textures.item, textures.armor]);
         }
@@ -520,6 +579,181 @@ mod tests {
         IDENTITY,
         atlas::{SpriteSize, build_page, pack_atlas},
     };
+    #[test]
+    #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
+    fn bridge_actual_frame_screen_repeat_clamp_blur_vignette_order_and_patches() {
+        use crate::{
+            mesher::Vertex,
+            screen_effects::{Blend, ScreenQuad, ScreenVertex},
+        };
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 6;
+        atlas.height = 2;
+        atlas.pixels = [
+            0, 0, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255,
+        ]
+        .repeat(2);
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let page = build_page(&layout, 0, &[&[255; 4]]).unwrap();
+        let mut renderer = TerrainHudRenderer::new(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            layout,
+            &[&page],
+            &[0; 1024],
+            &atlas,
+            Limits {
+                hud_page_size: 4,
+                screen_bytes: 96,
+                gpu: Budget {
+                    texture_bytes: 1156,
+                    mesh_bytes: 348,
+                },
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let mut hud = HudBatch::new([64; 2]);
+        hud.quad(
+            [[24., 24.], [40., 24.], [40., 40.], [24., 40.]],
+            [[4.5 / 6., 0.5]; 4],
+            0xff306010,
+        );
+        let full = [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]];
+        let uv = [[-0.25, 0.], [3.75, 0.], [3.75, 1.], [-0.25, 1.]];
+        let overlay = ScreenQuad {
+            vertices: std::array::from_fn(|i| ScreenVertex {
+                pos: full[i],
+                uv: uv[i],
+                rect: [1. / 6., 0., 3. / 6., 1.],
+                color: [1.; 4],
+            }),
+            blend: Blend::Alpha,
+            sampling: 0,
+            world_tint: true,
+        };
+        let vignette = ScreenQuad {
+            vertices: std::array::from_fn(|i| ScreenVertex {
+                pos: full[i],
+                uv: uv[i],
+                rect: [4. / 6., 0., 1., 1.],
+                color: [0.5, 0.25, 0.75, 0.],
+            }),
+            blend: Blend::Vignette,
+            sampling: 0,
+            world_tint: false,
+        };
+        // A blue hand covers the entire view; overlays must draw AFTER it.
+        let hand = full.map(|p| Vertex {
+            pos: [p[0] * 100., p[1] * 100., 8.],
+            uv: [4.5 / 6., 0.5],
+            layer: 0,
+            color: 0xffff0000,
+            light: 0,
+            normal: [0; 4],
+            glint_uv: [0.; 2],
+        });
+        let near = |renderer: &mut TerrainHudRenderer, at: [u32; 2], expected: [u8; 3]| {
+            let actual = renderer.read_rgba([at[0], at[1], 1, 1]).unwrap();
+            assert!(
+                actual[..3]
+                    .iter()
+                    .zip(expected)
+                    .all(|(&a, b)| a.abs_diff(b) <= 2),
+                "{at:?}: {actual:?} != {expected:?}"
+            );
+        };
+        let options = frame::Options {
+            gamma: 0.,
+            fullbright: true,
+        };
+        let mut overlays = [overlay, vignette];
+        for sampling in 0..4 {
+            overlays[0].sampling = sampling;
+            let mut source = frame::tests::source(&hud);
+            source.camera = glam::DVec3::ZERO;
+            source.yaw = 0.;
+            source.pitch = 0.;
+            source.hand = &hand;
+            source.screen = &overlays;
+            renderer
+                .render_game_frame(&source, frame::VisibleSections::default(), options)
+                .unwrap();
+            let expected = if sampling & 2 != 0 {
+                [128, 0, 0]
+            } else if sampling & 1 != 0 {
+                [8, 179, 0]
+            } else {
+                [0, 191, 0]
+            };
+            near(&mut renderer, [0, 16], expected);
+            near(&mut renderer, [32, 32], [16, 96, 48]); // HUD is AFTER vignette, never darkened by it
+            let stats = renderer.world.backend_mut().stats();
+            assert_eq!(stats.texture_bytes, 1156); // only fixed textures + one HUD page
+            assert_eq!(stats.mesh_bytes, 0);
+        }
+        overlays[0].sampling = 1;
+        hud.patches.push(crate::font::Patch {
+            x: 1,
+            y: 0,
+            width: 1,
+            height: 2,
+            rgba: [0, 0, 255, 255].repeat(2),
+        });
+        {
+            let mut source = frame::tests::source(&hud);
+            source.screen = &overlays;
+            renderer
+                .render_game_frame(&source, frame::VisibleSections::default(), options)
+                .unwrap();
+        }
+        near(&mut renderer, [0, 16], [0, 179, 4]); // patched sprite, no stale extracted-image cache
+        hud.patches.clear();
+        let stable = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+        renderer.limits.screen_bytes = 95;
+        {
+            let mut source = frame::tests::source(&hud);
+            source.screen = &overlays;
+            assert!(
+                renderer
+                    .render_game_frame(&source, frame::VisibleSections::default(), options)
+                    .is_err()
+            );
+        }
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        renderer.limits.screen_bytes = 96;
+        overlays[0].vertices[2].rect[0] = 0.;
+        {
+            let mut source = frame::tests::source(&hud);
+            source.screen = &overlays;
+            assert!(
+                renderer
+                    .render_game_frame(&source, frame::VisibleSections::default(), options)
+                    .is_err()
+            );
+        }
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), stable);
+        overlays[0].vertices[2].rect = overlays[0].vertices[0].rect;
+        renderer.reload_hud(&atlas).unwrap();
+        {
+            let mut source = frame::tests::source(&hud);
+            source.screen = &overlays;
+            renderer
+                .render_game_frame(&source, frame::VisibleSections::default(), options)
+                .unwrap();
+        }
+        near(&mut renderer, [0, 16], [8, 179, 0]); // atlas reload reconstructs sprite pixels
+        near(&mut renderer, [32, 32], [16, 96, 48]);
+    }
     #[test]
     #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
     fn bridge_actual_frame_drives_projection_static_depth_fog_lightmap_hand_and_hud() {

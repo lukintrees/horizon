@@ -5,6 +5,7 @@ pub mod entity;
 pub mod gui;
 pub mod paged_gui;
 pub mod scene;
+pub mod screen;
 pub mod terrain;
 
 /// Expanded, camera-relative-at-draw-time vertex. Terrain RGB already includes
@@ -32,6 +33,8 @@ pub struct Image<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pass {
     Opaque,
+    /// Unlit, unfogged camera overlay with sprite-local sampler state.
+    Screen(screen::Material),
     Entity(entity::Material),
     /// Typed GUI vertices with independently repeated foil coordinates.
     Gui(gui::Material),
@@ -50,6 +53,10 @@ impl Pass {
     pub fn pipeline(self) -> Self {
         match self {
             Self::Gui(m) => m.kind.pipeline(),
+            Self::Screen(m) => match m.blend {
+                screen::Blend::Alpha => Self::Overlay,
+                screen::Blend::Vignette => Self::OverlayVignette,
+            },
             other => other,
         }
     }

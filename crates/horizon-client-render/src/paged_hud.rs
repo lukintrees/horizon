@@ -44,6 +44,50 @@ impl Backing {
         }
         Ok(pixels)
     }
+    /// Copy only sprite interiors, decoding at most one bounded page at a time.
+    /// Rows/UV orientation are preserved; gutters belong to paging, not sprites.
+    pub fn extract(&self, rect: [u32; 4], byte_limit: usize) -> Result<Vec<u8>, String> {
+        let [x, y, width, height] = rect;
+        let pages = self
+            .layout
+            .affected([x, y], [width, height])
+            .map_err(|e| format!("screen rect: {e:?}"))?;
+        let bytes = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .filter(|&n| n <= byte_limit)
+            .ok_or("screen sprite byte budget exceeded")?;
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(bytes)
+            .map_err(|_| "screen allocation failed")?;
+        result.resize(bytes, 0);
+        let span = self.layout.page_size() - 2;
+        for page in pages {
+            let origin = self
+                .layout
+                .origin(page)
+                .map_err(|e| format!("screen page: {e:?}"))?;
+            let lo = [x.max(origin[0]), y.max(origin[1])];
+            let hi = [
+                (x + width).min(origin[0].saturating_add(span)),
+                (y + height).min(origin[1].saturating_add(span)),
+            ];
+            if lo[0] >= hi[0] || lo[1] >= hi[1] {
+                continue;
+            }
+            let pixels = self.load(page)?;
+            for row in lo[1]..hi[1] {
+                let src = ((row - origin[1] + 1) as usize * self.layout.page_size() as usize
+                    + (lo[0] - origin[0] + 1) as usize)
+                    * 4;
+                let dst = ((row - y) as usize * width as usize + (lo[0] - x) as usize) * 4;
+                let len = (hi[0] - lo[0]) as usize * 4;
+                result[dst..dst + len].copy_from_slice(&pixels[src..src + len]);
+            }
+        }
+        Ok(result)
+    }
     /// All patches are validated/staged before committing compressed blocks. The
     /// working budget bounds incoming pixels plus decoded dirty pages; each page
     /// is decoded once even when many glyphs touch it. Patch order is preserved.

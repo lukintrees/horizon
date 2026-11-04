@@ -46,6 +46,7 @@ pub struct Prepared<'a> {
     pub world: SceneFrame<'a>,
     pub hud: &'a HudBatch,
     pub lightmap: [u8; 1024],
+    pub screen: &'a [crate::screen_effects::ScreenQuad],
     entities: Cow<'a, [Vertex]>,
     hand: &'a [Vertex],
     see_through: &'a [Vertex],
@@ -64,6 +65,9 @@ impl<'a> Prepared<'a> {
         options: Options,
     ) -> Result<Self, Error> {
         unsupported(frame)?;
+        if frame.screen.len() > limits.screen_quads {
+            return Err(Error::Budget("screen quads"));
+        }
         if size.contains(&0) || size.iter().any(|&n| n > 4096) {
             return Err(Error::Invalid(
                 "drawable size (minimized frames must be skipped)",
@@ -238,6 +242,7 @@ impl<'a> Prepared<'a> {
             },
             hud: frame.hud,
             lightmap,
+            screen: frame.screen,
             entities,
             hand: frame.hand,
             see_through: frame.see_through,
@@ -311,7 +316,6 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
             "dynamic/colored lights",
         ),
         (!frame.emissive_layers.is_empty(), "emissive layers"),
-        (!frame.screen.is_empty(), "screen overlays"),
         (frame.border.is_some(), "world border"),
         (
             frame.menu_blur.is_some() || !frame.post_effects.effects.is_empty(),
