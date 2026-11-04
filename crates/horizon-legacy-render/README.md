@@ -43,14 +43,14 @@ python3 tools/legacy_gl_smoke.py --context osmesa
 
 The probe uses this exact renderer through its safe API in addition to the
 independent triangle probe. In each GL2.0, GL2.1 and unrestricted llvmpipe process,
-24 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
+25 backend checks execute real uploads/draws/readbacks: texture quadrants, texture
 updates and bounds, depth, cutout holes, ordered alpha blend with depth writes off,
 overlay/scissor reset, lightmap, spherical/dual-distance fog, reversed game depth, large coordinates, validation/budgets,
 context isolation, resource reclamation, and the shared terrain-atlas conversion
 contract, resident-section replacement/rollback, eviction, lightmap updates,
 cleanup after partial construction, GUI compositing/depth/glyph updates, and
 paged GUI streaming with linear gutters, depth continuity and one-page eviction,
-entity material state and independently sampled animated glint. The runner requires all 24 outcomes; a triangle-only report cannot pass.
+entity material state and independently sampled animated glint. The runner requires all 25 outcomes; a triangle-only report cannot pass.
 Report schema 2: `target/legacy-gl-probe/report.json`, ignored by Git.
 
 The terrain end-to-end fixture uses the real CPU contract and renderer with
@@ -62,7 +62,7 @@ a real `HudAtlas::boot`/`HudBatch` GL2 readback (no Mojang resources).
 
 Verified here: stable Rust 1.88.0, 38 workspace unit tests plus 2 probe unit tests;
 Linux and Windows-x86 compile-only Clippy; real OSMesa Mesa 23.1.4 / llvmpipe
-LLVM 17.0.6, all three modes, 24 backend checks per mode. Python regression suite:
+LLVM 17.0.6, all three modes, 25 backend checks per mode. Python regression suite:
 642 tests, 1 skipped. Locally Windows is compile-checked; own Actions also links the ordinary x86
 probe (see below), but no Win7 execution is claimed. Existing
 [tool README](../../tools/legacy-gl-probe/README.md) records bootstrap provenance
@@ -490,7 +490,7 @@ introduced. This is a flat-screen classic-SDR subset, **not a playable backend**
   is not copied/charged; missing snapshots mean no static model, as in the game.
   Duplicate visible keys/snapshots are errors. With no visible static geometry,
   the dynamic stream is borrowed instead of cloned. Static + dynamic + hand +
-  see-through + generated lightning + source additive vertices share the same
+  see-through + generated lightning + source additive + weather vertices share the same
   bounded entity budget; scratch allocation is fallible. This does not yet add resident static-model GPU caching.
 * `lightmap::pixels` is the original CPU calculation extracted unchanged from
   wgpu's `update_lightmap`. Both backends now call it, including night vision,
@@ -508,7 +508,7 @@ introduced. This is a flat-screen classic-SDR subset, **not a playable backend**
 The actual-frame entry point checks camera/projection arithmetic, current HUD
 size (rebuild after resize), fog and classic lightmap parameters, glint, counts,
 visibility duplicates and explicitly requested missing passes before submission.
-Unsupported: panorama, visible sky/End sky, clouds/celestial/stars, weather,
+Unsupported: panorama, visible sky/End sky, clouds/celestial/stars,
 lines/outlines, GPU skin frames (caller must request CPU
 poses), glowing silhouettes, dynamic/colored lights, emissive layers,
 border, post/menu blur, chunk fade and water mirrors. These are **errors,
@@ -647,7 +647,7 @@ culling and **do write depth**, including when source alpha is zero or the fog
 fade completely extinguishes the color. The native shader resets its additive
 mode for every draw, so later ordinary fogged entities cannot inherit it.
 The coordinator submits body/text/shadow/item/water-mask first, then lightning +
-source additive, translucent terrain, particles, see-through text, hand, screen
+source additive, translucent terrain, particles, weather, see-through text, hand, screen
 effects, and HUD. All additive mesh/page reservations join pre-clear preflight.
 There is no new hardware feature beyond OpenGL 2.0 / GLSL 1.10.
 
@@ -665,6 +665,69 @@ standalone Rust tests, host/i686 Clippy and 642 Python tests (one skipped).
 Earlier runs exposed a test-only terrain-coverage mistake and current-Clippy
 fixture issues; the final run includes those fixes.
 
-Sky/panorama/End/celestial/stars/clouds, weather and the other explicitly rejected
+Sky/panorama/End/celestial/stars/clouds and the other explicitly rejected
 passes remain unsupported. This does not wire the normal wgpu-based game startup
 to the legacy backend and is not X1650/Windows 7 runtime qualification.
+
+
+## Actual rain and snow (2026-11-04)
+
+`render_game_frame` now consumes the game's unsplit `weather::Vertex` stream and
+masked `weather::Time`, including real rain and snow animation metadata. No
+alternate gameplay precipitation generator is introduced. Positions are already
+camera-relative and pass through unchanged. Rain preserves f32 operation order
+and signed remainder; snow reconstructs the source f64 random bases before the
+f64-base-plus-f32-drift rounding. This avoids requiring shader int64/doubles or
+additional attributes on GL2. The CPU phase is added to each UV before upload,
+**without wrapping or tiling on the CPU**.
+
+Weather rectangles are origin + extent, not the screen path's origin + end.
+After glyph/image patches, each distinct sprite is extracted from compressed
+virtual-atlas pages, including sprites crossing page seams. One image is kept
+across adjacent quads sharing a sprite; switching sprites never reorders quads.
+There is no atlas-wide repeat or padding bleed. GLSL 1.10 applies `fract` AFTER
+interpolation and samples the extracted image with NEAREST/CLAMP, matching the
+original clamped integer-texel selection even for NPOT sprites and negative UVs.
+The ordinary entity/HUD modes reset that behavior on every draw.
+
+The policy is two-sided, LEQUAL, no depth writes, source-alpha RGB blending and
+ONE/ONE_MINUS_SRC_ALPHA alpha blending. The 0.1 alpha cutout runs **before** CPU
+lightmap multiplication. Weather ignores back-face color correction, receives
+the shared bilinear RGBA lightmap and ordinary spherical/cylindrical world fog
+(including fog-color alpha). It follows translucent terrain and particles,
+precedes see-through text, first-person hand, screen effects and HUD.
+
+The default caps are 4096 quads and 8 MiB for retained extracted sprite bytes +
+one decoded backing page. Source weather vertices also reserve space in the
+combined entity/hand/additive budget BEFORE page-clipping expansion of other
+streams. Malformed clocks, mixed metadata, invalid snow bases/UV arithmetic,
+subtexel/oversized crops and CPU/GPU capacity errors are rejected before clear.
+Weather streams one **348-byte lit mesh** and one sprite at a time, then releases
+both. The native resource owner retains failed cleanup handles for retry/Drop.
+Screen and weather images do not coexist with the streamed GUI page cache.
+
+`backend_world_weather` is required in all three GL modes: repeating 3x2 NPOT
+RGBA sprites, negative/interpolated UVs, two-sided color, pre-light cutout,
+lightmap/partial fog, RGBA blend factors, LEQUAL, no depth writes, ordinary
+shader reset and complete cleanup. Three actual-game CPU tests check animation
+against the existing independent column reference (negative/large ticks and
+snow rounding), page seams/patches/dedup/source order and invalid inputs.
+The fourteenth actual-game GPU fixture checks moving rain/snow, repeated and
+switched sprites, translucent → weather → text/hand → screen → HUD order,
+patch/reload visibility, exact capacity boundaries and framebuffer preservation.
+It uses only 1156 texture bytes, including fixed textures + one cached HUD page,
+and rejects 535 mesh bytes where 188 resident + 348 transient bytes are needed.
+
+Local: 40 standalone Rust tests, host/i686 Clippy, **3x25 llvmpipe readbacks**,
+642 Python tests (one skipped). Full-game startup/platform/resource wiring,
+sky/End/panorama/celestial/stars/clouds and the remaining rejected passes are
+still unfinished. Neither this nor ordinary Windows x86 linking qualifies
+execution on Windows 7 32-bit / Radeon X1650.
+
+Final own CI [41808986326](https://github.com/lukintrees/horizon/actions/runs/41808986326) at `866c613`: **all three jobs passed**,
+including all three new weather CPU tests, **14 actual-game GPU fixtures**,
+full-client check/game Clippy, **3x25 independent runtime outcomes**,
+**39 executed Windows x86 workspace tests** and ordinary x86 probe linking.
+The initial weather implementation also passed own CI 41808013392; this final
+run additionally verifies adjacent-image reuse and repeated/switched sprites.
+The following docs-only commit changes no tested code.

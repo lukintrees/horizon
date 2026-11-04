@@ -748,7 +748,7 @@ GPU cache, streaming visibility/upload scheduling здесь не добавле
 
 До submission проверяются камера/матрицы, HUD size после resize, fog/lightmap,
 glint, geometry counts/limits и неподдержанные requested passes. Panorama, sky,
-clouds/celestial/stars, weather, lines/outlines, GPU skins,
+clouds/celestial/stars, lines/outlines, GPU skins,
 glowing, dynamic/colored lights, emissive layers, screen overlays, border,
 post/menu blur, chunk fade и water mirror возвращают явную ошибку — не тихо
 отключаются. Поэтому это пока subset без видимого sky и перечисленных эффектов,
@@ -867,3 +867,49 @@ tests**, ordinary x86 probe linking. Первый запуск выявил ош
 (coverage в mesher flags вместо texture alpha); второй прошёл GPU, но выявил
 требования нового Clippy к тестовому коду. Финальный запуск включает исправления.
 Следующий docs-only commit не меняет проверенный код; чужие Actions/PR не читались.
+
+
+## Дождь и снег в настоящем Frame (2026-11-04)
+
+Legacy adapter теперь принимает настоящие `weather::Vertex` и masked
+`weather::Time`. Без CPU tiling: rain сохраняет порядок f32 операций и signed
+remainder, snow восстанавливает исходные f64 bases и округляет base+f32 drift
+как общий CPU reference. Phase прибавляется к UV до interpolation, но wrapping
+выполняется только в fragment shader. Новых требований сверх GL2/GLSL 1.10 нет.
+
+Rect weather — origin+extent, не origin+end screen. После patches нужные sprites
+извлекаются из compressed backing, включая seams страниц. NEAREST/CLAMP +
+shader fract повторяют только sprite, не atlas и не gutters, в том числе NPOT.
+Одинаковый sprite остаётся на GPU между соседними columns; смена sprite не
+меняет source order. Одновременно живут один image и один **348-byte lit mesh**.
+Общий transient owner сохраняет handles при cleanup error; перед text/hand/HUD
+погодные ресурсы освобождаются, GUI pages загружаются заново по необходимости.
+
+Погодная политика: no cull, LEQUAL, no depth-write; RGB SRC_ALPHA/ONE_MINUS_SRC_ALPHA,
+alpha ONE/ONE_MINUS_SRC_ALPHA. Cutout 0.1 выполняется до lightmap; используются
+общие bilinear RGBA lightmap и world fog с fog-color alpha, без back-color
+correction. Порядок: translucent → particles → weather → see-through → hand →
+screen → HUD. Default limits: **4096 quads**, **8 MiB extracted+decoded bytes**,
+плюс общий frame vertex budget, с резервом под weather до paged expansion других
+streams. Ошибочные clocks/metadata/float/crop и budgets не очищают прошлый кадр.
+
+25-й обязательный independent GPU outcome проверяет sampling/blend/cutout/light/
+fog/depth/cull/reset/cleanup. Три CPU tests сверяют rain/snow с прежним независимым
+column reference, negative/large ticks и double rounding, seams/dedup/patches и
+rejections. 14-й actual-game GPU fixture проверяет animation, repeated/switched
+sprites, порядок transparent/text/hand/screen/HUD, patches/reload и framebuffer
+preservation. Exact fixture: **1156 texture bytes**, 188 resident mesh bytes +
+348 transient; budget 535 отвергается до clear. Локально: **40 Rust**, host/i686
+Clippy, **3×25 OSMesa**, **642 Python, 1 skipped**.
+
+Это не завершённый playable backend: startup/input/resource wiring, sky/End/
+panorama/celestial/stars/clouds и другие отклоняемые passes остаются. Проверки
+Windows x86 ABI/linking не заменяют запуск на Win7 32-bit / настоящем X1650.
+
+Финальный own CI [41808986326](https://github.com/lukintrees/horizon/actions/runs/41808986326) на `866c613`: **все три jobs SUCCESS** —
+три новых погодных CPU tests, **14 actual-game GPU fixtures**, full-client check
+и game Clippy, **3×25 independent readbacks**, **39 выполненных Windows x86
+workspace tests**, ordinary probe linking. Первый полный погодный commit также
+прошёл own CI 41808013392; финальный дополнительно проверяет reuse images и
+repeated/switched sprites. Docs-only follow-up не меняет проверенный код.
+Чужие ветки, PR, workflows и Actions не читались.

@@ -386,3 +386,30 @@ Final own CI [41805814823](https://github.com/lukintrees/horizon/actions/runs/41
 full-client check, game Clippy, new CPU coverage, 13 actual-game GPU fixtures,
 3x24 independent runtime outcomes, 39 executed x86 Windows workspace tests and
 ordinary x86 probe linking. The subsequent docs-only commit changes no code.
+
+
+### Real rain/snow frame pass
+
+The mandatory `backend_world_weather` raises the independent matrix to **3x25**.
+It exercises negative/repeated NPOT UVs without atlas bleed, two-sided shading,
+pre-light alpha cutout, CPU lightmap and partial fog, separate RGB/alpha blend
+factors, LEQUAL/no depth writes and reset to ordinary texture sampling.
+
+The actual-game adapter consumes unsplit weather vertices and masked time,
+reconstructs snow f64 bases on the CPU, preserves UV animation/quad order, and
+extracts patched sprites across virtual-page seams. It retains one sprite over
+adjacent columns and streams one 348-byte lit mesh at a time. Default ceilings:
+4096 quads, 8 MiB decoded+sprite storage and the shared frame vertex budget.
+Weather follows translucent terrain/particles, before see-through/hand/screen/HUD.
+Three CPU tests and the fourteenth actual-game GPU fixture cover animation,
+source order, seams, patches/reload, exact capacity and pre-clear rejection.
+Local 40 Rust tests, host/i686 Clippy, 3x25 llvmpipe checks and 642 Python tests
+(one skipped) pass. Normal startup, sky and actual Win7/X1650 execution remain
+unqualified; this is not a playable-port announcement.
+
+Final own CI [41808986326](https://github.com/lukintrees/horizon/actions/runs/41808986326) at `866c613`: **all three jobs successful** —
+three weather CPU tests, 14 actual-game GPU fixtures (including retained-image
+instances and sprite switches), full-client check/game Clippy, 3x25 independent
+readbacks, 39 executed Windows x86 workspace tests and ordinary probe linking.
+Only this session's branch/workflow/runs were used; docs-only follow-up does not
+change verified source.
