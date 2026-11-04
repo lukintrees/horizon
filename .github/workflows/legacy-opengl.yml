@@ -65,6 +65,7 @@ jobs:
         run: |
           tools/legacy_gl_e2e.sh
           python3 -m unittest discover -s tests -p test_pe_imports.py -v
+          python3 -m unittest discover -s tests -p test_win7_link_inputs.py -v
       # Attach the end of a failed build to an annotation so it can be inspected
       # through the checks API as well as the runner's downloadable logs.
       - name: Check the client-render crate

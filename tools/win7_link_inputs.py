@@ -23,16 +23,26 @@ def main():
     root = Path(tempfile.gettempdir())
     directories = [p for p in root.glob('rustc*') if p.is_dir()]
     # cargo rustc can place its link intermediates under the target tree rather
-    # than the OS temp directory. The normal .rlib dependencies were already
-    # inspected separately; avoid rereading those potentially multi-GB archives.
-    build = Path('target/i686-win7-windows-msvc/debug/build')
-    if build.is_dir():
-        directories.append(build)
+    # than the OS temp directory. Scan full archives too: the earlier undefined-
+    # symbol audit cannot detect a defined raw-dylib import table member.
+    for part in ('build', 'deps'):
+        directory = Path('target/i686-win7-windows-msvc/debug') / part
+        if directory.is_dir():
+            directories.append(directory)
+    sdk = Path(os.environ.get('ProgramFiles(x86)', '')) / 'Windows Kits/10/Lib'
+    if sdk.is_dir():
+        directories.append(sdk)
+    vc = Path(os.environ.get('VCToolsInstallDir', '')) / 'lib/x86'
+    if vc.is_dir():
+        directories.append(vc)
     print(f'Input search roots: {directories}', flush=True)
     examined = matches = 0
+    without_direct = []
     for directory in directories:
         for path in directory.rglob('*'):
-            if path.suffix.lower() not in ('.o', '.obj', '.lib', '.a') or not path.is_file():
+            if directory == sdk and 'x86' not in (part.lower() for part in path.parts):
+                continue
+            if path.suffix.lower() not in ('.o', '.obj', '.lib', '.a', '.rlib') or not path.is_file():
                 continue
             needle = SYMBOL.encode()
             try:
@@ -57,10 +67,12 @@ def main():
                     print('DIRECT: ' + line, flush=True)
                     matches += 1
             else:
-                print(f'Contains symbol bytes, no direct symbol: {path}', flush=True)
+                without_direct.append(str(path))
                 if result.returncode and result.stderr:
                     print('llvm-nm: ' + result.stderr[:500].replace('\n', ' '), flush=True)
-    print(f'Examined {examined} temporary inputs; {matches} direct symbol records.', flush=True)
+    print(f'Examined {examined} inputs; {matches} direct symbol records; {len(without_direct)} inputs contain only non-direct matches.', flush=True)
+    for path in without_direct[:10]:
+        print(f'Contains symbol bytes, no direct symbol: {path}', flush=True)
     return 0
 
 
