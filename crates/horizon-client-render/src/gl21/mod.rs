@@ -50,8 +50,8 @@ pub use context::{Capabilities, glsl_name};
 pub use draws::{Pass, Plan, SectionDraw, SectionRuns, draw_calls, plan, section_runs};
 pub use frame::{Draw, Frame, Run, Section};
 pub use profile::Profile;
-pub use program::{Attribute, AttributeKind, Uniform};
 pub use hud::{GlHudVertex, HudDraws, HudRun};
+pub use program::{Attribute, AttributeKind, Uniform};
 pub use vertex::{Batches, GlVertex};
 
 /// The profile named by `HORIZON_GL_PROFILE`, if the variable is set and names one. `x1650` is

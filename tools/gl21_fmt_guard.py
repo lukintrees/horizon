@@ -41,6 +41,9 @@ CHAIN_WIDTH = 60
 MAX_WIDTH = 100
 # The macros whose arguments rustfmt lays out with `chain_width`.
 MACRO = re.compile(r"\b(assert|assert_eq|assert_ne|debug_assert|debug_assert_eq)!\(")
+# `let name: Vec<(u32, u32)> = ` — a binding whose type is written out, which is where a chain's
+# line is long before the chain starts.
+TYPED_LET = re.compile(r"^\s*let\s+\w+\s*:\s*[\w:<>()\[\];, &]+?\s*=\s*")
 
 
 def code_of(line):
@@ -122,26 +125,37 @@ def call_widths(line):
 
 
 def chain_width(line):
-    """The width of a method chain inside an `assert!`-family macro, or None.
+    """The width of a long method chain on `line`, or None.
 
-    That is the shape CI broke twice (`assert!(problems.iter().any(..))` came back five lines long):
-    rustfmt measures such a chain against `chain_width` (60) rather than letting it run to
-    `max_width`, while a chain that is a statement of its own (`self.a().b();`, 75 columns in
-    `gfx.rs`) it leaves alone. Rather than model that difference, this only judges the case that
-    has actually bitten, so the tool never sends anyone to reformat code CI accepts.
+    Two shapes, both seen in CI:
+
+    - a chain inside an `assert!`-family macro (`assert!(problems.iter().any(..))` came back five
+      lines long): rustfmt measures it against `chain_width` (60);
+    - a chain that starts with a let whose type is written out
+      (`let runs: Vec<(u32, u32)> = draws.runs.iter()..`): the chain is broken one method a line
+      however few columns it has, because the binding's type makes the line long.
+
+    What is *not* judged, on purpose: a chain that is a plain statement (`self.a().b();`, 75 columns
+    in `gfx.rs`) and a chain without a type annotation on the left of its `=`, which rustfmt keeps
+    when the whole line fits. Guessing those wrong sends someone to reformat code CI accepts.
     """
     code = code_of(line).rstrip()
     macro = MACRO.search(code)
-    if not macro:
-        return None
-    body = code[macro.end():]
-    first = None
-    for match in re.finditer(r"\.\w", body):
-        first = match.start()
-        break
-    if first is None:
-        return None
-    return len(body) - first
+    if macro:
+        body = code[macro.end():]
+        first = None
+        for match in re.finditer(r"\.\w", body):
+            first = match.start()
+            break
+        if first is None:
+            return None
+        return len(body) - first
+    binding = TYPED_LET.match(code)
+    if binding:
+        body = code[binding.end():]
+        if len(re.findall(r"\.[a-z_][\w:]*\s*\(", body)) >= 3:
+            return len(body)
+    return None
 
 
 def merged_derives(text):

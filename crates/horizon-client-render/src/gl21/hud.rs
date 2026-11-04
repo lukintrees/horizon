@@ -360,7 +360,11 @@ mod tests {
         batch.blends = vec![(2..6, Blend::Invert), (8..10, Blend::Additive)];
         let draws = HudDraws::of(&batch);
         assert_eq!(draws.vertices.len(), 10);
-        let runs: Vec<(u32, u32)> = draws.runs.iter().map(|run| (run.begin, run.count)).collect();
+        let runs: Vec<(u32, u32)> = draws
+            .runs
+            .iter()
+            .map(|run| (run.begin, run.count))
+            .collect();
         assert_eq!(runs, vec![(0, 2), (2, 4), (6, 2), (8, 2)]);
         assert_eq!(draws.runs[1].state, state(Blend::Invert));
         assert_eq!(draws.runs[0].state, state(Blend::Alpha));

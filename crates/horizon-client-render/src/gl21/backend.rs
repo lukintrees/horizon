@@ -243,9 +243,8 @@ pub fn open(
     }
     let missing = capabilities.missing();
     if !missing.is_empty() {
-        let mut message = String::from(
-            "Horizon's OpenGL 2.1 renderer cannot start on this driver:\n",
-        );
+        let mut message =
+            String::from("Horizon's OpenGL 2.1 renderer cannot start on this driver:\n");
         for line in &missing {
             message.push_str(&format!("  - {line}\n"));
         }

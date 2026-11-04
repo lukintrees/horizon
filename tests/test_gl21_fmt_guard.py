@@ -33,6 +33,20 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(found(statement), [])
 
 
+class TypedBindingTests(unittest.TestCase):
+    def test_a_chain_after_a_written_out_type_is_one_method_a_line(self):
+        # CI broke this one after a `--changed` run said nothing about it.
+        line = (
+            "        let runs: Vec<(u32, u32)> = draws.runs.iter()"
+            ".map(|run| (run.begin, run.count)).collect();\n"
+        )
+        self.assertTrue(any("chain" in message for message in found(line)))
+
+    def test_a_binding_without_a_type_is_left_to_max_width(self):
+        line = "        let x = some.long_call_here(1, 1, 1).collect();\n"
+        self.assertEqual(found(line), [])
+
+
 class MacroWidthTests(unittest.TestCase):
     def test_a_macro_call_with_too_many_argument_columns_goes_a_line_each(self):
         # CI turned this one-line equality into four lines.

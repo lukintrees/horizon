@@ -156,12 +156,7 @@ impl Frame {
     /// Store and order this frame: `sections` in the order the caller wants their solid faces
     /// drawn, and `sky` (its vertices and a revision) when the frame draws any. `present` adds the
     /// full-screen quad that shows the frame in the window.
-    pub fn build(
-        &mut self,
-        sections: &[Section<'_>],
-        sky: Option<Sky<'_>>,
-        present: bool,
-    ) {
+    pub fn build(&mut self, sections: &[Section<'_>], sky: Option<Sky<'_>>, present: bool) {
         self.draws.clear();
         self.dropped = 0;
         self.present = present;
@@ -309,9 +304,10 @@ impl Frame {
                 Some(entry.draw(section.distance_sq, section.visibility))
             })
             .collect();
-        let sky = self.sky.as_ref().map(|(entry, _)| {
-            SectionRuns::new(0, entry.runs.len().min(u32::MAX as usize) as u32)
-        });
+        let sky = self
+            .sky
+            .as_ref()
+            .map(|(entry, _)| SectionRuns::new(0, entry.runs.len() as u32));
         let plan = draws::plan(&draws, sky, present);
         let mut out = Vec::with_capacity(plan.calls.len());
         for (call, pass) in plan.calls.iter().zip(&plan.pass) {
@@ -455,12 +451,10 @@ mod tests {
             None,
             false,
         );
-        assert_eq!(passes(&frame), vec![
-            Pass::Solid,
-            Pass::Solid,
-            Pass::Translucent,
-            Pass::Translucent
-        ]);
+        let passes = passes(&frame);
+        let solids = [Pass::Solid, Pass::Solid];
+        let blend = [Pass::Translucent, Pass::Translucent];
+        assert_eq!(passes, solids.into_iter().chain(blend).collect::<Vec<_>>());
         // The see-through calls are the far section's, then the near one's.
         let translucent: Vec<u32> = frame
             .draws()
