@@ -172,7 +172,7 @@ The optional `legacy-gl` feature uses [glow](https://github.com/grovesNL/glow) 0
 [glutin](https://github.com/rust-windowing/glutin) 0.32.3, its `glutin-winit` 0.5.0 helper and
 [raw-window-handle](https://github.com/rust-windowing/raw-window-handle) 0.6.2 to create an
 OpenGL 2.1/2.0 compatibility context and load GL 2.1 entry points for
-`examples/gl21_clear.rs`. Licenses confirmed from the crates' own `Cargo.toml`/`LICENSE` files:
+`examples/gl21_clear.rs` and the gated `crates/horizon-client/src/legacy_gl.rs` game-loop frame. Licenses confirmed from the crates' own `Cargo.toml`/`LICENSE` files:
 glow 0.17.0 and glutin 0.32.3 are Apache-2.0; `glutin-winit` 0.5.0 is MIT (its own
 `glutin-winit/LICENSE`, copyright Kirill Chibisov); `raw-window-handle` 0.6.2 is
 MIT OR Apache-2.0 OR Zlib. Only their public APIs are called: no upstream source

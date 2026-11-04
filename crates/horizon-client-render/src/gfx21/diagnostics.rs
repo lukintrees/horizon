@@ -18,6 +18,27 @@ pub const GL_STACK_UNDERFLOW: u32 = 0x0504;
 pub const GL_OUT_OF_MEMORY: u32 = 0x0505;
 pub const MAX_VRAM_MIB: u32 = 160;
 
+/// Renderer methods the GL2 path has no modern equivalent for. The game loop
+/// never calls them; the startup report and facade expose the list instead.
+pub const UNAVAILABLE_METHODS: &[&str] = &[
+    "set_shader_pack",
+    "define_pack_macros",
+    "set_hdr",
+    "set_frame_generation",
+    "set_gpu_culling",
+    "queue_lods",
+    "upload_lods",
+    "set_pass_timing",
+    "gpu_memory_by_label",
+    "set_world_post",
+    "set_texture_filtering",
+    "set_mipmap_levels",
+];
+
+pub fn unavailable_methods() -> &'static [&'static str] {
+    UNAVAILABLE_METHODS
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticReport {
     pub tier: &'static str,
@@ -136,6 +157,13 @@ mod tests {
         assert_eq!(lines[6], "samplers: 4/4");
         assert_eq!(lines[7], "VRAM estimate: 48/160 MiB");
         assert!(lines[9].contains("HDR"));
+    }
+
+    #[test]
+    fn unavailable_methods_are_explicit_and_stable() {
+        assert_eq!(UNAVAILABLE_METHODS.len(), 12);
+        assert!(unavailable_methods().contains(&"set_shader_pack"));
+        assert!(unavailable_methods().contains(&"gpu_memory_by_label"));
     }
 
     #[test]

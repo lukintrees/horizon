@@ -16,7 +16,7 @@ path = "../horizon-client/src/client_lib.rs"
 horizon-assets = { path = "../horizon-assets" }
 horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-input = { path = "../horizon-client-input" }
-horizon-client-render = { path = "../horizon-client-render" }
+horizon-client-render = { path = "../horizon-client-render", default-features = false }
 horizon-command = { path = "../horizon-command" }
 horizon-items = { path = "../horizon-items" }
 horizon-core = { path = "../horizon-core" }
@@ -25,7 +25,7 @@ horizon-mcp = { path = "../horizon-mcp" }
 # The server thread ahead of the workers (MinecraftServer.spin's Thread.setPriority).
 horizon-optifine = { path = "../horizon-optifine" }
 horizon-threads = { path = "../horizon-threads" }
-horizon-hdr = { path = "../horizon-hdr" }
+horizon-hdr = { path = "../horizon-hdr", optional = true }
 horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
 # server.properties, eula.txt and the user lists, shared with horizon-server.
@@ -35,18 +35,18 @@ horizon-anticheat = { path = "../horizon-anticheat" }
 # The dedicated server's chat filter: [chat_filter], the slur list, mutes (docs/chat-filter.md).
 horizon-chat-filter = { path = "../horizon-chat-filter" }
 # Shader packs: reading them and turning their GLSL into naga modules.
-horizon-shaders = { path = "../horizon-shaders" }
+horizon-shaders = { path = "../horizon-shaders", optional = true }
 # Horizon's own shader packs: the format, the stages and the check (docs/shaders.md).
-horizon-shader-api = { path = "../horizon-shader-api" }
+horizon-shader-api = { path = "../horizon-shader-api", optional = true }
 horizon-friends = { path = "../horizon-friends" }
 # The narrator (GameNarrator): text-to-speech of chat, system messages and screens.
 horizon-narrator = { path = "../horizon-narrator" }
 # Horizon mods: sandboxed WebAssembly components, off unless installed and turned on (docs/mods.md).
 # Their runtime is the `mods` feature.
 horizon-mods = { path = "../horizon-mods", default-features = false, features = ["index"] }
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "naga-ir"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "naga-ir"], optional = true }
 winit = "0.30.13"
-pollster = "0.4"
+pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1.24", features = ["derive"] }
 glam = "0.30"
 png = "0.18"
@@ -57,7 +57,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 # hlsl-out: the gfx.rs tests translate every shader as wgpu's DirectX 12 backend does. A normal feature,
 # not a dev-dependency's, so builds, tests and examples share one build of naga, wgpu and this crate.
-naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
+naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"], optional = true }
 miniz_oxide = "0.8"
 ab_glyph = "0.2.32"
 log = "0.4"
@@ -93,7 +93,7 @@ open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
 # DirectX 12, where Vulkan has no adapter or device, or by choice (`graphicsApi`, graphics.rs).
 # Shaders compile with FXC (d3dcompiler_47.dll, part of Windows), or DXC when dxcompiler.dll is
 # on the PATH.
-wgpu = { version = "30.0.1", default-features = false, features = ["dx12"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["dx12"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Splitscreen: a window filling a monitor goes over its menu bar (game/split/windows.rs
@@ -105,10 +105,22 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 # OpenGL (WGL on Windows, EGL on Linux), the last fallback, for GPUs with no Vulkan or
 # DirectX 12 driver (`graphicsApi`, graphics.rs).
-wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["gles"], optional = true }
 
 [features]
-default = ["audio", "controllers"]
+default = ["audio", "controllers", "modern-gl"]
+# The default wgpu stack. Enabled by horizon-client's modern-gl feature.
+modern-gl = [
+    "dep:wgpu",
+    "dep:naga",
+    "dep:pollster",
+    "dep:horizon-hdr",
+    "dep:horizon-shader-api",
+    "dep:horizon-shaders",
+    "horizon-client-render/modern-gl",
+]
+# Full PR 8: compile this reusable library without its modern-only modules.
+legacy-gl = ["horizon-client-render/legacy-gl"]
 # Sound output. Without it (and `controllers`) the program links neither libasound nor libudev on
 # Linux: the server build (`--no-default-features`, released as horizon-engine; docs/server.md).
 audio = ["horizon-client-render/audio"]

@@ -1,5 +1,5 @@
 //! Horizon: native Rust client for Minecraft Java Edition 26.3 gameplay.
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "legacy-gl"), forbid(unsafe_code))]
 
 #[cfg(not(any(feature = "system-allocator", feature = "alloc-census")))]
 #[global_allocator]

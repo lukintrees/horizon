@@ -16,7 +16,7 @@ horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-input = { path = "../horizon-client-input" }
 horizon-command = { path = "../horizon-command" }
 horizon-core = { path = "../horizon-core" }
-horizon-hdr = { path = "../horizon-hdr" }
+horizon-hdr = { path = "../horizon-hdr", optional = true }
 horizon-items = { path = "../horizon-items" }
 # The narrator option's status and whether the narrator is there (Options.narrator).
 horizon-narrator = { path = "../horizon-narrator" }
@@ -24,8 +24,8 @@ horizon-narrator = { path = "../horizon-narrator" }
 # (connected.rs) and custom item texture rules (cit.rs).
 horizon-optifine = { path = "../horizon-optifine" }
 horizon-protocol = { path = "../horizon-protocol" }
-horizon-shader-api = { path = "../horizon-shader-api" }
-horizon-shaders = { path = "../horizon-shaders" }
+horizon-shader-api = { path = "../horizon-shader-api", optional = true }
+horizon-shaders = { path = "../horizon-shaders", optional = true }
 horizon-telemetry = { path = "../horizon-telemetry", default-features = false, features = ["live"] }
 horizon-theme = { path = "../horizon-theme" }
 horizon-threads = { path = "../horizon-threads" }
@@ -79,14 +79,18 @@ wgpu = { version = "30.0.1", default-features = false, features = ["gles"], opti
 [features]
 default = ["modern-gl"]
 # The wgpu 30 stack. Kept as a default feature so the normal build is unchanged.
-modern-gl = ["dep:wgpu", "dep:naga", "dep:pollster"]
-# Stage 1/2 of the legacy build: the feature exists, the crate-root Renderer
-# alias is compiled, and the real GL 2.1 context/loader/shader example is
-# available. `gfx` is still built (modern-gl) until PR 8 splits `game.rs`.
-# `cargo check --features legacy-gl --no-default-features` therefore still
-# resolves the modern deps; dropping `modern-gl` here is PR 8 work.
+modern-gl = [
+    "dep:wgpu",
+    "dep:naga",
+    "dep:pollster",
+    "dep:horizon-hdr",
+    "dep:horizon-shader-api",
+    "dep:horizon-shaders",
+]
+# Full PR 8: a standalone GL 2.1/2.0 build. It deliberately does NOT enable
+# modern-gl, wgpu, naga or pollster; `gfx`/game.rs are cfg-gated out in the
+# client crates. The real backend lives in horizon-client/src/legacy_gl.rs.
 legacy-gl = [
-    "modern-gl",
     "dep:glow",
     "dep:glutin",
     "dep:glutin-winit",

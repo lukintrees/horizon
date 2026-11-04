@@ -687,6 +687,7 @@ impl Opt {
             Opt::GraphicsBackend => tr(match s.horizon.api {
                 crate::graphics::GraphicsApi::OpenGl => "options.graphicsApi.opengl",
                 crate::graphics::GraphicsApi::Vulkan => "options.graphicsApi.vulkan",
+                crate::graphics::GraphicsApi::LegacyGl => "options.graphicsApi.legacygl",
                 _ => "options.graphicsApi.default",
             }),
             Opt::SmoothLighting => on_off(s.smooth_lighting),
@@ -970,9 +971,9 @@ impl Opt {
                 );
             }
             Opt::GraphicsBackend => {
-                // PreferredGraphicsApi: Default, OpenGL, Vulkan; a platform lacking one skips it.
-                use crate::graphics::GraphicsApi::{Auto, OpenGl, Vulkan};
-                let offered: Vec<_> = [Auto, OpenGl, Vulkan]
+                // PreferredGraphicsApi: Default, OpenGL, Vulkan, Legacy GL; a platform lacking one skips it.
+                use crate::graphics::GraphicsApi::{Auto, LegacyGl, OpenGl, Vulkan};
+                let offered: Vec<_> = [Auto, OpenGl, Vulkan, LegacyGl]
                     .into_iter()
                     .filter(|a| crate::graphics::GraphicsApi::choices().contains(a))
                     .collect();
@@ -992,6 +993,7 @@ impl Opt {
                     match api {
                         OpenGl => "opengl",
                         Vulkan => "vulkan",
+                        LegacyGl => "legacygl",
                         _ => "default",
                     },
                 );
@@ -1215,6 +1217,10 @@ fn graphics_api_tooltip(s: &Settings) -> Text {
     if s.horizon.api == crate::graphics::GraphicsApi::Vulkan {
         lines.push(String::new());
         lines.push(line("options.graphicsApi.tooltip.vulkan"));
+    }
+    if s.horizon.api == crate::graphics::GraphicsApi::LegacyGl {
+        lines.push(String::new());
+        lines.push(line("options.graphicsApi.tooltip.legacygl"));
     }
     Text::literal(lines.join("\n"))
 }
@@ -6119,9 +6125,16 @@ mod tests {
         // Dx12 is Horizon's own Graphics page's; this option has the three of vanilla.
         assert!(!seen.contains(&GraphicsApi::Dx12));
         assert_eq!(seen[0], GraphicsApi::Auto);
-        if offered.len() == 3 {
-            assert_eq!(seen[1..], [GraphicsApi::OpenGl, GraphicsApi::Vulkan]);
-            assert_eq!(s.file.name("preferredGraphicsBackend"), "vulkan");
+        if offered.len() == 4 {
+            assert_eq!(
+                seen[1..],
+                [
+                    GraphicsApi::OpenGl,
+                    GraphicsApi::Vulkan,
+                    GraphicsApi::LegacyGl
+                ]
+            );
+            assert_eq!(s.file.name("preferredGraphicsBackend"), "legacygl");
             Opt::GraphicsBackend.cycle(&mut s, false, [854, 480]);
             assert_eq!(s.horizon.api, GraphicsApi::Auto);
             assert_eq!(s.file.name("preferredGraphicsBackend"), "default");

@@ -186,6 +186,57 @@ diff, real X1650 run, `r300g` timing or 30-minute stability test is attempted.
 PR 10 updates `docs/design/legacy-gl21.md`, `docs/native-client.md`,
 `README.md`, `THIRD_PARTY_NOTICES.md` and the additive CI steps. Confirmed
 licenses: `glow`/`glutin` Apache-2.0, `glutin-winit` 0.5.0 MIT and
-`raw-window-handle` 0.6.2 MIT OR Apache-2.0 OR Zlib. The full `#[cfg]` split,
-removal of `modern-gl`, wgpu visual parity and real-hardware acceptance remain
-explicitly out of scope for this branch.
+`raw-window-handle` 0.6.2 MIT OR Apache-2.0 OR Zlib. These additive notes
+describe the state before full PR 8 integration; the section below supersedes
+the former out-of-scope note.
+
+
+## Full PR 8 integration (this branch)
+
+The user requested «Теперь интегрируй все в игру» and selected `full_pr8` +
+`real_gl`; this reverses the additive-only limitation above.
+
+* `horizon-client-render`, `horizon-client-lib` and `horizon-client` now have
+  `default = ["audio", "controllers", "modern-gl"]`. `legacy-gl` no longer
+  enables `modern-gl`: it enables only `dep:glow`, `dep:glutin`,
+  `dep:glutin-winit`, `dep:raw-window-handle` and the downstream legacy
+  features. `wgpu`, `naga`, `pollster`, `horizon-hdr`, `horizon-shader-api` and
+  `horizon-shaders` are optional and modern-only.
+* `horizon-client-render/src/lib.rs` cfg-gates all modern modules. Under
+  `legacy-gl` only `gfx21`, `graphics_legacy.rs` and the core reexports remain;
+  `graphics.rs`/`lod.rs`/`bluemap.rs`/`gfx.rs` do not compile. `Frame` and
+  `Renderer` resolve to `gfx21` under `legacy-gl`.
+* `crates/horizon-client/src/client_lib.rs` cfg-gates its modern modules and
+  reexports only `Result`, `gfx21`, `graphics`, `lang`, `text` in the legacy
+  build. `crates/horizon-client/src/lib.rs` chooses `game.rs` + `entry.rs` for
+  `modern-gl` and `game_legacy.rs` + `entry_legacy.rs` + `legacy_gl.rs` for
+  `legacy-gl`; `#![forbid(unsafe_code)]` is relaxed only for the FFI backend.
+* `game_legacy.rs` is the full `#[cfg]` split of `game.rs`, `build_renderer`,
+  `loading_renderer` and `loading_frame`. It parses `LegacyArgs`, reads the
+  pure `graphics_legacy.rs` settings (`horizon-graphics.txt`, never
+  `options.txt`) and starts the real GL renderer. No wgpu-typed `Renderer`
+  field or method is faked.
+* `graphics.rs` gains `GraphicsApi::LegacyGl`, `ALL.len() == 5`, Linux/Windows
+  choices, `graphicsApi:legacygl`, `HORIZON_GRAPHICS_API`, `--legacy-gl` and
+  `--graphics-api legacygl`. `options_ui.rs` cycles the new backend and adds
+  its tooltip. All new UI strings are translation keys resolved through
+  `Text::tr`/`lang::get`; every bundled locale carries the keys. A default
+  wgpu build exits with `options.legacy.unavailable` when a player asks for
+  the GL2 backend.
+* `crates/horizon-client/src/legacy_gl.rs` is the real game-loop frame. It
+  creates a GL 2.1/2.0 compatibility context with `glutin`/`glutin-winit`,
+  loads glow, classifies strings/extensions, links all six GLSL 110/120
+  programs, uploads VBOs for terrain/entity/sky/HUD/lines/smoke and draws the
+  `FullFramePlan::reference()` frame under Xvfb for both CI profiles. It calls
+  `glGetError()` and checks `MAX_DRAWS`; all FFI stays in this one module.
+* Own-branch CI verifies: `cargo check -p horizon-client --features legacy-gl
+  --no-default-features`, a `cargo tree` assertion that no modern renderer
+  crates or `modern-gl` feature leak, `cargo test -p horizon-client-render
+  --lib gfx21 --no-default-features --features legacy-gl`, the unchanged
+  `gl21_clear` frames and two full `horizon-client -- --legacy-gl --frames 1`
+  frames under Xvfb (GL 2.1/GLSL 120 and GL 2.0/GLSL 110).
+
+Out of scope and unmeasured: wgpu visual parity, UI/fog/day-night/water-portal
+or F0 world screenshots, real X1650/`r300g` caps and timings, 800×600 RD4
+timings, 30-minute stability and hardware acceptance. No PR, issue, `/claim`,
+label or roadmap item is created.

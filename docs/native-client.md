@@ -877,18 +877,23 @@ without an error. Its view was inspected. The
 seven client tests and all-target client Clippy passed. Full gameplay parity and
 playable Linux release acceptance on the target machine remain pending.
 
-## Legacy OpenGL 2.1 (experimental, additive)
+## Legacy OpenGL 2.1 (experimental, full integration)
 
-The optional `legacy-gl` feature still includes `modern-gl`: the default build,
-`game.rs`, `options.txt` and translation keys are unchanged. The additive
-`gfx21` modules, the GL2 contract facade and the diagnostics are described in
-[the Russian design document](design/legacy-gl21.md) and
+`cargo run -p horizon-client --no-default-features --features legacy-gl --
+--legacy-gl` builds a separate GL2 game loop. The `legacy-gl` feature no longer
+enables `modern-gl`: `gfx`/`game.rs` are cfg-gated out, while `gfx21`,
+`graphics_legacy.rs`, `game_legacy.rs` and `legacy_gl.rs` create a real
+glutin/glow context and draw terrain, entities, sky, HUD and line overlays with
+the 110/120 shaders. `graphicsApi:legacygl` and `--graphics-api legacygl` select
+the backend; new UI strings use translation keys and `options.txt` stays
+vanilla. The default wgpu build exits with a localized diagnostic if Legacy GL
+is requested. See [the Russian design document](design/legacy-gl21.md) and
 [the renderer contract](../crates/horizon-client-render/src/gfx21/CONTRACT.md).
 
 Checks that need no GPU or crates.io resolution:
 
 ```sh
-python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke -v
+python3 -m unittest tests.test_gl21_caps tests.test_gl21_contract tests.test_gl21_golden tests.test_gl21_smoke tests.test_gl21_integration -v
 python3 tools/gl21_caps.py --from-file tools/gl21_caps_fixtures/x1650-catalyst93.glxinfo.txt --label ci-gl21 --check --no-write --stdout
 python3 tools/legacy_gl_golden.py --check benchmarks/graphics/legacy-gl-scene.rgba
 python3 tools/legacy_gl_smoke.py --check --stdout
@@ -896,7 +901,8 @@ python3 tools/legacy_gl_smoke.py --check --stdout
 
 The smoke tool writes a deterministic [startup report](../benchmarks/graphics/legacy-gl-startup-report.txt)
 from the reference caps and [frame stats](../benchmarks/graphics/legacy-gl-scene.stats.json).
-[The branch workflow](../.github/workflows/arena-legacy-gl.yml) also links all
-six GLSL 120/110 pass programs in two Xvfb frames. Real X1650/`r300g` timing,
-wgpu image parity and a 30-minute stability run are explicitly unmeasured in
-this sandbox; the fixtures say `NOT measured`.
+[The branch workflow](../.github/workflows/arena-legacy-gl.yml) also checks the
+legacy dependency tree without `modern-gl`, links all six GLSL 120/110 pass
+programs in two Xvfb smoke frames and draws two full GL2 game frames. Real
+X1650/`r300g` timing, wgpu image parity and a 30-minute stability run are
+explicitly unmeasured in this sandbox; the fixtures say `NOT measured`.

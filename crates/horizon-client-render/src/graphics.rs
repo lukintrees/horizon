@@ -183,25 +183,33 @@ pub enum GraphicsApi {
     Dx12,
     /// OpenGL, for GPUs with no Vulkan or DirectX 12 driver (Windows and Linux).
     OpenGl,
+    /// The separate GL 2.1/2.0 compatibility renderer (`legacy-gl` feature).
+    LegacyGl,
 }
 impl GraphicsApi {
-    pub const ALL: [GraphicsApi; 4] = [
+    pub const ALL: [GraphicsApi; 5] = [
         GraphicsApi::Auto,
         GraphicsApi::Vulkan,
         GraphicsApi::Dx12,
         GraphicsApi::OpenGl,
+        GraphicsApi::LegacyGl,
     ];
     /// The APIs this system offers, in the order the setting cycles through
     /// them: DirectX 12 is Windows' third backend, and macOS has no choice.
     pub fn choices() -> &'static [GraphicsApi] {
-        const WINDOWS: [GraphicsApi; 4] = [
+        const WINDOWS: [GraphicsApi; 5] = [
             GraphicsApi::Auto,
             GraphicsApi::Vulkan,
             GraphicsApi::Dx12,
             GraphicsApi::OpenGl,
+            GraphicsApi::LegacyGl,
         ];
-        const LINUX: [GraphicsApi; 3] =
-            [GraphicsApi::Auto, GraphicsApi::Vulkan, GraphicsApi::OpenGl];
+        const LINUX: [GraphicsApi; 4] = [
+            GraphicsApi::Auto,
+            GraphicsApi::Vulkan,
+            GraphicsApi::OpenGl,
+            GraphicsApi::LegacyGl,
+        ];
         const MACOS: [GraphicsApi; 1] = [GraphicsApi::Auto];
         if cfg!(windows) {
             &WINDOWS
@@ -217,23 +225,32 @@ impl GraphicsApi {
             GraphicsApi::Vulkan => "vulkan",
             GraphicsApi::Dx12 => "dx12",
             GraphicsApi::OpenGl => "opengl",
+            GraphicsApi::LegacyGl => "legacygl",
         }
     }
+    /// Translation keys, resolved with `lang::get`; no hardcoded UI text.
     pub fn label(self) -> &'static str {
         match self {
-            GraphicsApi::Auto => "Auto",
-            GraphicsApi::Vulkan => "Vulkan",
-            GraphicsApi::Dx12 => "DirectX 12",
-            GraphicsApi::OpenGl => "OpenGL",
+            GraphicsApi::Auto => "options.graphicsApi.auto",
+            GraphicsApi::Vulkan => "options.graphicsApi.vulkan",
+            GraphicsApi::Dx12 => "options.graphicsApi.dx12",
+            GraphicsApi::OpenGl => "options.graphicsApi.opengl",
+            GraphicsApi::LegacyGl => "options.graphicsApi.legacygl",
         }
     }
     /// The API a name stands for, ignoring case; `None` for anything else.
     pub fn from_name(s: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|api| api.name().eq_ignore_ascii_case(s.trim()))
+        let name = s.trim().to_ascii_lowercase();
+        match name.as_str() {
+            "legacygl" | "legacy-gl" | "legacy_gl" | "gl21" | "gl2.1" => {
+                Some(GraphicsApi::LegacyGl)
+            }
+            _ => Self::ALL
+                .into_iter()
+                .find(|api| api.name().eq_ignore_ascii_case(&name)),
+        }
     }
-    /// `HORIZON_GRAPHICS_API` (auto, vulkan, dx12 or opengl) if set, else the setting.
+    /// `HORIZON_GRAPHICS_API` (auto, vulkan, dx12, opengl or legacygl) if set, else the setting.
     pub fn with_env(self) -> Self {
         std::env::var("HORIZON_GRAPHICS_API")
             .ok()
@@ -1006,7 +1023,12 @@ mod tests {
         } else {
             assert_eq!(
                 choices,
-                [GraphicsApi::Auto, GraphicsApi::Vulkan, GraphicsApi::OpenGl]
+                [
+                    GraphicsApi::Auto,
+                    GraphicsApi::Vulkan,
+                    GraphicsApi::OpenGl,
+                    GraphicsApi::LegacyGl,
+                ]
             );
         }
     }

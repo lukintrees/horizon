@@ -1,5 +1,5 @@
 //! Legacy OpenGL 2.1/2.0 renderer scaffold (PR 2a/2b, PR 3, PR 4, PR 5, PR 6,
-//! PR 7, PR 8, PR 9).
+//! PR 7, PR 8, PR 9; PR 8 full integration).
 //!
 //! Deliberately additive: this module has no `wgpu`, `naga`, `winit`, `glow`
 //! or window dependency, so adding it cannot change the default build. The
@@ -59,11 +59,12 @@ pub use caps::{
 };
 pub use context::{
     ContextError, FboKind, GlContext, MIN_GL, MIN_GLSL, ShaderDialect, TARGET_GL, TARGET_GLSL,
+    classify_strings, parse_extensions, parse_gl_version, parse_glsl_version,
 };
 pub use diagnostics::{
     DebugGlErrorLog, DiagnosticReport, GL_INVALID_ENUM, GL_INVALID_OPERATION, GL_INVALID_VALUE,
     GL_NO_ERROR, GL_OUT_OF_MEMORY, GL_STACK_OVERFLOW, GL_STACK_UNDERFLOW, MAX_VRAM_MIB,
-    gl_error_name,
+    UNAVAILABLE_METHODS, gl_error_name, unavailable_methods,
 };
 pub use entities::{EntityBatch, EntityCamera, EntityDraw, EntityError, EntityPose};
 pub use facade::{Frame, LegacyArgs, LegacyGraphicsApi, LegacySettings, Renderer};
@@ -103,6 +104,15 @@ mod tests {
         assert!(!Tier::Unsupported.usable());
         assert_eq!(std::mem::size_of::<Frame>(), 0);
         assert_eq!(std::mem::size_of::<Renderer>(), 0);
+    }
+
+    #[test]
+    fn integration_helpers_are_reachable() {
+        assert_eq!(parse_gl_version("2.1.8545 Release"), Some((2, 1)));
+        assert_eq!(parse_glsl_version("1.20"), Some(120));
+        assert_eq!(parse_extensions("GL_ARB_multitexture junk").len(), 1);
+        assert_eq!(unavailable_methods().len(), UNAVAILABLE_METHODS.len());
+        assert!(Renderer::unavailable().contains("PR 8"));
     }
 
     #[test]

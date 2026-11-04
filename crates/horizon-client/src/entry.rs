@@ -1,5 +1,34 @@
 //! Startup shared by the gameplay library and its executable.
 use crate::{crash, game, logging, ram_limit};
+use horizon_client_core::lang;
+use horizon_client_render::graphics::{FILE, Graphics, GraphicsApi};
+use std::fs;
+
+/// True when the player asked for the GL2 backend that this wgpu build lacks.
+fn legacy_requested(args: &[String]) -> bool {
+    if args.iter().any(|arg| arg == "--legacy-gl") {
+        return true;
+    }
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--graphics-api" {
+            if let Some(value) = iter.next() {
+                if GraphicsApi::from_name(value) == Some(GraphicsApi::LegacyGl) {
+                    return true;
+                }
+            }
+        }
+    }
+    if std::env::var("HORIZON_GRAPHICS_API")
+        .ok()
+        .and_then(|value| GraphicsApi::from_name(&value))
+        == Some(GraphicsApi::LegacyGl)
+    {
+        return true;
+    }
+    let text = fs::read_to_string(FILE).unwrap_or_default();
+    Graphics::parse(&text).api.with_env() == GraphicsApi::LegacyGl
+}
 
 /// Start the game. The executable supplies the allocator and retains the mod API marker.
 pub fn main() {
@@ -8,6 +37,7 @@ pub fn main() {
 
 /// Start the game with trait mods in dispatch order.
 pub fn main_with(mods: crate::mod_api::Mods) {
+    lang::set(lang::Language::load(&[], lang::DEFAULT));
     // First: a trait injection into anything below (logging, the crash handler) calls its mod.
     if crate::mod_api::MODS.set(mods).is_err() {
         log::warn!("Trait mods already installed; ignoring the second list");
@@ -16,6 +46,10 @@ pub fn main_with(mods: crate::mod_api::Mods) {
     horizon_client::telemetry::mark_start();
     horizon_client::spans::startup::init(std::time::Instant::now());
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if legacy_requested(&args) {
+        eprintln!("{}", lang::get("options.legacy.unavailable"));
+        std::process::exit(game::exit_code::USAGE);
+    }
     let game_args = args.iter().take_while(|a| *a != "--dedicated");
     let help = game_args
         .clone()

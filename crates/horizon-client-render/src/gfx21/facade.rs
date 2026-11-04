@@ -6,6 +6,8 @@
 //! legacy API can be discussed and tested without wgpu-typed members or a
 //! real GL context. No GL calls are made here.
 
+use super::diagnostics::UNAVAILABLE_METHODS;
+
 /// Zero-sized frame placeholder; PR 8 only defines the facade surface.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Frame;
@@ -119,8 +121,12 @@ impl Renderer {
         Vec::new()
     }
 
-    pub fn unavailable() -> &'static str {
-        "PR 8 facade is additive; game.rs still uses gfx::Renderer; real GL context pending"
+    pub fn unavailable() -> String {
+        format!(
+            "PR 8 legacy facade: {} unavailable modern methods: {}",
+            UNAVAILABLE_METHODS.len(),
+            UNAVAILABLE_METHODS.join(", ")
+        )
     }
 
     #[allow(clippy::unused_self)]
@@ -246,7 +252,7 @@ impl LegacyGraphicsApi {
             "vulkan" => Some(Self::Vulkan),
             "dx12" => Some(Self::Dx12),
             "opengl" => Some(Self::OpenGl),
-            "legacy-gl" | "legacy_gl" | "gl21" | "gl2.1" => Some(Self::LegacyGl),
+            "legacy-gl" | "legacy_gl" | "legacygl" | "gl21" | "gl2.1" => Some(Self::LegacyGl),
             _ => None,
         }
     }
@@ -262,6 +268,9 @@ pub struct LegacySettings {
     pub texture_budget_mib: u32,
     pub render_distance: u32,
     pub legacy_gl: bool,
+    pub frames: u32,
+    pub help: bool,
+    pub launch_api: bool,
     pub disabled_features: Vec<&'static str>,
 }
 
@@ -272,6 +281,9 @@ impl Default for LegacySettings {
             texture_budget_mib: 128,
             render_distance: 8,
             legacy_gl: false,
+            frames: 1,
+            help: false,
+            launch_api: false,
             disabled_features: Vec::new(),
         }
     }
@@ -284,16 +296,20 @@ impl LegacySettings {
             texture_budget_mib: 48,
             render_distance: 4,
             legacy_gl: true,
+            frames: 1,
+            help: false,
+            launch_api: false,
             disabled_features: vec!["HDR", "SSBO", "compute culling", "texture arrays"],
         }
     }
 
     pub fn startup_note(&self) -> String {
         format!(
-            "graphics-api={} budget={}MiB distance={} disabled={}",
+            "graphics-api={} budget={}MiB distance={} frames={} disabled={}",
             self.api.name(),
             self.texture_budget_mib,
             self.render_distance,
+            self.frames,
             self.disabled_features.len()
         )
     }
@@ -334,6 +350,16 @@ impl LegacyArgs {
                         }
                     }
                 }
+                "--frames" => {
+                    if let Some(value) = iter.next() {
+                        match value.parse::<u32>() {
+                            Ok(frames) => settings.frames = frames.max(1),
+                            Err(_) => unknown.push(value.clone()),
+                        }
+                    }
+                }
+                "--help" | "-h" => settings.help = true,
+                "--launch-api" => settings.launch_api = true,
                 "--render-distance" => {
                     if let Some(value) = iter.next() {
                         match value.parse::<u32>() {
@@ -375,6 +401,10 @@ mod tests {
             LegacyGraphicsApi::from_name("gl21"),
             Some(LegacyGraphicsApi::LegacyGl)
         );
+        assert_eq!(
+            LegacyGraphicsApi::from_name("legacygl"),
+            Some(LegacyGraphicsApi::LegacyGl)
+        );
         assert_eq!(LegacyGraphicsApi::from_name("metal"), None);
     }
 
@@ -388,7 +418,7 @@ mod tests {
         assert_eq!(settings.disabled_features.len(), 4);
         assert_eq!(
             settings.startup_note(),
-            "graphics-api=legacy-gl budget=48MiB distance=4 disabled=4"
+            "graphics-api=legacy-gl budget=48MiB distance=4 frames=1 disabled=4"
         );
     }
 
@@ -400,6 +430,9 @@ mod tests {
             "64",
             "--render-distance",
             "5",
+            "--frames",
+            "2",
+            "--help",
             "--unknown",
         ]
         .iter()
@@ -409,6 +442,8 @@ mod tests {
         assert_eq!(parsed.settings.api, LegacyGraphicsApi::LegacyGl);
         assert_eq!(parsed.settings.texture_budget_mib, 64);
         assert_eq!(parsed.settings.render_distance, 5);
+        assert_eq!(parsed.settings.frames, 2);
+        assert!(parsed.settings.help);
         assert_eq!(parsed.unknown, vec!["--unknown"]);
     }
 }

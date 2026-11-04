@@ -184,6 +184,63 @@ impl GlContext {
     }
 }
 
+/// Parse `GL_VERSION` ("2.1.8545 Release", "4.6 (Core Profile) Mesa 26") into (major, minor).
+pub fn parse_gl_version(text: &str) -> Option<(u32, u32)> {
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|b| b.is_ascii_digit())?;
+    let rest = &text[start..];
+    let mut parts = rest.split(|c: char| !c.is_ascii_digit());
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let after_major = &rest[major.to_string().len()..];
+    if !after_major.starts_with('.') {
+        return None;
+    }
+    let minor_text: String = after_major[1..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let minor = minor_text.parse::<u32>().ok()?;
+    Some((major, minor))
+}
+
+/// Parse `GL_SHADING_LANGUAGE_VERSION` ("1.20", "1.10.8") into 120/110.
+pub fn parse_glsl_version(text: &str) -> Option<u32> {
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|b| b.is_ascii_digit())?;
+    let rest = &text[start..];
+    let mut chars = rest.chars();
+    let major = chars.next()?.to_digit(10)?;
+    if chars.next() != Some('.') {
+        return None;
+    }
+    let minor: String = chars.take_while(|c| c.is_ascii_digit()).collect();
+    let minor = minor.parse::<u32>().ok()?;
+    Some(major * 100 + minor.min(99))
+}
+
+/// `GL_EXTENSIONS` is a space-separated list; keep only GL_* tokens.
+pub fn parse_extensions(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter(|name| name.starts_with("GL_"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Classify the four values a real GL context reports, including limits.
+pub fn classify_strings(
+    version: &str,
+    glsl: &str,
+    extensions: &str,
+    limits: BTreeMap<String, u64>,
+) -> Result<GlContext, ContextError> {
+    GlContext::new(
+        parse_gl_version(version),
+        parse_glsl_version(glsl),
+        &parse_extensions(extensions),
+        &limits,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +259,23 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("GL_MAX_TEXTURE_SIZE".to_owned(), 4096);
         map
+    }
+
+    #[test]
+    fn real_gl_strings_parse_into_a_validated_context() {
+        let names = extensions().join(" ");
+        let ctx = classify_strings("2.1.8545 Release", "1.20 Mesa", &names, limits()).unwrap();
+        assert_eq!(ctx.tier(), Tier::L1);
+        assert_eq!(ctx.dialect, ShaderDialect::Glsl120);
+        assert_eq!(parse_gl_version("4.6 (Core Profile) Mesa 26"), Some((4, 6)));
+        assert_eq!(parse_gl_version("not a version"), None);
+        assert_eq!(parse_glsl_version("1.10.8"), Some(110));
+        assert_eq!(parse_glsl_version("1.20"), Some(120));
+        assert_eq!(parse_glsl_version("no glsl"), None);
+        assert_eq!(
+            parse_extensions("GL_ARB_multitexture junk GL_EXT_framebuffer_object").len(),
+            2
+        );
     }
 
     #[test]

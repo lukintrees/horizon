@@ -16,7 +16,7 @@ horizon-client-lib = { path = "../horizon-client-lib", default-features = false 
 horizon-assets = { path = "../horizon-assets" }
 horizon-client-core = { path = "../horizon-client-core" }
 horizon-client-input = { path = "../horizon-client-input" }
-horizon-client-render = { path = "../horizon-client-render" }
+horizon-client-render = { path = "../horizon-client-render", default-features = false }
 horizon-command = { path = "../horizon-command" }
 horizon-items = { path = "../horizon-items" }
 horizon-core = { path = "../horizon-core" }
@@ -24,7 +24,7 @@ horizon-core = { path = "../horizon-core" }
 horizon-optifine = { path = "../horizon-optifine" }
 # The server thread ahead of the workers (MinecraftServer.spin's Thread.setPriority).
 horizon-threads = { path = "../horizon-threads" }
-horizon-hdr = { path = "../horizon-hdr" }
+horizon-hdr = { path = "../horizon-hdr", optional = true }
 horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
 # server.properties, eula.txt and the user lists, shared with horizon-server.
@@ -34,18 +34,18 @@ horizon-anticheat = { path = "../horizon-anticheat" }
 # The dedicated server's chat filter: [chat_filter], the slur list, mutes (docs/chat-filter.md).
 horizon-chat-filter = { path = "../horizon-chat-filter" }
 # Shader packs: reading them and turning their GLSL into naga modules.
-horizon-shaders = { path = "../horizon-shaders" }
+horizon-shaders = { path = "../horizon-shaders", optional = true }
 # Horizon's own shader packs: the format, the stages and the check (docs/shaders.md).
-horizon-shader-api = { path = "../horizon-shader-api" }
+horizon-shader-api = { path = "../horizon-shader-api", optional = true }
 horizon-friends = { path = "../horizon-friends" }
 # The narrator (GameNarrator): text-to-speech of chat, system messages and screens.
 horizon-narrator = { path = "../horizon-narrator" }
 # Horizon mods: sandboxed WebAssembly components, off unless installed and turned on (docs/mods.md).
 # Their runtime is the `mods` feature.
 horizon-mods = { path = "../horizon-mods", default-features = false, features = ["index"] }
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "naga-ir"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "naga-ir"], optional = true }
 winit = "0.30.13"
-pollster = "0.4"
+pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1.24", features = ["derive"] }
 glam = "0.30"
 png = "0.18"
@@ -56,7 +56,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 # hlsl-out: the gfx.rs tests translate every shader as wgpu's DirectX 12 backend does. A normal feature,
 # not a dev-dependency's, so builds, tests and examples share one build of naga, wgpu and this crate.
-naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
+naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"], optional = true }
 miniz_oxide = "0.8"
 ab_glyph = "0.2.32"
 log = "0.4"
@@ -78,6 +78,12 @@ unicode-bidi = "0.3.18"
 # `LevelStorageAccess.estimateDiskSpace`: usable disk space, without unsafe code on Windows.
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 
+# Real GL 2.1/2.0 context and loader, used only by the full legacy-gl game loop.
+glow = { version = "0.17", optional = true }
+glutin = { version = "0.32.3", optional = true }
+glutin-winit = { version = "0.5", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).
 rustix = { version = "1", default-features = false, features = ["std", "time", "process", "fs"] }
@@ -88,7 +94,7 @@ open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
 # DirectX 12, where Vulkan has no adapter or device, or by choice (`graphicsApi`, graphics.rs).
 # Shaders compile with FXC (d3dcompiler_47.dll, part of Windows), or DXC when dxcompiler.dll is
 # on the PATH.
-wgpu = { version = "30.0.1", default-features = false, features = ["dx12"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["dx12"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Splitscreen: a window filling a monitor goes over its menu bar (game/split/windows.rs
@@ -100,17 +106,34 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 # OpenGL (WGL on Windows, EGL on Linux), the last fallback, for GPUs with no Vulkan or
 # DirectX 12 driver (`graphicsApi`, graphics.rs).
-wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["gles"], optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 # The icon resource in the .exe (build.rs).
 winresource = "0.1"
 
 [features]
-default = ["audio", "controllers"]
-# Stage 1 of the legacy GL 2.1/2.0 build. The render crate still builds its
-# default wgpu stack (see its `modern-gl` feature); PR 8 splits `game.rs`.
-legacy-gl = ["horizon-client-render/legacy-gl"]
+default = ["audio", "controllers", "modern-gl"]
+# The default wgpu stack. Kept for the unchanged modern build.
+modern-gl = [
+    "dep:wgpu",
+    "dep:naga",
+    "dep:pollster",
+    "dep:horizon-hdr",
+    "dep:horizon-shader-api",
+    "dep:horizon-shaders",
+    "horizon-client-render/modern-gl",
+    "horizon-client-lib/modern-gl",
+]
+# Full PR 8: the same binary with a real GL2 game loop, no modern-gl in its tree.
+legacy-gl = [
+    "dep:glow",
+    "dep:glutin",
+    "dep:glutin-winit",
+    "dep:raw-window-handle",
+    "horizon-client-render/legacy-gl",
+    "horizon-client-lib/legacy-gl",
+]
 # Sound output. Without it (and `controllers`) the program links neither libasound nor libudev on
 # Linux: the server build (`--no-default-features`, released as horizon-engine; docs/server.md).
 audio = ["horizon-client-render/audio", "horizon-client-lib/audio"]

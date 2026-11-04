@@ -27,8 +27,8 @@ OPTION_METHODS = {
     "and_then", "map", "unwrap", "as_deref",
 }
 
-# Every Rust file in the additive legacy scaffold must stay free of the modern
-# renderer stack. The real GL loader lives in the gated example instead.
+# Every Rust file in the pure gfx21 scaffold must stay free of the modern
+# renderer stack. The real GL loader lives in the gated example and legacy_gl.rs.
 GFX21_SOURCES = (
     "caps.rs",
     "mod.rs",
@@ -173,7 +173,11 @@ class ContractTests(unittest.TestCase):
         render = tomllib.loads(CARGO_RENDER.read_text(encoding="utf-8"))
         client = tomllib.loads(CARGO_CLIENT.read_text(encoding="utf-8"))
         self.assertEqual(render["features"]["default"], ["modern-gl"])
-        self.assertIn("modern-gl", render["features"]["legacy-gl"])
+        self.assertNotIn(
+            "modern-gl",
+            render["features"]["legacy-gl"],
+            "legacy-gl must not enable modern-gl",
+        )
         for dep in ("wgpu", "naga", "pollster"):
             self.assertIn(f"dep:{dep}", render["features"]["modern-gl"])
             self.assertTrue(render["dependencies"][dep].get("optional"), f"{dep} is not optional")
@@ -194,6 +198,12 @@ class ContractTests(unittest.TestCase):
             "horizon-client-render/legacy-gl",
             client["features"]["legacy-gl"],
         )
+        self.assertNotIn("modern-gl", client["features"]["legacy-gl"])
+        self.assertIn("modern-gl", client["features"]["default"])
+        self.assertFalse(client["dependencies"]["horizon-client-render"]["default-features"])
+        for dep in ("glow", "glutin", "glutin-winit", "raw-window-handle"):
+            self.assertIn(f"dep:{dep}", client["features"]["legacy-gl"])
+            self.assertTrue(client["dependencies"][dep].get("optional"), f"{dep} is not optional")
 
     def test_new_gl_dependencies_have_notices(self):
         notices = NOTICES.read_text(encoding="utf-8")
@@ -209,7 +219,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("pub use gfx21::Frame;", lib)
         contract = CONTRACT.read_text(encoding="utf-8")
         for marker in ("PR 2b", "PR 3 stage 2", "PR 4", "PR 5", "PR 6",
-                       "PR 7", "PR 8", "PR 9", "PR 10"):
+                       "PR 7", "PR 8", "PR 9", "PR 10", "Full PR 8 integration"):
             self.assertIn(marker, contract)
 
     def test_own_branch_workflow_runs_the_gate_and_gl_smoke(self):
@@ -230,6 +240,13 @@ class ContractTests(unittest.TestCase):
         self.assertIn("tests.test_gl21_golden", source)
         self.assertIn("tests.test_gl21_smoke", source)
         self.assertIn("tools/legacy_gl_smoke.py --check --stdout", source)
+        self.assertIn("tests.test_gl21_integration", source)
+        self.assertIn("--no-default-features --features legacy-gl", source)
+        self.assertIn("cargo tree -p horizon-client", source)
+        self.assertIn("--legacy-gl --frames 1", source)
+        self.assertIn("legacy-gl frame: OK", source)
+        self.assertIn("actions/upload-artifact@v4", source)
+        self.assertIn("legacy-gl-Cargo.lock", source)
         self.assertIn("all programs linked: OK", source)
         self.assertIn("all_programs(dialect)", EXAMPLE.read_text(encoding="utf-8"))
 
