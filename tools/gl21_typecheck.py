@@ -680,6 +680,147 @@ def infer_type(node, locals_: dict[str, str], facts: CrateFacts) -> str:
     return ""
 
 
+# Trait imports whose only use is the method calls they enable. A call to any of the listed
+# methods is the import being used.
+TRAIT_IMPORTS = {
+    "HasContext": re.compile(
+        r"\.\s*(?:"
+        + "|".join(
+            [
+                "bind_buffer",
+                "bind_framebuffer",
+                "bind_texture",
+                "buffer_data_u8_slice",
+                "buffer_sub_data_u8_slice",
+                "blit_framebuffer",
+                "check_framebuffer_status",
+                "clear",
+                "clear_color",
+                "clear_depth_f32",
+                "create_buffer",
+                "create_framebuffer",
+                "create_program",
+                "create_renderbuffer",
+                "create_shader",
+                "create_texture",
+                "create_vertex_array",
+                "delete_",
+                "draw_arrays",
+                "draw_elements",
+                "enable",
+                "disable",
+                "enable_vertex_attrib_array",
+                "finish",
+                "flush",
+                "generate_mipmap",
+                "get_error",
+                "get_parameter_i32",
+                "get_parameter_string",
+                "get_renderbuffer_parameter_i32",
+                "get_shader_compile_status",
+                "get_uniform_location",
+                "pixel_store_i32",
+                "read_pixels",
+                "renderbuffer_storage",
+                "read_buffer",
+                "scissor",
+                "tex_image_2d",
+                "tex_parameter_i32",
+                "tex_sub_image_2d",
+                "uniform_1_f32",
+                "uniform_1_i32",
+                "uniform_2_f32_slice",
+                "uniform_3_f32_slice",
+                "uniform_4_f32_slice",
+                "uniform_matrix_4_f32_slice",
+                "use_program",
+                "vertex_attrib_pointer_f32",
+                "viewport",
+            ]
+        )
+        + r")\b"
+    ),
+}
+
+
+def unused_imports(tree, source: bytes):
+    """`use a::b;` whose `b` the rest of the file never names.
+
+    This is the compiler's `unused_imports` lint, and it is worth having here because the
+    crate was written without a compiler: two of the first ten errors CI reported were
+    imports that only the tests used, or that a rewrite left behind. Rust's real lint has
+    subtleties this cannot have (a `use` may exist for a trait's methods only, and a glob is
+    never unused), so the rule is deliberately narrow:
+
+    * only a plain item import (`use a::b;`, `use a::{b, c};`), never `use a::*;`;
+    * debug/test-only code counts as a use, so an import used only by `#[cfg(test)]` is not
+      reported: `cargo clippy --all-targets` compiles that too, and a rule that fires on a
+      test-only import would be wrong more often than right;
+    * the name must not appear anywhere else in the file, texts included in the count, so
+      a mention in a doc comment keeps the rule quiet. That is a false negative and the
+      direction to err in;
+    * a `pub use` is a re-export and is never reported: `pub use error::Error;` exists for
+      the crate's callers, not for this file;
+    * a trait import is skipped when the file calls a method that trait provides, because
+      that is exactly what the import is for. Only traits in `TRAIT_IMPORTS` are checked
+      this way: guessing at traits in general would report every inherent-method call.
+
+    Returns `(node, name, module)` triples.
+    """
+    names = []
+    for node in walk(tree.root_node):
+        if node.type != "use_declaration":
+            continue
+        # A `pub use` is a re-export: the crate's own code never has to name it.
+        if b"pub" in source[node.start_byte : node.start_byte + 8]:
+            continue
+        argument = node.child_by_field_name("argument")
+        if argument is None:
+            continue
+        text = source[argument.start_byte : argument.end_byte].decode("utf-8", "replace")
+        if "*" in text or " as " in text:
+            continue
+        if argument.type == "scoped_use_list":
+            # `use a::{b, c};`
+            module = source[
+                argument.child_by_field_name("path").start_byte : argument.child_by_field_name(
+                    "path"
+                ).end_byte
+            ].decode("utf-8", "replace")
+            listed = argument.child_by_field_name("list")
+            for item in walk(listed):
+                if item.type != "identifier":
+                    continue
+                name = source[item.start_byte : item.end_byte].decode("utf-8", "replace")
+                names.append((node, name, module))
+        elif argument.type in ("scoped_identifier", "identifier"):
+            name = source[argument.start_byte : argument.end_byte].decode("utf-8", "replace")
+            name = name.split("::")[-1]
+            module = text.rsplit("::", 1)[0]
+            names.append((node, name, module))
+    findings = []
+    body = source.decode("utf-8", "replace")
+    for node, name, module in names:
+        if name in ("self", "Self"):
+            continue
+        if name in TRAIT_IMPORTS and TRAIT_IMPORTS[name].search(body):
+            # The import is what makes the method callable: `gl.draw_arrays(..)` needs
+            # `HasContext` in scope, and the lint Rust applies is about the *name* `HasContext`
+            # appearing, which a method call never does.
+            continue
+        # Every occurrence outside the import's own line.
+        occurrences = 0
+        start_line = node.start_point[0]
+        for index, line in enumerate(body.splitlines()):
+            if index == start_line:
+                continue
+            if re.search(r"\b" + re.escape(name) + r"\b", line):
+                occurrences += 1
+        if occurrences == 0:
+            findings.append((node, name, module))
+    return findings
+
+
 def check_file(path: Path, facts: CrateFacts, glow: dict[str, Function], constants: set[str]):
     p = parser()
     source = path.read_bytes()
@@ -698,6 +839,8 @@ def check_file(path: Path, facts: CrateFacts, glow: dict[str, Function], constan
         )
 
     file_mod = file_module(facts.root, path)
+    for node, name, module in unused_imports(tree, source):
+        add(node, f"`use {module}::{name};` and nothing in this file names `{name}`")
     for function in walk(tree.root_node):
         if function.type != "function_item":
             continue
@@ -1103,9 +1246,14 @@ fn takes_two(a: u32, b: &str) -> u32 { a }
 fn takes_one(a: bool) {}
 
 pub enum Shape2 { Point, Line(u32), Area { w: u32 } }
+use crate::good::NOT_A_REEXPORT_NAME;
+pub use crate::good::reexported;
 
 pub mod good {
     use super::*;
+    // A trait import used only through method calls (`gl.enable(..)`) is used: the compiler's
+    // lint is about the name, and a method call never names the trait.
+    use glow::HasContext;
     fn good(gl: &glow::Context, t: &Thing) {
         gl.enable(glow::DEPTH_TEST);
         gl.clear_color(0.0, 0.0, 0.0, 1.0);
@@ -1185,6 +1333,21 @@ pub mod outer {
     scoped = [f for f in found if module_of(f) == "outer"]
 
     problems = []
+    # The unused-import finding belongs to the file, not to a module in it: it is reported on
+    # the `use` line (15 here), which is above every module marker.
+    root_findings = [f for f in found if module_of(f) == "root"]
+    expected_root = [
+        "nothing in this file names `NOT_A_REEXPORT_NAME`",
+    ]
+    root_messages = " | ".join(f.message for f in root_findings)
+    for want in expected_root:
+        if want not in root_messages:
+            problems.append(f"the file's own findings should include `{want}`: {root_messages}")
+    if len(root_findings) != len(expected_root):
+        problems.append(
+            f"{len(root_findings)} finding(s) outside the module fixtures, "
+            f"expected {len(expected_root)}: {[f.message for f in root_findings]}"
+        )
     if len(found) < 6:
         problems.append(f"only {len(found)} finding(s) in the fixture file: {[ (f.line, f.message) for f in found ]}")
     if good:
@@ -1209,16 +1372,28 @@ pub mod outer {
         "Thing has no variant or constant `EMPTYY`",
         "Thing has no method `onet`",
     ]
+    # And the imports that must not be reported: a `pub use` is a re-export, a trait imported
+    # for its methods is used by the calls, and `use super::*;` is a glob.
+    forbidden = [
+        "nothing in this file names `reexported`",
+        "nothing in this file names `HasContext`",
+    ]
     for want in expected:
         if want not in messages:
             problems.append(f"the bad fixture should have reported `{want}`\n  got: {messages}")
+    for unwanted in forbidden:
+        if unwanted in messages:
+            problems.append(f"the bad fixture should not have reported `{unwanted}`")
     if len(bad) != len(expected):
         problems.append(f"the bad fixture reported {len(bad)} findings, expected {len(expected)}")
     if problems:
         for problem in problems:
             print(f"self-test: {problem}", file=sys.stderr)
         return 1
-    print(f"self-test: 4 fixtures, {len(bad)} finding(s) as expected, 0 false positives")
+    print(
+        f"self-test: 4 fixtures, {len(found)} finding(s) as expected "
+        f"({len(bad)} in the bad module, {len(root_findings)} in the file), 0 false positives"
+    )
     return 0
 
 

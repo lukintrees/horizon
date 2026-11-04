@@ -520,7 +520,7 @@ flat/multi-draw (indirect), «улучшенная прозрачность» (b
 | **Цели рендера (FBO)**: цвет текстура + `DEPTH24_STENCIL8` renderbuffer, статусы по имени | `src/gl/target.rs` | 3 теста (лимит 4096, все статусы названы) | создание FBO |
 | **MSAA через `MultisampleTarget`**: multisample renderbuffer + blit-разрешение, 2× и 4×, 6× не предлагаем | `src/gl/target.rs` | 1 тест политики сэмплов | MSAA |
 | **sRGB-текстуры** через `EXT_texture_sRGB` (не `GL_FRAMEBUFFER_SRGB`: это 3.0) | `src/gl/texture.rs` | `SRGB8_ALPHA8_EXT = 0x8C43` — тот же номер, что у 3.0-константы | загрузка |
-| **Проверка вызовов glow без компилятора** (`gl21_typecheck.py`): методы `HasContext`, арность своих функций, константы, типы литералов | `tools/gl21_typecheck.py` | self-test: 4 фикстуры, 6 ожидаемых находок, 0 ложных; на крейте — 0 находок против 396 методов и 1422 констант glow 0.17 | нет |
+| **Проверка вызовов glow без компилятора** (`gl21_typecheck.py`): методы `HasContext`, арность своих функций, константы, типы литералов | `tools/gl21_typecheck.py` | self-test: 4 фикстуры, 13 ожидаемых находок, 0 ложных; на крейте — 0 находок против 396 методов и 1422 констант glow 0.17; отдельное правило про неиспользуемые импорты (ловит `-D unused-imports` без компилятора, молчит на `pub use`, `use super::*` и трейтах вроде `HasContext`) | нет |
 | **CI компилирует крейт**: отдельный job `gl21` — clippy `-D warnings`, fmt, тесты, `--glow-cargo`, отчёт бинаря | `.github/workflows/ci.yml` | первый настоящий `cargo check` этого кода; локально компилятора нет | нет |
 | CLI `horizon-gl21-info` | `src/bin/horizon-gl21-info.rs` | встраивает `terrain.vert/frag` через `include_str!`, поэтому `--check-shaders` меряет те же файлы, что поставляются | нет |
 
