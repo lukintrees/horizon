@@ -261,7 +261,7 @@ impl Game<'_> {
         let Some(renderer) = &mut self.renderer else {
             return Ok(());
         };
-        let mut hud = HudBatch::new([renderer.config.width, renderer.config.height]);
+        let mut hud = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
         let progress = match self.pending_save.as_ref().map(|save| &save.stage) {
             Some(Stage::Chunks(_)) => 0.25,
             Some(Stage::Entities(_)) => 0.5,

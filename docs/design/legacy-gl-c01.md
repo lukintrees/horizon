@@ -74,7 +74,7 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 |---|---|
 | `Game.renderer`, `Loading.renderer`, `no_resources::Missing.renderer` | R02/R03: owning facade, shared state migration — интегратор |
 | `build_renderer`, `loading_renderer`, `renderer_for`, `new_renderer`, `recover_device` | R02/R03/G01: factory, ownership, reload/recovery — интегратор |
-| `config`, `suspended`, window sizing / resize handlers | R02/P01: drawable queries / resize outcome, без SurfaceConfiguration в Game |
+| `config`, `suspended`, window sizing / resize handlers | R02b: размер drawable через `renderer_facade::drawable_size`; `SurfaceConfiguration`/resize/recreate остаются P01–R02 |
 | `device`, `queue`, `hud` uploads в skins/maps/UI/glint | A01/A02/E01/R02: CPU patches/resource commands; не протаскивать device/queue в общий trait |
 | `screenshot*`, capture requests/results, device recovery | R02a: facade commands `request_screenshot`/`screenshot_pending`/`take_*`/`restore_*` уже используются Game; modern capture остаётся в modern adapter, legacy readback — U01 |
 | `info`, gpu times/census, HDR calibration, shader macros/packs | Backend-neutral diagnostics; modern-only commands явно capability gated |

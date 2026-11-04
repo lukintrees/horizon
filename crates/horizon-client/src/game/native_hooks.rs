@@ -990,7 +990,7 @@ impl Game<'_> {
             return self.screen_view_now();
         };
         let renderer = self.renderer.as_ref()?;
-        let batch = HudBatch::new([renderer.config.width, renderer.config.height]);
+        let batch = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
         Some(NativeScreenView {
             id,
             menu: None,
@@ -3492,7 +3492,7 @@ impl Game<'_> {
             return None;
         }
         let renderer = self.renderer.as_ref()?;
-        let batch = HudBatch::new([renderer.config.width, renderer.config.height]);
+        let batch = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
         if self.screen != Screen::Playing {
             return Some(self.screen_view(&batch, self.screen));
         }

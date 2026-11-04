@@ -175,5 +175,11 @@ pub fn render_modern(renderer: &mut gfx::Renderer, frame: &Frame<'_>) -> Result<
         .map(|outcome| outcome != FrameOutcome::Deferred)
 }
 
+/// The drawable size, without making Game read `SurfaceConfiguration`. Read
+/// only: a legacy window has no Game-owned size until G01.
+pub fn drawable_size(renderer: &gfx::Renderer) -> [u32; 2] {
+    [renderer.config.width, renderer.config.height]
+}
+
 #[cfg(all(test, feature = "legacy-gl", target_os = "linux"))]
 mod tests;
