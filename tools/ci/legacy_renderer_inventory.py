@@ -40,7 +40,7 @@ def inventory(root):
         data = path.read_bytes()
         references = scan(data.decode(), members)
         if references:
-            sources.append(dict(path=str(path.relative_to(root)), sha256=hashlib.sha256(data).hexdigest(), references=references))
+            sources.append(dict(path=str(path.relative_to(root)).replace("\\", "/"), sha256=hashlib.sha256(data).hexdigest(), references=references))
     return dict(contract_version=1, precision="syntactic candidates; review alias bindings", sources=sources)
 
 
