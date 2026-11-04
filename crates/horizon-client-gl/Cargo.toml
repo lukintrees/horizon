@@ -1,0 +1,30 @@
+[package]
+name = "horizon-client-gl"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version = "1.90"
+description = "OpenGL 2.1 renderer for Horizon: the legacy path for GPUs with no Vulkan, DirectX 12 or OpenGL 3.3 driver (docs/gl21-x1650-plan.ru.md)"
+
+# No wgpu, no naga. The whole point of this crate is to be the renderer that runs where
+# wgpu cannot: wgpu's GL backend rejects a desktop context below 3.3
+# (third_party/wgpu-hal/src/gles/adapter.rs), and the target GPU reports 2.1.
+[dependencies]
+# The GL function table, loaded at run time: on Windows 7 the game must start and say what
+# is missing rather than fail in the loader with a missing-DLL dialog.
+glow = { version = "0.17", default-features = false }
+# dlopen/LoadLibrary for libGL.so.1 / opengl32.dll.
+libloading = "0.8"
+# Once an adapter exists (Options::lazy_init).
+once_cell = { version = "1", default-features = false, features = ["std"] }
+log = "0.4"
+# Surface size and the DPI scale the UI needs; the window itself belongs to winit in
+# horizon-client-render, so this crate never grows a windowing dependency.
+raw-window-handle = "0.6"
+
+[features]
+# Nothing yet. GLES 2.0 contexts (Android, ANGLE) would arrive here, and would be a second
+# profile with its own budget in tools/gl21_budget.py.
+
+[lints]
+workspace = true

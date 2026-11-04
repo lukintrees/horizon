@@ -21,12 +21,20 @@ The repository variable `SELF_HOSTED_CI` decides:
 
 | `SELF_HOSTED_CI` | Bots (`playhorizon-light`) | `checks` of main and same-repository pull requests (`playhorizon-ci`) |
 | --- | --- | --- |
-| unset (default) | playhorizon | GitHub |
+| unset (default) | GitHub | GitHub |
 | `all` | playhorizon | playhorizon |
-| `off` | GitHub | GitHub |
+| anything else, `off` included | GitHub | GitHub |
 
 `gh variable set SELF_HOSTED_CI --body all --repo horizon-rust/horizon` (or `off`; `gh variable delete` for the
 default) takes effect from the next run; queued jobs keep the runner they asked for.
+
+**Only `horizon-rust/horizon` can send a job to those runners.** Every `runs-on:` that mentions
+`playhorizon-ci` or `playhorizon-light` is guarded by `github.repository == 'horizon-rust/horizon'`, and a fork
+therefore never asks for a runner it has not got. Before that guard, the bots' condition was
+`vars.SELF_HOSTED_CI != 'off'`, which is **true when the variable is unset** -- so a fork fell back to a pool it does
+not have and every bot job queued until cancelled (measured 2026-11-04 in `lukintrees/horizon`: 80 queued runs, 72 of
+them `pr labels`, the oldest six hours old). `tests/test_ci_runners.py` pins the shape: `== 'all'`, never
+`!= 'off'`, and the upstream repository's name in the condition.
 
 Why the checks stay on GitHub by default: the checks runners have CPUs 4–7, shared with the parity runner, about
 one GitHub runner's worth. With every same-repository pull request on them (#5415, 2026-10-31 20:25–20:45 UTC), 19

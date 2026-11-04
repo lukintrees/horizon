@@ -1,0 +1,551 @@
+{
+  "profile": "gl21-x1650",
+  "shaders": 29,
+  "shader_lines": 5402,
+  "vertex_stages_sampling_textures": 3,
+  "worst_uniform_block": {
+    "where": "entity.wgsl (Globals)",
+    "components": 936,
+    "limit": 512
+  },
+  "worst_varying_struct": {
+    "where": "entity.wgsl (Out)",
+    "floats": 36,
+    "limit": 44
+  },
+  "most_texture_bindings": {
+    "where": "gfx/frame_gen/interpolation.wgsl",
+    "count": 19,
+    "limit": 16
+  },
+  "storage_buffers_in_shaders": 61,
+  "texture_array_decls": 18,
+  "texture_3d_decls": 0,
+  "atomic_ops": 44,
+  "compute_entry_points": 27,
+  "rust": {
+    "float_render_targets": {
+      "Rgba16Float": 26,
+      "R32Float": 10,
+      "Rg32Float": 5,
+      "Rgba32Float": 6,
+      "R16Float": 5,
+      "Rg16Float": 5,
+      "Rg11b10Ufloat": 3
+    },
+    "wide_unorm_targets": {
+      "Rgb10a2Unorm": 10
+    },
+    "integer_render_targets": {
+      "Rgba32Uint": 7,
+      "R32Sint": 7,
+      "Rgba32Sint": 4,
+      "Rgba16Uint": 4,
+      "R32Uint": 12
+    },
+    "depth_formats": {
+      "Depth32Float": 50
+    },
+    "sample_counts": {
+      "1": 87
+    },
+    "depth_compare_samplers": 0,
+    "multiview": 0,
+    "indirect_draws": 2,
+    "instanced_draws": 68,
+    "compute_dispatch": 16,
+    "bind_groups": 63,
+    "bindings_per_group": 0,
+    "texture_2d_array": 12,
+    "texture_3d": 9,
+    "storage_buffers_in_shaders": 0
+  },
+  "findings": [
+    {
+      "category": "vertex texture fetch",
+      "where": "entity.wgsl @vertex vs_cloud",
+      "detail": "textureSampleLevel",
+      "needs": "compute the value on the CPU or from a uniform; the X1650 has no vertex texture units"
+    },
+    {
+      "category": "loops",
+      "where": "entity.wgsl @fragment fs_entity",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/animate.wgsl @compute animate",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/animate.wgsl",
+      "detail": "2 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "texture array",
+      "where": "gfx/animate.wgsl",
+      "detail": "1 declaration(s)",
+      "needs": "split per layer (sampler decisions on the CPU) or pack into an atlas; GL 2.1 has no array textures"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/cull.wgsl @vertex vs_box",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/cull.wgsl",
+      "detail": "4 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "vertex texture fetch",
+      "where": "gfx/entity_outline.wgsl @vertex vs_quad",
+      "detail": "textureSampleLevel",
+      "needs": "compute the value on the CPU or from a uniform; the X1650 has no vertex texture units"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/entity_skin.wgsl @compute skin",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/entity_skin.wgsl @compute skin",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/entity_skin.wgsl",
+      "detail": "4 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/flatten.wgsl @compute flatten",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/flatten.wgsl @compute flatten",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/flatten.wgsl @compute flatten_seen",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/flatten.wgsl @compute flatten_seen",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/flatten.wgsl",
+      "detail": "5 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "workgroup memory",
+      "where": "gfx/flatten.wgsl",
+      "detail": "",
+      "needs": "no compute on GL 2.1"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute prepare_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute prepare_pass",
+      "detail": "2 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute setup_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute reconstruct_previous_depth_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute reconstruct_previous_depth_pass",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute game_motion_vector_field_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute game_motion_vector_field_pass",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute game_field_pyramid_first_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute game_field_pyramid_first_pass",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute game_field_pyramid_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute game_field_pyramid_pass",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute optical_flow_vector_field_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute optical_flow_vector_field_pass",
+      "detail": "6 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute disocclusion_mask_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute disocclusion_mask_pass",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute interpolate_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute inpainting_pyramid_first_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute inpainting_pyramid_first_pass",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute inpainting_pyramid_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute inpainting_pyramid_pass",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/interpolation.wgsl @compute inpainting_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/frame_gen/interpolation.wgsl",
+      "detail": "15 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute prepare_luma",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute prepare_luma",
+      "detail": "2 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute luma_pyramid",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute scd_histogram_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute scd_histogram_pass",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute scd_divergence_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute scd_divergence_pass",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute search_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute search_pass",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute filter_flow",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute filter_flow",
+      "detail": "4 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute scale_pass",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/frame_gen/optical_flow.wgsl @compute scale_pass",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/frame_gen/optical_flow.wgsl",
+      "detail": "4 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "workgroup memory",
+      "where": "gfx/frame_gen/optical_flow.wgsl",
+      "detail": "",
+      "needs": "no compute on GL 2.1"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/gpu_culling.wgsl @compute apply",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/gpu_culling.wgsl @compute cull",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/gpu_culling.wgsl @compute scan",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/gpu_culling.wgsl @compute scan",
+      "detail": "3 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "compute shader",
+      "where": "gfx/gpu_culling.wgsl @compute scatter",
+      "detail": "",
+      "needs": "move to a render-pass ping-pong, or keep it behind the GL3 path"
+    },
+    {
+      "category": "loops",
+      "where": "gfx/gpu_culling.wgsl @compute scatter",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "storage buffer",
+      "where": "gfx/gpu_culling.wgsl",
+      "detail": "8 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "workgroup memory",
+      "where": "gfx/gpu_culling.wgsl",
+      "detail": "",
+      "needs": "no compute on GL 2.1"
+    },
+    {
+      "category": "loops",
+      "where": "hdr_stats.wgsl @fragment fs_stats",
+      "detail": "2 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "texture array",
+      "where": "hdr_stats.wgsl",
+      "detail": "8 declaration(s)",
+      "needs": "split per layer (sampler decisions on the CPU) or pack into an atlas; GL 2.1 has no array textures"
+    },
+    {
+      "category": "loops",
+      "where": "hud.wgsl @fragment fs_end_portal",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "texture array",
+      "where": "hud.wgsl",
+      "detail": "1 declaration(s)",
+      "needs": "split per layer (sampler decisions on the CPU) or pack into an atlas; GL 2.1 has no array textures"
+    },
+    {
+      "category": "loops",
+      "where": "menu_blur.wgsl @fragment fs_main",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "loops",
+      "where": "post_chain.wgsl @fragment fs_box_blur",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "vertex texture fetch",
+      "where": "screen.wgsl @vertex vs_screen",
+      "detail": "textureDimensions",
+      "needs": "compute the value on the CPU or from a uniform; the X1650 has no vertex texture units"
+    },
+    {
+      "category": "loops",
+      "where": "terrain.wgsl @vertex vs_section_flat_cutout",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "loops",
+      "where": "terrain.wgsl @vertex vs_sky",
+      "detail": "1 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "storage buffer",
+      "where": "terrain.wgsl",
+      "detail": "3 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "texture array",
+      "where": "terrain.wgsl",
+      "detail": "8 declaration(s)",
+      "needs": "split per layer (sampler decisions on the CPU) or pack into an atlas; GL 2.1 has no array textures"
+    },
+    {
+      "category": "storage buffer",
+      "where": "visbuffer.wgsl",
+      "detail": "16 declaration(s)",
+      "needs": "use a uniform block or a texture; GL 2.1 has no SSBO"
+    },
+    {
+      "category": "loops",
+      "where": "world_post.wgsl @fragment fs_taa",
+      "detail": "2 loop(s)",
+      "needs": "GLSL 1.20 on SM 3.0 rejects data-dependent loops: unroll, or bound them at compile time with a constant and `break`"
+    },
+    {
+      "category": "uniform block",
+      "where": "entity.wgsl (Globals)",
+      "detail": "936 components (limit 512)",
+      "needs": "split the block across stages, pack four u32 into one vec4, and move array data (lights, emissive layers, sunrise fan) into a texture"
+    },
+    {
+      "category": "texture units",
+      "where": "gfx/frame_gen/interpolation.wgsl",
+      "detail": "19 bindings (limit 16)",
+      "needs": "merge samplers and put sprite arrays back into one atlas"
+    },
+    {
+      "category": "float render target",
+      "where": "gfx*.rs",
+      "detail": "R16Float x5, R32Float x10, Rg11b10Ufloat x3, Rg16Float x5, Rg32Float x5, Rgba16Float x26, Rgba32Float x6",
+      "needs": "render to RGBA8 (or 10:10:10:2) and keep HDR/sky maths in the shader; the target GPU has no EXT_color_buffer_float"
+    },
+    {
+      "category": "indirect draw",
+      "where": "gfx*.rs",
+      "detail": "2 call(s)",
+      "needs": "draw from CPU-built ranges (GL 2.1 has no indirect draw)"
+    },
+    {
+      "category": "compute pass",
+      "where": "gfx*.rs",
+      "detail": "16 dispatch(es)",
+      "needs": "render-pass replacements behind the GL3 path"
+    }
+  ],
+  "resources": {
+    "render_type": "light",
+    "fragment_texture_slots": 256,
+    "pipeline_keys": 60,
+    "output_width": 1366
+  }
+}

@@ -33,7 +33,7 @@ jobs:
   # themselves). There the build folder persists (CARGO_TARGET_DIR, outside the checkout), so the apt packages,
   # Python and the Rust cache steps are GitHub's only.
   verify:
-    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "linux", "playhorizon-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && github.repository == 'horizon-rust/horizon' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "linux", "playhorizon-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +51,16 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 tools/ci/rust_changes.py "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
       # A pull request adds only its own commits to main, so it reads those; main's pushes read every ref's history.
+      # The OpenGL 2.1 path's budgets (docs/gl21-x1650-plan.ru.md §5): the target GPU is a
+      # Radeon X1650, which no runner has, so its limits are checked statically here. Cheap
+      # and needs no toolchain: two Python gates over the sources.
+      - name: OpenGL 2.1 budgets
+        run: |
+          # The GLSL gate covers the GL 2.1 path's own shaders and must pass outright; the WGSL
+          # path is over the target's budget by construction, so it is checked against the
+          # baseline: no finding this change added, and the report says how many remain.
+          python tools/gl21_glsl.py --check
+          python tools/gl21_budget.py --check --baseline tools/gl21-budget-baseline.json
       - name: Keep game artifacts out of Git
         env:
           EVENT: ${{ github.event_name }}
@@ -83,7 +93,11 @@ jobs:
       - name: Check formatting and lint
         if: steps.rust.outputs.required != 'false'
         run: |
-          cargo +stable fmt --all -- --check
+          # `--check`'s complaint is a diff on stdout, and a failing step's log is a blob URL:
+          # with `::error::` GitHub makes the diff an annotation, which is what a fork without
+          # the log API can read. `pipefail` is what keeps the pipeline's exit status cargo's.
+          set -eo pipefail
+          cargo +stable fmt --all -- --check 2>&1 | sed 's/^/::error::/'
           cargo +stable clippy --workspace --all-targets -- -D warnings
           # The server build (released as horizon-engine): the game without sound or controllers.
           cargo +stable clippy -p horizon-client --all-targets --no-default-features -- -D warnings
@@ -100,11 +114,138 @@ jobs:
           # recompiling the workspace with a different dependency graph.
           cargo +stable test --workspace --lib --bins --tests mod_content::tests:: -- --ignored
           cargo +stable test --workspace --doc
+  # The OpenGL 2.1 renderer (crates/horizon-client-gl, docs/gl21-x1650-plan.ru.md). Its own job
+  # because it is the one crate that must build against an *old* GL and the one whose author
+  # had no compiler at hand: here it is compiled, linted and tested on every change, and the
+  # numbers the plan is written in (uniform components, varyings, samplers) are printed by the
+  # binary itself next to the static measurement. `--glow-cargo` reads glow's sources from the
+  # registry cache instead of a checkout, so the API check cannot drift from the pinned version.
+  gl21:
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && github.repository == 'horizon-rust/horizon' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "linux", "playhorizon-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: runner.environment == 'github-hosted'
+        with:
+          python-version: '3.12'
+      # The Rust syntax gate parses the crate with tree-sitter, which the runner's Python does
+      # not have: pinned to the versions tools/gl21_preflight.sh installs, so the gate is the
+      # same one a developer runs.
+      - name: Install the syntax gate's grammar
+        run: python3 -m pip install --quiet 'tree-sitter==0.26.0' 'tree-sitter-rust==0.24.2'
+      # The GPU-free half of the path's testing: source checks, no toolchain needed, so this
+      # step catches a bad shader or a wrong call even when the build below is broken.
+      - name: OpenGL 2.1 static checks
+        run: |
+          # The shaders of the GL 2.1 path itself: these must fit the target's budgets, not
+          # merely not grow. The WGSL path is over them by construction (that is the premise of
+          # the port), so it is held to "no finding this change introduced".
+          python tools/gl21_glsl.py --check --verbose
+          python tools/gl21_budget.py --check --baseline tools/gl21-budget-baseline.json
+          python tools/gl21_rustsyntax.py crates/horizon-client-gl
+      - name: Install Rust
+        env:
+          HOSTED: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          if [ "$HOSTED" = true ]; then
+            # Nothing links against a system library yet; the GL library is dlopen'd at run
+            # time, so the crate builds on a runner with no GPU and no libGL.
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
+          fi
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
+        with:
+          shared-key: gl21
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The compiler this crate was written without. `-D warnings` because a warning here is
+      # usually an unused import left behind by a rewrite.
+      - name: Build, lint and test the OpenGL 2.1 renderer
+        run: |
+          # Clippy builds the crate and its tests; the rustfmt check is a direct rustfmt call
+          # because `cargo fmt` has no per-package selection.
+          cargo fetch
+          # The diagnostics go through a reporter on their way to the log: the job log lives in
+          # the runner's blob storage, which a session that reaches only api.github.com cannot
+          # open, while a check run's annotations are served by the API. `--message-format=json`
+          # is what makes that possible; the reporter prints the compiler's rendered text as
+          # `::error file=...,line=...::` commands, and the exit status is cargo's, unchanged.
+          set +e
+          cargo +stable clippy -p horizon-client-gl --all-targets --message-format=json \
+            -- -D warnings > clippy.json
+          clippy_status=$?
+          python tools/gl21_annotate_rustc.py clippy.json
+          if [ "$clippy_status" -ne 0 ]; then
+            # The rendered text is in the annotations; this is the one-line summary.
+            echo "::error title=clippy::cargo clippy exited $clippy_status"
+          fi
+          set -e
+          [ "$clippy_status" -eq 0 ]
+          set +e
+          cargo +stable test -p horizon-client-gl --lib --bins --tests > test.log 2>&1
+          test_status=$?
+          set -e
+          # libtest's output is not JSON: only a failure's tail is worth an annotation, and the
+          # reporter attaches it when the stream carried no diagnostics. Only a failure's though
+          # -- run unconditionally it painted a green step red with 120 lines of passing tests.
+          tail -n 200 test.log
+          if [ "$test_status" -ne 0 ]; then
+            python tools/gl21_annotate_rustc.py test.log
+            echo "::error title=tests::cargo test exited $test_status"
+          fi
+          [ "$test_status" -eq 0 ]
+          # Formatting is reported, not enforced, until this crate has had one green build: the
+          # code was written without rustfmt available, and a formatting diff would hide a
+          # real compile error behind a style one.
+          # Advisory, and annotated: `--check` prints a diff per file and keeps going, but a
+          # step's output below the reporter's tail is not visible from the API, so each diff
+          # line becomes a warning and all of them are readable at once.
+          set +e
+          rustfmt +stable --edition 2024 --check crates/horizon-client-gl/src/lib.rs 2>&1 \
+            | sed 's/^/::warning::/'
+          set -e
+          echo "::warning::the rustfmt check above is advisory until this crate has had a green build"
+      # The calls the crate makes into glow, checked against the sources Cargo actually pinned.
+      - name: Check calls against glow's API
+        run: |
+          # Advisory for the same reason as formatting: it is a heuristic (no generics, no
+          # trait resolution), and the compiler above is the authority. Its self-test, which is
+          # a fact rather than a heuristic, is enforced by the test suite.
+          python tools/gl21_typecheck.py --glow-cargo --verbose \
+            || echo "::warning::gl21_typecheck found a call to check (not fatal yet)"
+      # The binary's own report: what this runner's GL offers (llvmpipe, GL 4.5: not the target,
+      # which is why --strict exists), the shader budgets, and the JSON a bug report carries.
+      - name: GL 2.1 capability and budget report
+        run: |
+          # A failure here used to be "exit code 1" and nothing else: the job log is a blob URL a
+          # session without it cannot open, and the step's output below the test reporter's tail
+          # never became an annotation. A failing run now asks the binary again with `--json`, and
+          # those measurement numbers are the annotation -- the same numbers, not a re-parse of
+          # the table.
+          set +e
+          status=0
+          for args in "" "--check-shaders --strict"; do
+            echo "== horizon-gl21-info $args"
+            # shellcheck disable=SC2086
+            cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args
+            run=$?
+            if [ "$run" -ne 0 ]; then
+              echo "::error::horizon-gl21-info $args exited $run; the measurements follow"
+              # shellcheck disable=SC2086
+              cargo +stable run -q -p horizon-client-gl --bin horizon-gl21-info -- $args --json \
+                | od -c | head -40 | sed 's/^/::error:: '
+            fi
+            status=$(( status | run ))
+          done
+          set -e
+          [ "$status" -eq 0 ]
+
   # The launcher is its own workspace (launcher/Cargo.toml), so verify's cargo runs never build it. A pull request that
   # changes it or a crate it builds is checked here, and so is every push to main: two pull requests can each pass
   # alone and break it together (#2059 and the registry ratings did, 2026-10-26).
   launcher:
-    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "linux", "playhorizon-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && github.repository == 'horizon-rust/horizon' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted", "linux", "playhorizon-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -137,16 +278,34 @@ jobs:
         if: steps.launcher.outputs.required != 'false'
         working-directory: launcher
         run: |
-          cargo +stable fmt --check
-          cargo +stable clippy --all-targets --locked -- -D warnings
-          cargo +stable test --locked --lib
+          # Same reason as the `verify` job's formatting step: a failing step's log is a blob
+          # URL, so all three commands report through annotations. `fmt --check` prints a diff;
+          # `| sed` alone would keep only its last line (two annotations, same title, and GitHub
+          # drops one), so each line becomes an annotation of its own.
+          set -eo pipefail
+          cargo +stable fmt --check 2>&1 | sed 's/^/::error::/'
+          set +e
+          cargo +stable clippy --all-targets --locked -- -D warnings 2>&1 \
+            | grep -E '^(error|warning)' | sort -u | head -20 | sed 's/^/::error::clippy: /'
+          clippy_status=${PIPESTATUS[0]}
+          cargo +stable test --locked --lib > launcher-test.log 2>&1
+          test_status=$?
+          set -e
+          if [ "$clippy_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
+            echo "::error::launcher: clippy $clippy_status, cargo test $test_status"
+            # One annotation with the tail, not forty: GitHub keeps around ten error
+            # annotations per step and drops the rest, which is how "test result: ok" became
+            # the only thing a failing run told us. The reporter puts libtest's verdict first.
+            python ../tools/gl21_annotate_rustc.py launcher-test.log
+            exit 1
+          fi
   # Most pull requests leave the harnesses to parity-main, which runs them on main a batch of merges at a time
   # (.github/workflows/parity-main.yml; releases wait for it). A pull request still runs them itself when it changes
   # a harness, an oracle, a probe or the runner, or carries the run-parity label (run-parity.yml, when it is added).
   parity-scope:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     # A git diff of this repository's own branch: one of playhorizon's small runners (docs/ci-runners.md).
-    runs-on: ${{ vars.SELF_HOSTED_CI != 'off' && fromJSON('["self-hosted", "linux", "playhorizon-light"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SELF_HOSTED_CI == 'all' && github.repository == 'horizon-rust/horizon' && fromJSON('["self-hosted", "linux", "playhorizon-light"]') || 'ubuntu-latest' }}
     outputs:
       run: ${{ steps.scope.outputs.run }}
     steps:
