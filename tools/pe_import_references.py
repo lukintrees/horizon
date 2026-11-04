@@ -77,15 +77,64 @@ def find_references(data, dll, symbol, map_text=''):
         raise ValueError('truncated or malformed PE') from exc
 
 
+def find_direct_calls(data, map_text, symbol):
+    """Find candidate x86 CALL/JMP rel32 to a public map symbol, not disassembly."""
+    maps = parse_map(map_text)
+    targets = {address for address, name, _ in maps if name == symbol}
+    if not targets:
+        return []
+    try:
+        pe = struct.unpack_from('<I', data, 0x3c)[0]
+        if data[:2] != b'MZ' or data[pe:pe + 4] != b'PE\0\0':
+            raise ValueError('not a PE file')
+        coff = pe + 4
+        if struct.unpack_from('<H', data, coff)[0] != 0x14c:
+            raise ValueError('only x86 machine code is supported')
+        count, opt_size = struct.unpack_from('<H', data, coff + 2)[0], struct.unpack_from('<H', data, coff + 16)[0]
+        optional = coff + 20
+        if struct.unpack_from('<H', data, optional)[0] != 0x10b:
+            raise ValueError('only PE32 x86 is supported')
+        image_base = struct.unpack_from('<I', data, optional + 28)[0]
+        addresses = [item[0] for item in maps]
+        results = []
+        for i in range(count):
+            section = optional + opt_size + 40 * i
+            _, rva, size, offset = struct.unpack_from('<IIII', data, section + 8)
+            flags = struct.unpack_from('<I', data, section + 36)[0]
+            if not flags & 0x20000000:
+                continue
+            if offset + size > len(data):
+                raise ValueError('truncated executable section')
+            body = data[offset:offset + size]
+            for index in range(max(0, len(body) - 4)):
+                if body[index] not in (0xe8, 0xe9):
+                    continue
+                va = image_base + rva + index
+                displacement = struct.unpack_from('<i', body, index + 1)[0]
+                destination = (va + 5 + displacement) & 0xffffffff
+                if destination not in targets:
+                    continue
+                map_index = bisect.bisect_right(addresses, va) - 1
+                nearest = maps[map_index] if map_index >= 0 else None
+                results.append((va, 'call' if body[index] == 0xe8 else 'jump', destination, nearest))
+        return results
+    except (struct.error, OverflowError) as exc:
+        raise ValueError('truncated or malformed PE') from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('exe', type=Path)
     parser.add_argument('map', type=Path)
     parser.add_argument('--dll', default='kernel32.dll')
     parser.add_argument('--symbol', default='GetSystemTimePreciseAsFileTime')
+    parser.add_argument('--callee', help='also find candidate x86 rel32 calls to this map symbol')
     args = parser.parse_args()
     try:
-        result = find_references(args.exe.read_bytes(), args.dll, args.symbol, args.map.read_text(errors='replace'))
+        data = args.exe.read_bytes()
+        map_text = args.map.read_text(errors='replace')
+        result = find_references(data, args.dll, args.symbol, map_text)
+        calls = find_direct_calls(data, map_text, args.callee) if args.callee else []
     except (OSError, ValueError) as error:
         parser.exit(1, f'{error}\n')
     print(f'Candidate code references to {args.dll}!{args.symbol}: {len(result)}')
@@ -96,6 +145,15 @@ def main():
         else:
             detail = 'no preceding public map symbol'
         print(f'  VA 0x{address:08x}: {kind}, IAT 0x{slot:08x}; nearest {detail}')
+    if args.callee:
+        print(f'Candidate direct rel32 calls/jumps to {args.callee}: {len(calls)}')
+        for address, kind, destination, nearest in calls[:50]:
+            if nearest:
+                base, name, obj = nearest
+                detail = f'{name}+0x{address-base:x} ({obj})'
+            else:
+                detail = 'no preceding public map symbol'
+            print(f'  VA 0x{address:08x}: {kind} 0x{destination:08x}; nearest {detail}')
     print('Caution: byte matches and nearest public symbols are not proof of the caller.')
 
 

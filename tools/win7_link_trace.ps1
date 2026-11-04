@@ -41,7 +41,7 @@ if ($code -eq 0) {
     $newHash = (Get-FileHash $binary -Algorithm SHA256).Hash
     Write-Host "::notice::Relinked client: time import before=$beforeImport after=$afterImport; hash changed=$($newHash -ne $originalHash)"
     if (Test-Path $env:HORIZON_MAP_TRACE) {
-        $references = & python tools/pe_import_references.py $binary $env:HORIZON_MAP_TRACE 2>&1
+        $references = & python tools/pe_import_references.py $binary $env:HORIZON_MAP_TRACE --callee __Timespec64_get_sys 2>&1
         if ($LASTEXITCODE -eq 0) {
             $summary = (($references | Select-Object -First 25) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Host "::notice::IAT candidate references: $summary"

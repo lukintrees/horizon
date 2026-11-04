@@ -58,6 +58,10 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(refs.find_references(data, 'kernel32.dll', 'missing', symbols), [])
         with self.assertRaises(ValueError):
             refs.find_references(fixture(64), 'kernel32.dll', 'ExitTest')
+        data[0x330:0x335] = b'\xe8' + struct.pack('<i', 0x401180 - 0x401135)
+        symbols += ' 0001:00000180 __Timespec64_get_sys 00401180 f libcpmt:xtime.obj\n'
+        self.assertEqual(refs.find_direct_calls(data, symbols, '__Timespec64_get_sys'), [
+            (0x401130, 'call', 0x401180, (0x401000, '_test_function', 'f object.obj'))])
 
     def test_flags_known_new_imports_case_insensitively_by_dll(self):
         result = [('KERNEL32.dll', ['ExitTest', 'GetSystemTimePreciseAsFileTime']),
