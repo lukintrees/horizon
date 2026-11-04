@@ -107,7 +107,7 @@ impl Game {
             .renderer
             .take()
             .ok_or_else(|| UsageError(lang::get("horizon.legacyGl.unavailable")))?;
-        renderer.run(self.options.settings.frames)?;
+        renderer.run(&self.options.settings)?;
         Ok(())
     }
 }

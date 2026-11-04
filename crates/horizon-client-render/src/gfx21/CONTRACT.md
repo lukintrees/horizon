@@ -241,3 +241,38 @@ Out of scope and unmeasured: wgpu visual parity, UI/fog/day-night/water-portal
 or F0 world screenshots, real X1650/`r300g` caps and timings, 800×600 RD4
 timings, 30-minute stability and hardware acceptance. No PR, issue, `/claim`,
 label or roadmap item is created.
+
+
+## PR 11: interactive offline single-player (this branch)
+
+After «Продолжи реализацию» the user selected the `full` scope: port `game.rs`
+with world, chunks, single-player, inventory, menus, input and saves. This PR
+is the first substantial stage of that port, not a claim of complete vanilla
+parity.
+
+* `crates/horizon-client/src/legacy_game/` is a pure-Rust, `unsafe`-free game
+  state: deterministic streamed chunks and a block atlas, player AABB physics,
+  gravity/jump/sprint, DDA block selection, break/place, a creative hotbar,
+  20 Hz simulation, day/night sky, HUD/menu/inventory/options screens, CPU
+  text rasterization and a small JSON save.
+* `legacy_gl.rs` now has two modes. The original `FullFramePlan::reference()`
+  smoke frame stays for the GL 2.1/2.0 CI profiles; `--game` selects the
+  interactive scene, dynamic per-chunk VBOs, a generated 64x64 block atlas,
+  a lightmap texture, CPU-rasterized text on a third texture unit, entity and
+  selection-line VBOs, winit keyboard/mouse/wheel events, cursor grab and a
+  `WaitUntil` frame cap. `--frames 0` is an infinite loop; `--frames N` is for
+  CI. `--seed`, `--world`, `--fov`, `--sensitivity` and `--render-distance`
+  are supported.
+* Screens and logs use new `horizon.legacyGl.game.*` translation keys in all
+  bundled locales; no English UI labels are hardcoded in the Rust sources.
+* Own-branch CI still has 14 steps. It now runs `tests.test_legacy_game`,
+  `cargo test -p horizon-client --lib legacy_game --no-default-features
+  --features legacy-gl`, and two `--game --frames 2` Xvfb profiles in addition
+  to the two reference frames, asserting `legacy-gl game: OK` and `GL_NO_ERROR`.
+
+**Still not implemented:** multiplayer networking, the integrated server,
+vanilla protocol/entity/container behaviour, a full port of the 22k-line
+`game.rs`, wgpu visual parity, real X1650/`r300g` caps and timings, 800x600 RD4
+FPS, 30-minute stability and hardware acceptance. The original `game.rs`
+remains the modern-gl path; the legacy path is a separate single-player
+implementation. No PR, issue, `/claim`, label or roadmap item is created.

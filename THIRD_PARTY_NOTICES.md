@@ -177,3 +177,10 @@ glow 0.17.0 and glutin 0.32.3 are Apache-2.0; `glutin-winit` 0.5.0 is MIT (its o
 `glutin-winit/LICENSE`, copyright Kirill Chibisov); `raw-window-handle` 0.6.2 is
 MIT OR Apache-2.0 OR Zlib. Only their public APIs are called: no upstream source
 files were copied into this repository.
+
+
+## PR 11: bundled HUD font
+
+`ab_glyph` 0.2.32 (Apache-2.0) rasterizes the already-bundled Geist Mono face
+from `horizon-theme/fonts` (SIL Open Font License 1.1) into a CPU RGBA texture
+for the GL2 HUD. No font files are downloaded and no system fonts are required.

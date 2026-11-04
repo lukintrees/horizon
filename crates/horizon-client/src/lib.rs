@@ -19,6 +19,8 @@ pub mod game;
 pub mod game;
 
 #[cfg(all(feature = "legacy-gl", not(feature = "modern-gl")))]
+pub mod legacy_game;
+#[cfg(all(feature = "legacy-gl", not(feature = "modern-gl")))]
 pub mod legacy_gl;
 #[cfg(feature = "modern-gl")]
 pub mod mod_api;

@@ -262,13 +262,18 @@ impl LegacyGraphicsApi {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LegacySettings {
     pub api: LegacyGraphicsApi,
     pub texture_budget_mib: u32,
     pub render_distance: u32,
     pub legacy_gl: bool,
     pub frames: u32,
+    pub game: bool,
+    pub seed: u64,
+    pub world: String,
+    pub fov: f32,
+    pub sensitivity: f32,
     pub help: bool,
     pub launch_api: bool,
     pub disabled_features: Vec<&'static str>,
@@ -282,6 +287,11 @@ impl Default for LegacySettings {
             render_distance: 8,
             legacy_gl: false,
             frames: 1,
+            game: false,
+            seed: 0x48_4F_52_49_5A_4F_4E,
+            world: String::new(),
+            fov: 70.0,
+            sensitivity: 0.0025,
             help: false,
             launch_api: false,
             disabled_features: Vec::new(),
@@ -297,6 +307,11 @@ impl LegacySettings {
             render_distance: 4,
             legacy_gl: true,
             frames: 1,
+            game: false,
+            seed: 0x51DE,
+            world: String::new(),
+            fov: 70.0,
+            sensitivity: 0.0025,
             help: false,
             launch_api: false,
             disabled_features: vec!["HDR", "SSBO", "compute culling", "texture arrays"],
@@ -305,17 +320,24 @@ impl LegacySettings {
 
     pub fn startup_note(&self) -> String {
         format!(
-            "graphics-api={} budget={}MiB distance={} frames={} disabled={}",
+            "graphics-api={} budget={}MiB distance={} frames={} game={} seed={} world={} disabled={}",
             self.api.name(),
             self.texture_budget_mib,
             self.render_distance,
             self.frames,
+            self.game,
+            self.seed,
+            if self.world.is_empty() {
+                "default"
+            } else {
+                &self.world
+            },
             self.disabled_features.len()
         )
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct LegacyArgs {
     pub settings: LegacySettings,
     pub unknown: Vec<String>,
@@ -353,7 +375,37 @@ impl LegacyArgs {
                 "--frames" => {
                     if let Some(value) = iter.next() {
                         match value.parse::<u32>() {
-                            Ok(frames) => settings.frames = frames.max(1),
+                            Ok(frames) => settings.frames = frames,
+                            Err(_) => unknown.push(value.clone()),
+                        }
+                    }
+                }
+                "--game" => settings.game = true,
+                "--seed" => {
+                    if let Some(value) = iter.next() {
+                        match value.parse::<u64>() {
+                            Ok(seed) => settings.seed = seed,
+                            Err(_) => unknown.push(value.clone()),
+                        }
+                    }
+                }
+                "--world" => {
+                    if let Some(value) = iter.next() {
+                        settings.world = value.clone();
+                    }
+                }
+                "--fov" => {
+                    if let Some(value) = iter.next() {
+                        match value.parse::<f32>() {
+                            Ok(fov) => settings.fov = fov.clamp(30.0, 110.0),
+                            Err(_) => unknown.push(value.clone()),
+                        }
+                    }
+                }
+                "--sensitivity" => {
+                    if let Some(value) = iter.next() {
+                        match value.parse::<f32>() {
+                            Ok(value) => settings.sensitivity = value.clamp(0.0005, 0.02),
                             Err(_) => unknown.push(value.clone()),
                         }
                     }
@@ -418,7 +470,7 @@ mod tests {
         assert_eq!(settings.disabled_features.len(), 4);
         assert_eq!(
             settings.startup_note(),
-            "graphics-api=legacy-gl budget=48MiB distance=4 frames=1 disabled=4"
+            "graphics-api=legacy-gl budget=48MiB distance=4 frames=1 game=false seed=20958 world=default disabled=4"
         );
     }
 
@@ -431,7 +483,16 @@ mod tests {
             "--render-distance",
             "5",
             "--frames",
-            "2",
+            "0",
+            "--game",
+            "--seed",
+            "99",
+            "--world",
+            "/tmp/world.json",
+            "--fov",
+            "80",
+            "--sensitivity",
+            "0.005",
             "--help",
             "--unknown",
         ]
@@ -442,7 +503,12 @@ mod tests {
         assert_eq!(parsed.settings.api, LegacyGraphicsApi::LegacyGl);
         assert_eq!(parsed.settings.texture_budget_mib, 64);
         assert_eq!(parsed.settings.render_distance, 5);
-        assert_eq!(parsed.settings.frames, 2);
+        assert_eq!(parsed.settings.frames, 0);
+        assert!(parsed.settings.game);
+        assert_eq!(parsed.settings.seed, 99);
+        assert_eq!(parsed.settings.world, "/tmp/world.json");
+        assert_eq!(parsed.settings.fov, 80.0);
+        assert_eq!(parsed.settings.sensitivity, 0.005);
         assert!(parsed.settings.help);
         assert_eq!(parsed.unknown, vec!["--unknown"]);
     }
