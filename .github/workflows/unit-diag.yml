@@ -1,0 +1,37 @@
+# Temporary: the offline research tooling's unit tests, as CI runs them (ubuntu, full history), with the
+# failing tests' tracebacks as annotations. Removed once the cause of the `verify` failure is known.
+name: Unit test diagnostics
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/**]
+    paths:
+      - .github/workflows/unit-diag.yml
+permissions:
+  contents: read
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run the tests
+        run: |
+          set +e
+          python -m unittest discover -s tests -v > ut.txt 2>&1
+          code=$?
+          python3 - "$code" <<'PY'
+          import re, sys
+          code = sys.argv[1]
+          lines = open("ut.txt", errors="replace").read().splitlines()
+          start = [i for i, l in enumerate(lines) if re.match(r"^(FAIL|ERROR): ", l)]
+          out = [f"exit={code} python={sys.version.split()[0]}"]
+          for i in start[:6]:
+              out.extend(lines[i:i+14])
+          out.extend(["--- summary ---"] + [l for l in lines if re.match(r"^(Ran |OK|FAILED|FLAKY|FAIL dedicated|RETRIED)", l)][-12:])
+          text = "\n".join(out)[:40000]
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=unittest::{esc}")
+          PY
