@@ -233,7 +233,9 @@ resource replacement/context recovery и native platform loop остаются �
 ## 10. A01c/R03b: snapshot producers и glyph-cache commit (2026-11-05)
 
 - `legacy_gfx::AssetSnapshot` берёт **существующие** `RenderAssets`/`HudAtlas`, не вводит второй pack
-  loader. Terrain и оба glint buffers borrowed; `RenderAssets::generation` и layer IDs сохраняются.
+  loader. Terrain и оба glint buffers borrowed; layer IDs и source provenance сохраняются.
+  Полную `ResourceGeneration` явно передаёт owner: HUD-only reload может изменить layout без смены
+  `RenderAssets::generation`; snapshot отдельно сообщает terrain generation и HUD revision.
   Combined base-byte budget проверяется до ожидания/распаковки HUD. Snapshot — явно base-frame SDR;
   animation counts доступны отдельно, live animation loop этим не реализован. Custom core text/line
   shaders отклоняются, не теряются молча.

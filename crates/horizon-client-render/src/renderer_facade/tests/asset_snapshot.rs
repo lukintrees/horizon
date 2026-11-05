@@ -76,6 +76,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
         Context::new("osmesa", [64; 2]).unwrap(),
         &assets,
         &atlas,
+        ResourceGeneration(77),
         &[255; 1024],
         Limits::default(),
         preparation,
@@ -89,6 +90,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
         Context::new("osmesa", [64; 2]).unwrap(),
         &assets,
         &atlas,
+        ResourceGeneration(77),
         &[255; 1024],
         Limits::default(),
         preparation,
@@ -105,6 +107,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
         Context::new("osmesa", [64; 2]).unwrap(),
         &assets,
         &atlas,
+        ResourceGeneration(77),
         &[255; 1024],
         Limits::default(),
         preparation,
@@ -114,10 +117,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
     let mut renderer = staged.commit().unwrap();
     assert_ne!(atlas.font.epoch(), changed_epoch);
     assert!(atlas.font.take_patches().is_empty());
-    assert_eq!(
-        renderer.resource_generation(),
-        Some(ResourceGeneration(assets.generation))
-    );
+    assert_eq!(renderer.resource_generation(), Some(ResourceGeneration(77)));
     let mut hud = HudBatch::new([64; 2]);
     hud.text(&atlas, "Ж", 8., 8., u32::MAX, false);
     assert!(!hud.vertices.is_empty());

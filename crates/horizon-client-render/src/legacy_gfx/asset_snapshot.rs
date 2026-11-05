@@ -13,14 +13,18 @@ pub struct AssetSnapshot<'a> {
     assets: &'a RenderAssets,
     hud: &'a HudAtlas,
     pixels: Cow<'a, [u8]>,
+    generation: ResourceGeneration,
 }
 impl<'a> AssetSnapshot<'a> {
+    /// `generation` must be issued by the resource owner for the full bundle;
+    /// do not derive it solely from RenderAssets::generation on HUD-only reload.
     /// Bound all base pixel bytes before waiting for/decompressing packed HUD
     /// pixels. Terrain and glint pixels remain borrowed; a compressed HUD uses
     /// one bounded temporary decode, discarded when upload finishes.
     pub fn new(
         assets: &'a RenderAssets,
         hud: &'a HudAtlas,
+        generation: ResourceGeneration,
         max_bytes: usize,
     ) -> Result<Self, String> {
         if hud.text_shader.is_some() || hud.lines_shader.is_some() {
@@ -55,11 +59,20 @@ impl<'a> AssetSnapshot<'a> {
             assets,
             hud,
             pixels,
+            generation,
         })
+    }
+    /// Source provenance is distinct from the caller-issued full bundle epoch:
+    /// a HUD-only reload can change layout without reloading RenderAssets.
+    pub fn asset_generation(&self) -> u64 {
+        self.assets.generation
+    }
+    pub fn hud_revision(&self) -> u64 {
+        self.hud.revision
     }
     pub fn resources(&self) -> Resources<'_> {
         Resources {
-            generation: ResourceGeneration(self.assets.generation),
+            generation: self.generation,
             terrain: TextureLayers {
                 size: self.assets.sprite_size,
                 layers: self.assets.texture_layers,
@@ -117,12 +130,13 @@ impl TerrainHudRenderer {
         context: Context,
         assets: &RenderAssets,
         hud: &'a HudAtlas,
+        generation: ResourceGeneration,
         lightmap: &[u8],
         limits: Limits,
         preparation: ResourceLimits,
     ) -> Result<StagedAssetRenderer<'a>, String> {
         let font_epoch = hud.font.epoch();
-        let snapshot = AssetSnapshot::new(assets, hud, preparation.base_bytes)?;
+        let snapshot = AssetSnapshot::new(assets, hud, generation, preparation.base_bytes)?;
         let renderer = Self::from_resources(
             context,
             &snapshot.resources(),
@@ -172,23 +186,26 @@ pub(crate) mod tests {
         let bytes =
             assets.pixels.len() + hud.pixels.len() + hud.glint.0.len() + hud.glint_armor.0.len();
         {
-            let snapshot = AssetSnapshot::new(&assets, &hud, bytes).unwrap();
+            let snapshot =
+                AssetSnapshot::new(&assets, &hud, ResourceGeneration(77), bytes).unwrap();
             let bundle = snapshot.resources();
             assert_eq!(bundle.validate(bytes), Ok(bytes));
-            assert_eq!(bundle.generation, ResourceGeneration(23));
+            assert_eq!(bundle.generation, ResourceGeneration(77));
+            assert_eq!(snapshot.asset_generation(), 23);
+            assert_eq!(snapshot.hud_revision(), hud.revision);
             assert_eq!(bundle.terrain.rgba.as_ptr(), assets.pixels.as_ptr());
             assert_eq!(bundle.hud.rgba.as_ptr(), hud.pixels.as_ptr());
             assert_eq!(bundle.item_glint.rgba.as_ptr(), hud.glint.0.as_ptr());
             assert_eq!(snapshot.animation_counts(), [0, 0]);
-            assert!(AssetSnapshot::new(&assets, &hud, bytes - 1).is_err());
+            assert!(AssetSnapshot::new(&assets, &hud, ResourceGeneration(77), bytes - 1).is_err());
         }
         hud.pack_pixels();
-        let snapshot = AssetSnapshot::new(&assets, &hud, bytes).unwrap();
+        let snapshot = AssetSnapshot::new(&assets, &hud, ResourceGeneration(77), bytes).unwrap();
         assert_eq!(snapshot.resources().validate(bytes), Ok(bytes));
         assert_eq!(hud.font.epoch(), epoch);
         drop(snapshot);
         let mut bad_assets = assets;
         bad_assets.pixels.pop();
-        assert!(AssetSnapshot::new(&bad_assets, &hud, usize::MAX).is_err());
+        assert!(AssetSnapshot::new(&bad_assets, &hud, ResourceGeneration(78), usize::MAX).is_err());
     }
 }
