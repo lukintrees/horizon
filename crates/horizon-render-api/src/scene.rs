@@ -153,6 +153,30 @@ impl<B: RenderBackend> WorldScene<B> {
         Ok(scene)
     }
 
+    /// Replace one stable layer's level-zero pixels and gutters in-place.
+    /// Membership/VBOs/layout are unchanged. A backend failure is not a rollback
+    /// guarantee: the owner must stop drawing until resources are recovered.
+    pub fn update_sprite(
+        &mut self,
+        index: usize,
+        rgba: &[u8],
+        max_bytes: usize,
+    ) -> Result<(), SceneError<B::Error>> {
+        let patch = crate::atlas::sprite_patch(&self.atlas, index, rgba, max_bytes)
+            .map_err(SceneError::Atlas)?;
+        self.backend
+            .update_texture(
+                self.pages[patch.page],
+                patch.at,
+                Image {
+                    width: patch.size[0],
+                    height: patch.size[1],
+                    rgba: &patch.rgba,
+                },
+            )
+            .map_err(SceneError::Backend)
+    }
+
     pub fn atlas(&self) -> &AtlasLayout {
         &self.atlas
     }

@@ -7,6 +7,8 @@ struct Backend {
     next_texture: u64,
     textures: std::rc::Rc<std::cell::RefCell<HashSet<TextureId>>>,
     fail_texture: Option<u64>,
+    updates: Vec<([u32; 2], [u32; 2], Vec<u8>)>,
+    fail_update: bool,
     meshes: HashSet<MeshId>,
     fail_remove: bool,
     origins: Vec<[f64; 3]>,
@@ -25,9 +27,14 @@ impl RenderBackend for Backend {
     fn update_texture(
         &mut self,
         _: TextureId,
-        _: [u32; 2],
-        _: Image<'_>,
+        at: [u32; 2],
+        image: Image<'_>,
     ) -> Result<(), Self::Error> {
+        if self.fail_update {
+            return Err("update failure");
+        }
+        self.updates
+            .push((at, [image.width, image.height], image.rgba.to_vec()));
         Ok(())
     }
     fn remove_texture(&mut self, id: TextureId) -> Result<(), Self::Error> {
@@ -197,4 +204,24 @@ fn paged_construction_uploads_lazily_and_reclaims_partial_resources_on_every_fai
         .is_err()
     );
     assert!(!called); // invalid lightmap is rejected before page preparation/upload
+}
+
+#[test]
+fn sprite_updates_extrude_padding_without_replacing_resident_meshes_or_neighbours() {
+    let mut scene = scene();
+    scene.replace_section([0; 3], &runs(), &[]).unwrap();
+    let meshes = scene.backend_mut().meshes.clone();
+    scene.update_sprite(0, &[1, 2, 3, 4], 36).unwrap();
+    let update = &scene.backend_mut().updates[0];
+    assert_eq!(update.0, [0, 0]);
+    assert_eq!(update.1, [3, 3]);
+    assert_eq!(update.2, [1, 2, 3, 4].repeat(9));
+    assert!(scene.update_sprite(1, &[0; 4], 36).is_err());
+    assert!(scene.update_sprite(0, &[0; 3], 36).is_err());
+    assert!(scene.update_sprite(0, &[0; 4], 35).is_err());
+    assert_eq!(scene.backend_mut().updates.len(), 1);
+    scene.backend_mut().fail_update = true;
+    assert!(scene.update_sprite(0, &[0; 4], 36).is_err());
+    assert_eq!(scene.backend_mut().meshes, meshes);
+    assert_eq!(scene.section_count(), 1);
 }
