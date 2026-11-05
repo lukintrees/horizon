@@ -210,7 +210,8 @@ jobs:
             fi
           done
       - name: Validate native Game startup selection and profile
-        run: cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::render_startup::tests::
+        run: |
+          cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::render_startup::tests::
       - name: Lint the game bridges and GL2 coordinator
         shell: bash
         run: |
