@@ -113,7 +113,8 @@ jobs:
         # Compiles the real routing methods; not normal-resource Game launch evidence.
         run: python3 -m unittest discover -s tests -p 'test_game_loop_routing.py'
       - name: Test CPU section culling and order on the default feature graph
-        run: cargo test --locked -p horizon-client-render --lib renderer_owner::visibility::tests::
+        run: |
+          cargo test --locked -p horizon-client-render --lib renderer_owner::visibility::tests::
       - name: Test neutral scheduling and headless loop through actual Game
         run: |
           cargo test --locked -p horizon-client --no-default-features --lib game::event_loop::tests::
