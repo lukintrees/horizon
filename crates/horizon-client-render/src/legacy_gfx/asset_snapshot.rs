@@ -9,6 +9,21 @@ use horizon_render_api::{
 };
 use std::borrow::Cow;
 
+/// Cooperative startup boundaries, not a hard driver-call latency guarantee.
+/// Terrain counters describe completed pages; other phases may allocate/decode
+/// one bounded resource. No font/generation publication until Ready succeeds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StagePoint {
+    Backend,
+    Snapshot,
+    Layout,
+    Terrain { completed: usize, total: usize },
+    Hud,
+    Glint,
+    Animations,
+    Ready,
+}
+
 pub struct AssetSnapshot<'a> {
     assets: &'a RenderAssets,
     hud: &'a HudAtlas,
@@ -112,6 +127,27 @@ pub struct StagedAssetRenderer<'a> {
     font_epoch: u64,
 }
 impl StagedAssetRenderer<'_> {
+    /// Internal boot path only: the boot renderer has already been retired.
+    /// Restore its reserved capacity before publishing the final font epoch.
+    pub(crate) fn commit_after_boot(
+        mut self,
+        limits: Limits,
+    ) -> Result<TerrainHudRenderer, String> {
+        if self.hud.font.epoch() != self.font_epoch {
+            return Err("font changed during native asset staging; rebuild the snapshot".into());
+        }
+        self.renderer.world.backend_mut().set_budget(limits.gpu)?;
+        let free = self.renderer.world.backend_mut().remaining();
+        let capacity = limits
+            .hud_resident_pages
+            .min(free.textures)
+            .min(free.texture_bytes / self.renderer.hud.layout().page_bytes());
+        self.renderer.cache =
+            super::Cache::new(self.renderer.hud.layout(), capacity).map_err(super::diagnostic)?;
+        self.renderer.hud_capacity = capacity;
+        self.renderer.limits = limits;
+        self.commit()
+    }
     /// The caller's publication boundary: no fallible GPU work after this font
     /// reset. Old text batches must be rebuilt. A changed font epoch rejects the
     /// staged owner instead of committing under stale producer state.
@@ -124,6 +160,41 @@ impl StagedAssetRenderer<'_> {
     }
 }
 impl TerrainHudRenderer {
+    /// Boot staging uses a replacement backend sharing the existing context
+    /// and only its free tracked GPU capacity. Callback failures never commit.
+    pub(crate) fn stage_assets_backend<'a>(
+        backend: super::Renderer<'static>,
+        assets: &RenderAssets,
+        hud: &'a HudAtlas,
+        generation: ResourceGeneration,
+        limits: Limits,
+        preparation: ResourceLimits,
+        checkpoint: &mut impl FnMut(StagePoint, &Context) -> Result<(), String>,
+    ) -> Result<StagedAssetRenderer<'a>, String> {
+        let font_epoch = hud.font.epoch();
+        checkpoint(StagePoint::Snapshot, backend.context())?;
+        let snapshot = AssetSnapshot::new(assets, hud, generation, preparation.base_bytes)?;
+        let mut renderer = Self::from_resources_backend_checked(
+            backend,
+            &snapshot.resources(),
+            &[255; 1024],
+            limits,
+            preparation,
+            checkpoint,
+        )?;
+        checkpoint(
+            StagePoint::Animations,
+            renderer.world.backend_mut().context(),
+        )?;
+        renderer.install_animations(assets, hud)?;
+        checkpoint(StagePoint::Ready, renderer.world.backend_mut().context())?;
+        Ok(StagedAssetRenderer {
+            renderer,
+            hud,
+            font_epoch,
+        })
+    }
+
     /// Prepare from RenderAssets/HudAtlas without resetting glyph UVs/patches.
     /// A failed or discarded stage leaves the active font cache untouched.
     pub fn stage_assets<'a>(

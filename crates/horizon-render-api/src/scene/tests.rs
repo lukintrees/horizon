@@ -225,3 +225,82 @@ fn sprite_updates_extrude_padding_without_replacing_resident_meshes_or_neighbour
     assert_eq!(scene.backend_mut().meshes, meshes);
     assert_eq!(scene.section_count(), 1);
 }
+
+#[test]
+fn paged_checkpoints_cancel_at_every_boundary_and_reclaim_partial_textures() {
+    let atlas = crate::atlas::pack_atlas(
+        &[crate::atlas::SpriteSize {
+            width: 1,
+            height: 1,
+        }; 3],
+        4,
+        1,
+        3,
+    )
+    .unwrap();
+    assert_eq!(atlas.page_count(), 3);
+    for stop in 0..=3 {
+        let backend = Backend::default();
+        let textures = backend.textures.clone();
+        let mut seen = Vec::new();
+        let result = WorldScene::new_paged_checked(
+            backend,
+            atlas.clone(),
+            &[255; 1024],
+            1,
+            |_| Ok(vec![255; 64]),
+            |backend, completed, total| {
+                assert_eq!(total, 3);
+                assert_eq!(backend.textures.borrow().len(), completed);
+                seen.push(completed);
+                if completed == stop {
+                    Err("cancelled by owner")
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(SceneError::Backend("cancelled by owner"))
+        ));
+        assert_eq!(seen, (0..=stop).collect::<Vec<_>>());
+        assert!(
+            textures.borrow().is_empty(),
+            "partial textures at boundary {stop}"
+        );
+    }
+}
+
+#[test]
+fn paged_checkpoints_do_not_skip_pages_or_publish_before_lightmap() {
+    let atlas = crate::atlas::pack_atlas(
+        &[crate::atlas::SpriteSize {
+            width: 1,
+            height: 1,
+        }; 3],
+        4,
+        1,
+        3,
+    )
+    .unwrap();
+    let backend = Backend::default();
+    let textures = backend.textures.clone();
+    let mut seen = Vec::new();
+    let scene = WorldScene::new_paged_checked(
+        backend,
+        atlas,
+        &[255; 1024],
+        1,
+        |_| Ok(vec![255; 64]),
+        |_, completed, total| {
+            seen.push((completed, total));
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(seen, [(0, 3), (1, 3), (2, 3), (3, 3)]);
+    assert_eq!(textures.borrow().len(), 4); // three terrain pages + final lightmap
+    drop(scene);
+    assert!(textures.borrow().is_empty());
+}

@@ -97,6 +97,27 @@ pub struct Renderer<'a> {
     max_texture: u32,
 }
 static IDS: AtomicU64 = AtomicU64::new(1);
+fn reserved_capacity(free: Stats, reserve: Stats) -> Result<Stats, String> {
+    Ok(Stats {
+        texture_bytes: free
+            .texture_bytes
+            .checked_sub(reserve.texture_bytes)
+            .ok_or("reserved texture bytes exceed free capacity")?,
+        mesh_bytes: free
+            .mesh_bytes
+            .checked_sub(reserve.mesh_bytes)
+            .ok_or("reserved mesh bytes exceed free capacity")?,
+        textures: free
+            .textures
+            .checked_sub(reserve.textures)
+            .ok_or("reserved texture objects exceed free capacity")?,
+        meshes: free
+            .meshes
+            .checked_sub(reserve.meshes)
+            .ok_or("reserved mesh objects exceed free capacity")?,
+    })
+}
+
 fn id() -> Result<u64, String> {
     IDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
         .map_err(|_| "resource ID space exhausted".into())
@@ -256,7 +277,14 @@ impl<'a> Renderer<'a> {
     /// guard enforces that with an exclusive borrow). Not a global GL ledger.
     /// Shader/program/driver overhead is not part of the payload budget.
     pub fn staging_replacement(&self) -> Result<Self, String> {
-        let free = self.remaining();
+        self.staging_replacement_reserving(Stats::default())
+    }
+    /// Same-context candidate leaving explicit transient capacity for the boot
+    /// HUD. The active owner must cap its allocations to resident + reserve;
+    /// callers may not create arbitrary other owners. This is not a global GL
+    /// ledger. Existing reloads use zero reserve and still freeze their owner.
+    pub fn staging_replacement_reserving(&self, reserve: Stats) -> Result<Self, String> {
+        let free = reserved_capacity(self.remaining(), reserve)?;
         let mut candidate = Self::from_context(
             self.gl.context.clone(),
             Budget {
@@ -1002,3 +1030,43 @@ const _: () = {
     assert!(size_of::<Vertex>() == 44);
     assert!(std::mem::offset_of!(Vertex, color) == 28);
 };
+
+#[cfg(test)]
+mod reserve_tests {
+    use super::*;
+    #[test]
+    fn reserve_charges_bytes_and_object_slots_without_saturating_or_wrapping() {
+        let free = Stats {
+            texture_bytes: 8,
+            mesh_bytes: 9,
+            textures: 10,
+            meshes: 11,
+        };
+        assert_eq!(reserved_capacity(free, Stats::default()).unwrap(), free);
+        assert_eq!(reserved_capacity(free, free).unwrap(), Stats::default());
+        for reserve in [
+            Stats {
+                texture_bytes: 9,
+                ..Default::default()
+            },
+            Stats {
+                mesh_bytes: 10,
+                ..Default::default()
+            },
+            Stats {
+                textures: 11,
+                ..Default::default()
+            },
+            Stats {
+                meshes: 12,
+                ..Default::default()
+            },
+            Stats {
+                mesh_bytes: usize::MAX,
+                ..Default::default()
+            },
+        ] {
+            assert!(reserved_capacity(free, reserve).is_err());
+        }
+    }
+}

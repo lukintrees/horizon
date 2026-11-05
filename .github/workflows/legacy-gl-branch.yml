@@ -203,7 +203,7 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          for filter in native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests::; do
+          for filter in native_loading::checked_stage_tests::boot_resources_ native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
             else
@@ -225,7 +225,7 @@ jobs:
           MESA_GL_VERSION_OVERRIDE: '2.0'
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
-          if cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::native_loading::tests::boot_producer_ -- --ignored > target/legacy-branch/visible-boot.log 2>&1 && xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --locked -p horizon-client-render --features legacy-gl --lib native_loading::tests::visible_boot_ -- --ignored >> target/legacy-branch/visible-boot.log 2>&1; then
+          if cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::native_loading::tests::boot_producer_ -- --ignored > target/legacy-branch/visible-boot.log 2>&1 && xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --locked -p horizon-client-render --features legacy-gl --lib visible_boot_ -- --ignored >> target/legacy-branch/visible-boot.log 2>&1; then
             cat target/legacy-branch/visible-boot.log
           else
             cat target/legacy-branch/visible-boot.log

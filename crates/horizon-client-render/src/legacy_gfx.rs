@@ -22,7 +22,7 @@ mod animation;
 mod asset_snapshot;
 #[cfg(test)]
 pub(crate) use asset_snapshot::tests::assets as test_assets;
-pub use asset_snapshot::{AssetSnapshot, StagedAssetRenderer};
+pub use asset_snapshot::{AssetSnapshot, StagePoint, StagedAssetRenderer};
 pub mod frame;
 mod reload;
 pub use reload::StagedAssetReload;

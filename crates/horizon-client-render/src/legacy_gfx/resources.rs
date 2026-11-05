@@ -89,6 +89,19 @@ impl TerrainHudRenderer {
         Self::from_terrain(backend, terrain, resources, lightmap, limits)
     }
 
+    pub(crate) fn from_resources_backend_checked(
+        backend: Renderer<'static>,
+        resources: &Resources<'_>,
+        lightmap: &[u8],
+        limits: Limits,
+        preparation: ResourceLimits,
+        checkpoint: &mut impl FnMut(StagePoint, &Context) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        checkpoint(StagePoint::Layout, backend.context())?;
+        let terrain = prepare(resources, lightmap, limits, preparation)?;
+        Self::from_terrain_checked(backend, terrain, resources, lightmap, limits, checkpoint)
+    }
+
     fn from_terrain(
         backend: Renderer<'static>,
         terrain: TerrainAtlas<'_>,
@@ -96,15 +109,38 @@ impl TerrainHudRenderer {
         lightmap: &[u8],
         limits: Limits,
     ) -> Result<Self, String> {
-        let world = WorldScene::new_paged(
+        Self::from_terrain_checked(
+            backend,
+            terrain,
+            resources,
+            lightmap,
+            limits,
+            &mut |_, _| Ok(()),
+        )
+    }
+
+    fn from_terrain_checked(
+        backend: Renderer<'static>,
+        terrain: TerrainAtlas<'_>,
+        resources: &Resources<'_>,
+        lightmap: &[u8],
+        limits: Limits,
+        checkpoint: &mut impl FnMut(StagePoint, &Context) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let world = WorldScene::new_paged_checked(
             backend,
             terrain.layout().clone(),
             lightmap,
             limits.sections,
             |page| terrain.page(page),
+            |backend, completed, total| {
+                checkpoint(StagePoint::Terrain { completed, total }, backend.context())
+            },
         )
         .map_err(diagnostic)?;
         drop(terrain);
+        let mut world = world;
+        checkpoint(StagePoint::Hud, world.backend_mut().context())?;
         let mut renderer = Self::from_world(
             world,
             lightmap,
@@ -115,6 +151,7 @@ impl TerrainHudRenderer {
             },
             limits,
         )?;
+        checkpoint(StagePoint::Glint, renderer.world.backend_mut().context())?;
         renderer.set_glint_textures(
             Image {
                 width: resources.item_glint.width,

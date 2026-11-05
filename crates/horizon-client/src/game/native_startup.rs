@@ -68,13 +68,24 @@ pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
         .render_menu(&menu)
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct LoadingEvidence {
+    pub presentations: u64,
+    pub gpu_presentations: u64,
+    pub gpu_checkpoints: u64,
+    pub gpu_elapsed_ms: u64,
+}
+
 pub(super) fn run(game: Game<'_>) -> Result<()> {
     run_inner(game, None)
 }
-pub(super) fn run_with_loading(game: Game<'_>, loading_presentations: u64) -> Result<()> {
+pub(super) fn run_with_loading(
+    game: Game<'_>,
+    loading_presentations: LoadingEvidence,
+) -> Result<()> {
     run_inner(game, Some(loading_presentations))
 }
-fn run_inner(mut game: Game<'_>, loading_presentations: Option<u64>) -> Result<()> {
+fn run_inner(mut game: Game<'_>, loading_presentations: Option<LoadingEvidence>) -> Result<()> {
     game.options.renderer.validate(&game.options)?;
     let bootstrap = game.options.native_bootstrap_only;
     let outcome = if bootstrap {
@@ -107,7 +118,10 @@ fn run_inner(mut game: Game<'_>, loading_presentations: Option<u64>) -> Result<(
         let report = serde_json::json!({
             "scenario": if bootstrap {"native-game-bootstrap-only"} else {"native-game-menu-only"},
             "game_constructed": true,
-            "loading_presentations": loading_presentations.unwrap_or(0),
+            "loading_presentations": loading_presentations.map_or(0, |e| e.presentations + e.gpu_presentations),
+            "loading_gpu_checkpoints": loading_presentations.map_or(0, |e| e.gpu_checkpoints),
+            "loading_gpu_presentations": loading_presentations.map_or(0, |e| e.gpu_presentations),
+            "loading_gpu_elapsed_ms": loading_presentations.map_or(0, |e| e.gpu_elapsed_ms),
             "loading_context_transferred": loading_presentations.is_some(),
             "loading_worker_joined": loading_presentations.is_some(),
             "backend": "native-gl2",

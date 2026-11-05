@@ -81,9 +81,14 @@ impl<B: RenderBackend> WorldScene<B> {
         if pages.len() != atlas.page_count() || pages.iter().any(|p| Some(p.len()) != bytes) {
             return Err(SceneError::InvalidAtlas);
         }
-        Self::upload_pages(backend, atlas, lightmap, max_sections, |index| {
-            Ok(pages[index])
-        })
+        Self::upload_pages(
+            backend,
+            atlas,
+            lightmap,
+            max_sections,
+            |index| Ok(pages[index]),
+            |_, _, _| Ok(()),
+        )
     }
 
     /// Prepare/upload exactly one page at a time. A failed preparation/upload
@@ -95,7 +100,24 @@ impl<B: RenderBackend> WorldScene<B> {
         max_sections: usize,
         page: impl FnMut(usize) -> Result<Vec<u8>, crate::atlas::AtlasError>,
     ) -> Result<Self, SceneError<B::Error>> {
-        Self::upload_pages(backend, atlas, lightmap, max_sections, page)
+        Self::new_paged_checked(backend, atlas, lightmap, max_sections, page, |_, _, _| {
+            Ok(())
+        })
+    }
+
+    /// Owner-thread checkpoints before the first page and after each completed
+    /// page (including the last, before lightmap allocation). The callback may
+    /// pump events/draw another same-context owner, but must not publish this
+    /// incomplete scene. Any callback error drops all partial scene resources.
+    pub fn new_paged_checked(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        page: impl FnMut(usize) -> Result<Vec<u8>, crate::atlas::AtlasError>,
+        checkpoint: impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::upload_pages(backend, atlas, lightmap, max_sections, page, checkpoint)
     }
 
     fn upload_pages<P: AsRef<[u8]>>(
@@ -104,6 +126,7 @@ impl<B: RenderBackend> WorldScene<B> {
         lightmap: &[u8],
         max_sections: usize,
         mut page: impl FnMut(usize) -> Result<P, crate::atlas::AtlasError>,
+        mut checkpoint: impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
     ) -> Result<Self, SceneError<B::Error>> {
         let side = atlas.page_size();
         let bytes = (side as usize)
@@ -124,7 +147,9 @@ impl<B: RenderBackend> WorldScene<B> {
             max_sections,
             min_y: 0,
         };
-        for index in 0..scene.atlas.page_count() {
+        let total = scene.atlas.page_count();
+        checkpoint(&mut scene.backend, 0, total).map_err(SceneError::Backend)?;
+        for index in 0..total {
             let rgba = page(index).map_err(SceneError::Atlas)?;
             let rgba = rgba.as_ref();
             if Some(rgba.len()) != bytes {
@@ -139,6 +164,7 @@ impl<B: RenderBackend> WorldScene<B> {
                 })
                 .map_err(SceneError::Backend)?;
             scene.pages.push(id);
+            checkpoint(&mut scene.backend, index + 1, total).map_err(SceneError::Backend)?;
         }
         scene.lightmap = Some(
             scene

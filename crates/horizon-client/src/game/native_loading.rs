@@ -1,7 +1,8 @@
 //! Visible native startup: one CPU-only worker, one bounded completion, and
 //! the same thread-confined window/context from boot screen through Game.
 use super::*;
-use horizon_client::render_contract::FrameOutcome;
+use horizon_client::render_contract::{FrameOutcome, ResourceGeneration};
+use horizon_client_render::legacy_gfx::{Limits, ResourceLimits, StagePoint};
 use horizon_client_render::native_loading::{Context, LoadingScreen};
 use std::sync::mpsc::{self, TryRecvError};
 
@@ -87,6 +88,35 @@ fn draw(screen: &mut LoadingScreen<'_>, boot: &HudAtlas, size: [u32; 2]) -> Resu
     Ok(screen.draw(&batch)? == FrameOutcome::Presented)
 }
 
+#[derive(Default)]
+struct HandoffEvents {
+    focused: bool,
+    closing: bool,
+    timed_out: bool,
+}
+impl HandoffEvents {
+    fn observe(
+        &mut self,
+        events: &horizon_client::renderer_facade::NativeWindowEvents,
+        expired: bool,
+        stop: bool,
+    ) {
+        self.timed_out |= expired;
+        self.closing |= events.close_requested || self.timed_out || stop;
+        for event in &events.events {
+            match *event {
+                horizon_client::renderer_facade::NativeWindowEvent::Focused(value) => {
+                    self.focused = value
+                }
+                horizon_client::renderer_facade::NativeWindowEvent::CloseRequested => {
+                    self.closing = true
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub(super) fn run(
     mut options: Options,
     settings: Settings,
@@ -104,14 +134,16 @@ pub(super) fn run(
     horizon_client::hud::GUI_SCALE.store(settings.gui_scale, Ordering::Relaxed);
     let boot = HudAtlas::boot();
     horizon_client::ui_theme::reset_atlas();
+    let limits = Limits::default();
+    let mut screen = LoadingScreen::owned(context, &boot, limits.gpu)?;
     let progress = Progress::new();
     let mut shown = 0u64;
     let mut loaded;
     let mut focused = true;
     {
-        let mut screen = LoadingScreen::new(&context, &boot)?;
         // Window and actual boot frame precede the heavy worker dispatch.
-        shown += u64::from(draw(&mut screen, &boot, context.size())?);
+        let size = screen.context().size();
+        shown += u64::from(draw(&mut screen, &boot, size)?);
         startup::mark("native_loading_screen.shown");
         let worker_settings = settings.clone();
         let worker_root = root.clone();
@@ -138,7 +170,7 @@ pub(super) fn run(
         let mut closing = false;
         let mut timeout = false;
         loop {
-            let events = context.poll_events()?;
+            let events = screen.context().poll_events()?;
             for event in &events.events {
                 if let horizon_client::renderer_facade::NativeWindowEvent::Focused(value) = event {
                     focused = *value;
@@ -154,7 +186,7 @@ pub(super) fn run(
                     worker.join()?;
                     if let Some(path) = &options.report {
                         let report = serde_json::json!({"scenario": "native-game-loading-cancelled",
-                            "game_constructed": false, "loading_presentations": shown,
+                            "game_constructed": false, "cancel_phase": "cpu", "loading_presentations": shown,
                             "worker_joined": true, "timed_out": timeout,
                             "playable": false, "world_opened": false});
                         std::fs::write(path, serde_json::to_vec_pretty(&report)?)?;
@@ -171,13 +203,13 @@ pub(super) fn run(
             }
             // Never draw after DestroyNotify/zero-size suspension; keep pumping
             // minimize/restore/close while a CPU phase reaches cancellation.
-            shown += u64::from(draw(&mut screen, &boot, context.size())?);
+            let size = screen.context().size();
+            shown += u64::from(draw(&mut screen, &boot, size)?);
             if !events.pending_messages {
                 std::thread::sleep(Duration::from_millis(16));
             }
         }
-    } // worker joined and boot GPU resources released BEFORE context transfer
-    drop(boot);
+    } // worker joined; keep the boot GPU owner alive during candidate staging
     if let Some(tail) = loaded.rest_loader.take() {
         progress.cancel();
         let _ = tail.handle.join();
@@ -208,14 +240,74 @@ pub(super) fn run(
         loaded.game_cpu,
     )?
     .ok_or("native loading did not construct Game")?;
-    game.focused = focused;
+    if game.renderer.backend().is_some() {
+        return Err("native loading requires an empty Game renderer owner".into());
+    }
+    let mut events = HandoffEvents {
+        focused,
+        ..Default::default()
+    };
+    let mut loading = native_startup::LoadingEvidence {
+        presentations: shown,
+        ..Default::default()
+    };
     let handoff = Instant::now();
-    native_startup::initialize_with_context(&mut game, context)?;
-    log::info!(
-        "native loading: {shown} boot presentations, same-context GPU handoff {} ms",
-        handoff.elapsed().as_millis()
+    let result = screen.finish_assets(
+        &game.pack.render,
+        &game.gui.atlas,
+        ResourceGeneration(1),
+        limits,
+        ResourceLimits::default(),
+        &mut |screen, _point: StagePoint| {
+            loading.gpu_checkpoints += 1;
+            let batch = screen.context().poll_events()?;
+            events.observe(
+                &batch,
+                game.options.frames.is_some() && started.elapsed() > game.options.timeout,
+                horizon_threads::stop_requests() > 0,
+            );
+            if events.closing {
+                return Err("native GPU startup cancelled by owner".into());
+            }
+            let size = screen.context().size();
+            loading.gpu_presentations +=
+                u64::from(draw(screen, &boot, size).map_err(|e| e.to_string())?);
+            Ok(())
+        },
     );
-    native_startup::run_with_loading(game, shown)
+    loading.gpu_elapsed_ms = handoff.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let renderer = match result {
+        Ok(renderer) => renderer,
+        Err(_) if events.closing => {
+            if let Some(path) = &game.options.report {
+                let report = serde_json::json!({"scenario": "native-game-loading-cancelled", "cancel_phase": "gpu",
+                    "game_constructed": true, "loading_presentations": shown + loading.gpu_presentations,
+                    "loading_gpu_checkpoints": loading.gpu_checkpoints, "worker_joined": true,
+                    "timed_out": events.timed_out, "playable": false, "world_opened": false});
+                std::fs::write(path, serde_json::to_vec_pretty(&report)?)?;
+            }
+            return if events.timed_out {
+                Err("native GPU startup timed out".into())
+            } else {
+                Ok(())
+            };
+        }
+        Err(error) => return Err(error.into()),
+    };
+    // No fallible upload after font commit: one move publishes this complete
+    // owner. Boot GPU state was retired before candidate budget promotion.
+    game.renderer = horizon_client::renderer_owner::RendererOwner::from_legacy(renderer);
+    game.focused = events.focused;
+    horizon_client::ui_theme::reset_atlas();
+    drop(boot);
+    log::info!(
+        "native loading: {} CPU boot presentations, {} GPU checkpoints / {} presentations, handoff {} ms",
+        shown,
+        loading.gpu_checkpoints,
+        loading.gpu_presentations,
+        loading.gpu_elapsed_ms
+    );
+    native_startup::run_with_loading(game, loading)
 }
 
 #[cfg(test)]
@@ -230,6 +322,54 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
         }
+    }
+    #[test]
+    fn handoff_latches_close_stop_timeout_and_preserves_latest_focus() {
+        use horizon_client::renderer_facade::{
+            NativeWindowEvent as E, NativeWindowEvents as Events,
+        };
+        for (close, timeout, stop) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let mut state = HandoffEvents {
+                focused: true,
+                ..Default::default()
+            };
+            state.observe(
+                &Events {
+                    close_requested: close,
+                    events: vec![E::Focused(false)],
+                    ..Default::default()
+                },
+                timeout,
+                stop,
+            );
+            assert!(state.closing);
+            assert!(!state.focused);
+            assert_eq!(state.timed_out, timeout);
+            state.observe(
+                &Events {
+                    events: vec![E::Focused(true)],
+                    ..Default::default()
+                },
+                false,
+                false,
+            );
+            assert!(state.closing); // a later restore cannot resurrect a cancelled stage
+            assert!(state.focused);
+        }
+        let mut state = HandoffEvents::default();
+        state.observe(
+            &Events {
+                events: vec![E::CloseRequested],
+                ..Default::default()
+            },
+            false,
+            false,
+        );
+        assert!(state.closing);
     }
     #[test]
     #[ignore = "requires OSMesa and GL2 overrides; real boot HUD producer, not a full Game launch"]
