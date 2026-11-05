@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FRAME = ROOT / "crates/horizon-client-render/src/frame"
 COMMON = [
+    "crates/horizon-render-api/src/streaming.rs",
     "crates/horizon-render-api/src/screenshot.rs",
     "crates/horizon-render-api/src/render_contract.rs",
     "crates/horizon-render-api/src/resource_contract.rs",
