@@ -85,16 +85,18 @@ class ScopeTests(unittest.TestCase):
         with self.assertRaises(scope.Rejected):
             scope.inspect_paths(["Cargo.toml"], "task", POLICY)
 
-    def test_the_protocol_example_passes_the_gate(self):
-        """The example contributors copy must parse: bare `Field: value` lines."""
+    def test_the_protocol_examples_pass_the_gate(self):
+        """Every example contributors copy must parse: bare `Field: value` lines."""
         text = (ROOT / "docs/design/legacy-gl-integration.md").read_text(encoding="utf-8")
         blocks = [
             block
             for block in re.findall(r"```text\n(.*?)```", text, re.S)
             if block.startswith("Task-ID:")
         ]
-        self.assertEqual(len(blocks), 1, "one canonical metadata example in the protocol")
-        scope.metadata(blocks[0], POLICY)
+        self.assertTrue(blocks, "the protocol shows a metadata example")
+        for block in blocks:
+            with self.subTest(block=block.splitlines()[0]):
+                scope.metadata(block, POLICY)
 
     def test_late_scope_result_cannot_certify_an_updated_base(self):
         context = scope.classify(event(), "pull_request", POLICY)
