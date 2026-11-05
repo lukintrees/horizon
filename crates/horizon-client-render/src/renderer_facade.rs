@@ -9,6 +9,12 @@ use horizon_render_api::{
     scene::SectionKey,
 };
 
+#[cfg(feature = "legacy-gl")]
+pub use horizon_legacy_render::{
+    MouseButton as NativeMouseButton, WindowEvent as NativeWindowEvent,
+    WindowEvents as NativeWindowEvents,
+};
+
 pub struct RendererFacade<'a> {
     inner: Adapter<'a>,
 }
@@ -46,6 +52,14 @@ impl<'a> RendererFacade<'a> {
             Adapter::Modern(_) => Backend::Modern,
             #[cfg(feature = "legacy-gl")]
             Adapter::Legacy { .. } => Backend::LegacyGl,
+        }
+    }
+    /// Native surface pump, not winit events or borrowed window IDs.
+    #[cfg(feature = "legacy-gl")]
+    pub fn poll_native_window_events(&mut self) -> Result<NativeWindowEvents> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern window events belong to winit".into()),
+            Adapter::Legacy { renderer, .. } => renderer.poll_events().map_err(Into::into),
         }
     }
     pub fn size(&mut self) -> [u32; 2] {

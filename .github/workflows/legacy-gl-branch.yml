@@ -154,6 +154,10 @@ jobs:
             status=$?
           fi
           if [ "$status" -eq 0 ]; then
+            cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::native_menu::tests:: --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
             cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::render_startup::tests:: --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
             status=$?
           fi
@@ -260,8 +264,8 @@ jobs:
         with:
           toolchain: '1.88.0'
           components: rustfmt, clippy
-      - name: Install OSMesa
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6
+      - name: Install Mesa and visible X11 test display
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 libgl1-mesa-dri libglx-mesa0 libx11-6 libxkbcommon0 xvfb xauth
       - name: Check independent renderer and run real GL2 readbacks
         env:
           HORIZON_OSMESA_LIBRARY: libOSMesa.so.8
@@ -272,11 +276,33 @@ jobs:
           python3 tools/legacy_gl_smoke.py --context osmesa
           python3 -m unittest discover -s tests -p 'test_legacy_gl_smoke.py'
           python3 -m unittest discover -s tests -p 'test_cargo_github_vendor.py'
+      - name: Exercise real GLX window and native lifecycle on Xvfb
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+          MESA_GL_VERSION_OVERRIDE: '2.0'
+          MESA_GLSL_VERSION_OVERRIDE: '120'
+        run: |
+          mkdir -p target/legacy-gl-probe
+          if xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml visible_glx -- --ignored > target/legacy-gl-probe/glx-window.log 2>&1; then
+            cat target/legacy-gl-probe/glx-window.log
+          else
+            cat target/legacy-gl-probe/glx-window.log
+            python3 - <<'PYGLX'
+          from pathlib import Path
+          text = '\n'.join(Path('target/legacy-gl-probe/glx-window.log').read_text().splitlines()[-85:])
+          text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error title=Visible native GLX window::' + text)
+          PYGLX
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: legacy-branch-gl2-report
-          path: target/legacy-gl-probe/report.json
+          path: |
+            target/legacy-gl-probe/report.json
+            target/legacy-gl-probe/glx-window.log
 
   windows-x86-abi:
     name: legacy/windows-x86

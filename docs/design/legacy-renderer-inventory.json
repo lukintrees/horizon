@@ -4,360 +4,360 @@
   "sources": [
     {
       "path": "crates/horizon-client/src/game.rs",
-      "sha256": "6c612521374f0614dfdc1859a5531bfaca9960a4a7d37c11c630588bfef63193",
+      "sha256": "23fcbc6542b0ae7ce9ea951ee96f8a942e5c966a420a4f94de5ea947b2877c54",
       "references": [
         {
-          "line": 377,
+          "line": 379,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "gfx::{Frame, Renderer},"
         },
         {
-          "line": 462,
+          "line": 464,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: render_startup::Renderer,"
         },
         {
-          "line": 613,
+          "line": 615,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: render_startup::Renderer::Modern,"
         },
         {
-          "line": 664,
+          "line": 666,
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": "\"Horizon — Minecraft Java Edition {} in Rust\\n\\n  --resources PATH        Prepared resources (horizon-prepare)\\n  --renderer modern|native-gl2  Experimental; native requires --features legacy-gl\\n  --native-bootstrap-only  One actual Game menu submission, NOT playable; Linux also needs --offscreen\\n  --render-distance N     Chunks, 2..128 (default 12)\\n  --world NAME            World folder under saves/ (default \\\"New World\\\")\\n  --seed N                World seed for new worlds (default 0)\\n  --width N, --height N   Window size (default 1280 x 720)\\n  --creative              Creative mode (default survival)\\n  --test-terrain          Simple test terrain instead of vanilla generation\\n  --frames N              Exit after N frames (testing)\\n  --world-frames N        Exit after N frames drawn in the world (testing)\\n  --smoke-report PATH     Write a JSON report on exit\\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\\n  --control               Accept horizon-ctl commands on a local socket\\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\\n  --session-stdin         The same account as JSON on standard input\\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\\n  --fullscreen            Open the window fullscreen\\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\\n\\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\\nQ drop, F3 debug, Esc pause.\","
+          "code": "\"Horizon — Minecraft Java Edition {} in Rust\\n\\n  --resources PATH        Prepared resources (horizon-prepare)\\n  --renderer modern|native-gl2  Experimental; native requires --features legacy-gl\\n  --native-bootstrap-only  Optional one-frame validation, NOT playable; Linux supports --offscreen here\\n  --render-distance N     Chunks, 2..128 (default 12)\\n  --world NAME            World folder under saves/ (default \\\"New World\\\")\\n  --seed N                World seed for new worlds (default 0)\\n  --width N, --height N   Window size (default 1280 x 720)\\n  --creative              Creative mode (default survival)\\n  --test-terrain          Simple test terrain instead of vanilla generation\\n  --frames N              Exit after N frames (testing)\\n  --world-frames N        Exit after N frames drawn in the world (testing)\\n  --smoke-report PATH     Write a JSON report on exit\\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\\n  --control               Accept horizon-ctl commands on a local socket\\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\\n  --session-stdin         The same account as JSON on standard input\\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\\n  --fullscreen            Open the window fullscreen\\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\\n\\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\\nQ drop, F3 debug, Esc pause.\","
         },
         {
-          "line": 705,
+          "line": 707,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "\"--renderer\" => o.renderer = render_startup::Renderer::parse(&value)?,"
         },
         {
-          "line": 791,
+          "line": 793,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "o.renderer.validate(&o)?;"
         },
         {
-          "line": 2170,
+          "line": 2172,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "render: old.render.clone(),"
         },
         {
-          "line": 2503,
+          "line": 2505,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: horizon_client::renderer_owner::RendererOwner,"
         },
         {
-          "line": 8077,
+          "line": 8079,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let size = self.renderer.modern_ref().map_or_else("
         },
         {
-          "line": 8079,
+          "line": 8081,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "|r| [r.config.width, r.config.height],"
         },
         {
-          "line": 10108,
+          "line": 10110,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 10110,
+          "line": 10112,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
-        },
-        {
-          "line": 10135,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": ".renderer"
         },
         {
           "line": 10137,
           "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map(|r| [r.config.width, r.config.height])"
-        },
-        {
-          "line": 10168,
-          "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
+        },
+        {
+          "line": 10139,
+          "kinds": [
+            "candidate-member-access"
+          ],
+          "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
           "line": 10170,
           "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": ".renderer"
+        },
+        {
+          "line": 10172,
+          "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 10347,
+          "line": 10349,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let Some(r) = self.renderer.modern_ref() else {"
         },
         {
-          "line": 10350,
+          "line": 10352,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let batch = HudBatch::new([r.config.width, r.config.height]);"
         },
         {
-          "line": 10363,
+          "line": 10365,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let Some(r) = self.renderer.modern_ref() else {"
         },
         {
-          "line": 10366,
+          "line": 10368,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let batch = HudBatch::new([r.config.width, r.config.height]);"
         },
         {
-          "line": 10612,
+          "line": 10614,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 10614,
+          "line": 10616,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 10972,
+          "line": 10974,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let pack_shadows = self.renderer.modern_ref().is_some_and(|r| {"
         },
         {
-          "line": 10973,
+          "line": 10975,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "r.pack_entity_shadows() || (self.dim == Dim::Overworld && r.native_shadow())"
         },
         {
-          "line": 11036,
+          "line": 11038,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_ref() {"
         },
         {
-          "line": 11118,
+          "line": 11120,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let section_revision = |pos| r.block_entity_section_revision(pos);"
         },
         {
-          "line": 11126,
+          "line": 11128,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "r.block_entity_revision(),"
         },
         {
-          "line": 11169,
+          "line": 11171,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "r.block_entity_revision(),"
         },
         {
-          "line": 11170,
+          "line": 11172,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "|pos| r.block_entity_section_revision(pos),"
         },
         {
-          "line": 11182,
+          "line": 11184,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "r.visible_block_entities(self.settings.chunk_fade)"
         },
         {
-          "line": 12327,
+          "line": 12329,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_mut() {"
         },
         {
-          "line": 12568,
+          "line": 12570,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_mut() {"
         },
         {
-          "line": 14150,
+          "line": 14152,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "fn new_renderer(&self, window: Arc<Window>) -> Result<Renderer> {"
         },
         {
-          "line": 14156,
+          "line": 14158,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 14158,
+          "line": 14160,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".is_some_and(Renderer::device_lost)"
         },
         {
-          "line": 14179,
+          "line": 14181,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "log::warn!(\"Horizon: rebuilding the renderer after graphics device loss\");"
         },
         {
-          "line": 14182,
+          "line": 14184,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 14184,
+          "line": 14186,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".ok_or(\"no renderer for graphics recovery\")?;"
         },
         {
-          "line": 14190,
+          "line": 14192,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let mut renderer = build_renderer("
         },
         {
-          "line": 14203,
+          "line": 14205,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(&mut renderer)"
         },
         {
-          "line": 14206,
+          "line": 14208,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "log::warn!(\"Horizon: the rebuilt renderer cannot keep the queued screenshot: {error}\");"
         },
         {
-          "line": 14209,
+          "line": 14211,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(&mut renderer)"
         },
         {
-          "line": 14212,
+          "line": 14214,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.set_modern(renderer)?;"
         },
         {
-          "line": 14234,
+          "line": 14236,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ") -> Result<Renderer> {"
         },
         {
-          "line": 14235,
+          "line": 14237,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.allow_modern_startup()?;"
         },
         {
-          "line": 14241,
+          "line": 14243,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.modern_ref(),"
         },
         {
-          "line": 14276,
+          "line": 14278,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if !self.options.renderer.is_native() && self.settings.sound_device != self.audio.device() {"
         },
         {
-          "line": 15069,
+          "line": 15071,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 15071,
+          "line": 15073,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 15427,
+          "line": 15429,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let Some(renderer) = self.renderer.modern_mut() else {"
         },
         {
-          "line": 15433,
+          "line": 15435,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -365,154 +365,154 @@
           "code": "if renderer.drawn_sections <= 10 {"
         },
         {
-          "line": 15436,
+          "line": 15438,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if horizon_client::renderer_facade::RendererFacade::modern(renderer).screenshot_pending() {"
         },
         {
-          "line": 15445,
+          "line": 15447,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)"
         },
         {
-          "line": 15456,
+          "line": 15458,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl) {"
         },
         {
-          "line": 15464,
+          "line": 15466,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if self.renderer.has_modern() {"
         },
         {
-          "line": 15471,
+          "line": 15473,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 15473,
+          "line": 15475,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".is_some_and(|r| r.display_changed())"
         },
         {
-          "line": 15491,
+          "line": 15493,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = self.renderer.modern_mut() {"
         },
         {
-          "line": 15493,
+          "line": 15495,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));"
         },
         {
-          "line": 15501,
+          "line": 15503,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer,"
-        },
-        {
-          "line": 15514,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": "if let Some(renderer) = self.renderer.modern_mut() {"
         },
         {
           "line": 15516,
           "kinds": [
             "owner/factory/reference"
           ],
+          "code": "if let Some(renderer) = self.renderer.modern_mut() {"
+        },
+        {
+          "line": 15518,
+          "kinds": [
+            "owner/factory/reference"
+          ],
           "code": "HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));"
         },
         {
-          "line": 15544,
+          "line": 15546,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer,"
         },
         {
-          "line": 15551,
+          "line": 15553,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let (Some(renderer), Some(loader)) = (self.renderer.modern_mut(), &self.rest_loader)"
         },
         {
-          "line": 15557,
+          "line": 15559,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));"
         },
         {
-          "line": 15565,
+          "line": 15567,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer,"
-        },
-        {
-          "line": 15574,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": "if let Some(renderer) = self.renderer.modern_mut() {"
         },
         {
           "line": 15576,
           "kinds": [
             "owner/factory/reference"
           ],
+          "code": "if let Some(renderer) = self.renderer.modern_mut() {"
+        },
+        {
+          "line": 15578,
+          "kinds": [
+            "owner/factory/reference"
+          ],
           "code": "HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));"
         },
         {
-          "line": 15585,
+          "line": 15587,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer,"
         },
         {
-          "line": 15592,
+          "line": 15594,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 15594,
+          "line": 15596,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 15640,
+          "line": 15642,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "&& let Some(renderer) = self.renderer.modern_mut()"
         },
         {
-          "line": 15643,
+          "line": 15645,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -520,49 +520,49 @@
           "code": "renderer.start_occlusion(camera, (self.streaming.radius * 16) as f32)"
         },
         {
-          "line": 15860,
+          "line": 15862,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 15862,
+          "line": 15864,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| r.camera_frustum(fov_degrees, yaw, pitch, bob * spin, depth_far));"
         },
         {
-          "line": 15991,
+          "line": 15993,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 15993,
+          "line": 15995,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".is_some_and(|r| r.wants_water_plane())"
         },
         {
-          "line": 16122,
+          "line": 16124,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let result = match self.renderer.modern_mut() {"
         },
         {
-          "line": 16123,
+          "line": 16125,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Some(renderer) => {"
         },
         {
-          "line": 16124,
+          "line": 16126,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -570,126 +570,126 @@
           "code": "renderer.set_pass_timing(self.debug || self.gpu_passes);"
         },
         {
-          "line": 16125,
+          "line": 16127,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::spans::time(\"renderer\", || {"
         },
         {
-          "line": 16126,
+          "line": 16128,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::render_modern(renderer, &frame)"
         },
         {
-          "line": 16129,
+          "line": 16131,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "None => Err(\"renderer\".into()),"
         },
         {
-          "line": 16143,
+          "line": 16145,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 16145,
+          "line": 16147,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".and_then(|r| r.skinned_models())"
         },
         {
-          "line": 16610,
+          "line": 16612,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "match self.renderer.modern_ref() {"
         },
         {
-          "line": 16611,
+          "line": 16613,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Some(renderer) => horizon_client::renderer_facade::lod_distance(renderer, distance),"
         },
         {
-          "line": 16635,
+          "line": 16637,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = self.renderer.modern_mut() {"
         },
         {
-          "line": 16636,
+          "line": 16638,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer.clear_lods();"
         },
         {
-          "line": 16641,
+          "line": 16643,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "&& self.renderer.has_modern()"
         },
         {
-          "line": 16766,
+          "line": 16768,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 16768,
+          "line": 16770,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".is_some_and(Renderer::take_dropped_sections)"
         },
         {
-          "line": 16795,
+          "line": 16797,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.streaming.mesh = self.renderer.has_modern();"
         },
         {
-          "line": 16868,
+          "line": 16870,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = self.renderer.modern_mut() {"
         },
         {
-          "line": 16878,
+          "line": 16880,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(renderer)"
         },
         {
-          "line": 16945,
+          "line": 16947,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(renderer)"
         },
         {
-          "line": 16956,
+          "line": 16958,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)"
         },
         {
-          "line": 16964,
+          "line": 16966,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -697,14 +697,14 @@
           "code": "renderer.set_terrain_loading("
         },
         {
-          "line": 16969,
+          "line": 16971,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::lod_distance(renderer, far_distance);"
         },
         {
-          "line": 16975,
+          "line": 16977,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -712,364 +712,364 @@
           "code": "renderer.lod_detail_revision(),"
         },
         {
-          "line": 16982,
+          "line": 16984,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer"
         },
         {
-          "line": 17005,
+          "line": 17007,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer.queue_lods(meshes, lod.removed(), lod.take_cutout());"
         },
         {
-          "line": 17009,
+          "line": 17011,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer.upload_lods(std::time::Duration::from_millis(2))"
         },
         {
-          "line": 17021,
+          "line": 17023,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Err(error) = self.renderer.allow_modern_startup() {"
         },
         {
-          "line": 17060,
+          "line": 17062,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Err(error) = self.renderer.set_modern(r) {"
         },
         {
-          "line": 17329,
+          "line": 17331,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_ref() {"
         },
         {
-          "line": 17330,
+          "line": 17332,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let b = HudBatch::new([r.config.width, r.config.height]);"
         },
         {
-          "line": 17404,
+          "line": 17406,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_mut() {"
         },
         {
-          "line": 17569,
+          "line": 17571,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_mut() {"
         },
         {
-          "line": 17619,
+          "line": 17621,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_ref() {"
         },
         {
-          "line": 17620,
+          "line": 17622,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let b = HudBatch::new([r.config.width, r.config.height]);"
-        },
-        {
-          "line": 17872,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": ".renderer"
         },
         {
           "line": 17874,
           "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map(|r| [r.config.width, r.config.height])"
-        },
-        {
-          "line": 17902,
-          "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
+        },
+        {
+          "line": 17876,
+          "kinds": [
+            "candidate-member-access"
+          ],
+          "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
           "line": 17904,
           "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map(|r| [r.config.width, r.config.height])"
-        },
-        {
-          "line": 17915,
-          "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
+        },
+        {
+          "line": 17906,
+          "kinds": [
+            "candidate-member-access"
+          ],
+          "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
           "line": 17917,
           "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map(|r| [r.config.width, r.config.height])"
-        },
-        {
-          "line": 17925,
-          "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
+        },
+        {
+          "line": 17919,
+          "kinds": [
+            "candidate-member-access"
+          ],
+          "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
           "line": 17927,
           "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": ".renderer"
+        },
+        {
+          "line": 17929,
+          "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 18061,
+          "line": 18063,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 18063,
+          "line": 18065,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map_or([1, 1], |r| [r.config.width, r.config.height]);"
-        },
-        {
-          "line": 18068,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": ".renderer"
         },
         {
           "line": 18070,
           "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map_or([1, 1], |r| [r.config.width, r.config.height]);"
-        },
-        {
-          "line": 18448,
-          "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
+        },
+        {
+          "line": 18072,
+          "kinds": [
+            "candidate-member-access"
+          ],
+          "code": ".map_or([1, 1], |r| [r.config.width, r.config.height]);"
         },
         {
           "line": 18450,
           "kinds": [
             "owner/factory/reference"
           ],
+          "code": ".renderer"
+        },
+        {
+          "line": 18452,
+          "kinds": [
+            "owner/factory/reference"
+          ],
           "code": ".is_some_and(Renderer::device_lost) =>"
         },
         {
-          "line": 18465,
+          "line": 18467,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "&& let Some(r) = self.renderer.modern_ref()"
         },
         {
-          "line": 18467,
+          "line": 18469,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let cpu = now.elapsed().saturating_sub(r.last_wait).as_secs_f32() * 1000.0;"
         },
         {
-          "line": 18490,
+          "line": 18492,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = self.renderer.modern_mut() {"
         },
         {
-          "line": 18491,
+          "line": 18493,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let cpu = now.elapsed().saturating_sub(r.last_wait);"
         },
         {
-          "line": 18497,
+          "line": 18499,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "r.gpu_times.last().copied(),"
         },
         {
-          "line": 18499,
+          "line": 18501,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "if let Some(&gpu) = r.gpu_times.last() {"
         },
         {
-          "line": 18504,
+          "line": 18506,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "let render = r.last_encode;"
         },
         {
-          "line": 18508,
+          "line": 18510,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "ms(ticked.elapsed().saturating_sub(r.last_wait + render)),"
         },
         {
-          "line": 18512,
+          "line": 18514,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".record_block_entities(r.static_block_entity_frame_stats());"
         },
         {
-          "line": 18514,
+          "line": 18516,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "self.frame_stats.record_gpu(&r.gpu_times);"
         },
         {
-          "line": 18515,
+          "line": 18517,
           "kinds": [
             "candidate-member-access"
           ],
           "code": "r.gpu_times.clear();"
         },
         {
-          "line": 18530,
+          "line": 18532,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let finished = self.renderer.modern_mut().and_then(|r| {"
         },
         {
-          "line": 18555,
+          "line": 18557,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 18557,
+          "line": 18559,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".and_then(|r| r.capture_result.take())"
         },
         {
-          "line": 18910,
+          "line": 18912,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: Default::default(),"
         },
         {
-          "line": 19818,
+          "line": 19820,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "options.renderer.is_native()"
         },
         {
-          "line": 20053,
+          "line": 20055,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: render_startup::Renderer,"
         },
         {
-          "line": 20063,
+          "line": 20065,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "!renderer.is_native() && shader_packs::picks_native_pack(settings),"
         },
         {
-          "line": 20075,
+          "line": 20077,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "} else if renderer.is_native() {"
         },
         {
-          "line": 20264,
+          "line": 20266,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let textures = (!renderer.is_native()).then(|| {"
         },
         {
-          "line": 20378,
+          "line": 20380,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let mut renderer = BlockEntityRenderer::load_with_visibility(root, registry, visibility)?;"
         },
         {
-          "line": 20379,
+          "line": 20381,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer.add_mod_signs(facts, registry);"
         },
         {
-          "line": 20380,
+          "line": 20382,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok(renderer)"
         },
         {
-          "line": 20516,
+          "line": 20518,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "previous: Option<&Renderer>,"
         },
         {
-          "line": 20521,
+          "line": 20523,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ") -> Result<Renderer> {"
         },
         {
-          "line": 20535,
+          "line": 20537,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let mut renderer = pollster::block_on(Renderer::new("
         },
         {
-          "line": 20559,
+          "line": 20561,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -1077,14 +1077,14 @@
           "code": "renderer.hud.sprite_animations = atlas"
         },
         {
-          "line": 20564,
+          "line": 20566,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer"
         },
         {
-          "line": 20566,
+          "line": 20568,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -1092,7 +1092,7 @@
           "code": ".set_text_shader(&renderer.device, atlas.text_shader.as_deref());"
         },
         {
-          "line": 20567,
+          "line": 20569,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -1100,14 +1100,14 @@
           "code": "renderer.set_lines_shader(atlas.lines_shader.as_deref());"
         },
         {
-          "line": 20569,
+          "line": 20571,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer"
         },
         {
-          "line": 20571,
+          "line": 20573,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -1115,35 +1115,35 @@
           "code": ".set_cit_glints(&renderer.device, &renderer.queue, cit_glints);"
         },
         {
-          "line": 20572,
+          "line": 20574,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok(renderer)"
         },
         {
-          "line": 20583,
+          "line": 20585,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "previous: Option<&Renderer>,"
         },
         {
-          "line": 20585,
+          "line": 20587,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ") -> Result<Renderer> {"
         },
         {
-          "line": 20605,
+          "line": 20607,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let mut renderer = pollster::block_on(Renderer::new("
         },
         {
-          "line": 20627,
+          "line": 20629,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
@@ -1151,231 +1151,231 @@
           "code": "renderer.hud.sprite_animations = atlas"
         },
         {
-          "line": 20633,
+          "line": 20635,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok(renderer)"
         },
         {
-          "line": 20718,
+          "line": 20720,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if game.options.renderer.is_native() {"
         },
         {
-          "line": 20883,
+          "line": 20885,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: Option<Renderer>,"
         },
         {
-          "line": 20983,
+          "line": 20985,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let boot_step = startup::step(\"renderer.boot\");"
         },
         {
-          "line": 20992,
+          "line": 20994,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok(r) => self.renderer = Some(r),"
         },
         {
-          "line": 21039,
+          "line": 21041,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = &mut self.renderer"
         },
         {
-          "line": 21041,
+          "line": 21043,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(renderer).release_surface()"
         },
         {
-          "line": 21043,
+          "line": 21045,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "log::warn!(\"Horizon: cannot hand the menu renderer's surface over: {error}\");"
         },
         {
-          "line": 21046,
+          "line": 21048,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let _step = startup::step(\"renderer.title_artwork\");"
         },
         {
-          "line": 21052,
+          "line": 21054,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.as_ref(),"
         },
         {
-          "line": 21057,
+          "line": 21059,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer = Some(r);"
         },
         {
-          "line": 21092,
+          "line": 21094,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 21094,
+          "line": 21096,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 21106,
+          "line": 21108,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = &mut self.renderer {"
         },
         {
-          "line": 21107,
+          "line": 21109,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "match horizon_client::renderer_facade::render_menu_modern(renderer, &frame) {"
         },
         {
-          "line": 21135,
+          "line": 21137,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = &mut self.renderer {"
         },
         {
-          "line": 21136,
+          "line": 21138,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(renderer).release_surface()?;"
         },
         {
-          "line": 21139,
+          "line": 21141,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let renderer = startup::time(\"renderer.world\", || {"
         },
         {
-          "line": 21145,
+          "line": 21147,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.as_ref(),"
         },
         {
-          "line": 21153,
+          "line": 21155,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "\"Horizon: world renderer ready after {} ms\","
         },
         {
-          "line": 21188,
+          "line": 21190,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "game.renderer.set_modern(renderer)?;"
         },
         {
-          "line": 21202,
+          "line": 21204,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "\"Horizon: startup handoff {} ms (renderer {} ms, start_game {} ms)\","
         },
         {
-          "line": 21339,
+          "line": 21341,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: None,"
         },
         {
-          "line": 21459,
+          "line": 21461,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let mut early_settings = options.renderer.load_settings(&Game::options_path());"
         },
         {
-          "line": 21462,
+          "line": 21464,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if options.execution_role.is_client() && !options.renderer.is_native() {"
         },
         {
-          "line": 21475,
+          "line": 21477,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if options.execution_role.is_client() && !options.renderer.is_native() {"
         },
         {
-          "line": 21479,
+          "line": 21481,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if options.dedicated.is_none() && !options.renderer.is_native() {"
         },
         {
-          "line": 21493,
+          "line": 21495,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "options.resources = if options.renderer.is_native() {"
         },
         {
-          "line": 21507,
+          "line": 21509,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if !options.renderer.is_native() {"
         },
         {
-          "line": 21522,
+          "line": 21524,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "options.renderer,"
         },
         {
-          "line": 21530,
+          "line": 21532,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "|| options.renderer.is_native()"
         },
         {
-          "line": 21537,
+          "line": 21539,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let options_native_settings = options.renderer.is_native().then_some(early_settings);"
         },
         {
-          "line": 21552,
+          "line": 21554,
           "kinds": [
             "owner/factory/reference"
           ],
@@ -2456,6 +2456,19 @@
       ]
     },
     {
+      "path": "crates/horizon-client/src/game/native_menu.rs",
+      "sha256": "5a7fd1143531f6854facabd2ad627a970ee71938d0b1bb8434b9f8c886471e0f",
+      "references": [
+        {
+          "line": 206,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": ".renderer"
+        }
+      ]
+    },
+    {
       "path": "crates/horizon-client/src/game/native_panel.rs",
       "sha256": "b802c7ec4ed5ffa172d8b54bcc51764b902bec028f5a5b2d323fa5daa7408b53",
       "references": [
@@ -2497,7 +2510,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_startup.rs",
-      "sha256": "2da48dcb1b174ec9d60699fa6e8e25c5313984eef715f1f3280df9fa16172518",
+      "sha256": "093a5a6e9c5494e4bb9d5a6b0e53b3314596e4526eab9255acc803c1d442d5cf",
       "references": [
         {
           "line": 11,
@@ -2591,7 +2604,7 @@
           "code": "game.options.renderer.validate(&game.options)?;"
         },
         {
-          "line": 77,
+          "line": 84,
           "kinds": [
             "owner/factory/reference"
           ],
@@ -3271,7 +3284,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/render_startup.rs",
-      "sha256": "dc1b0d7335c5e7a985dd4425c871474fc8148785c875803d8fb6daef414b855d",
+      "sha256": "ab85ab08b4c5b8276768e6c3bbcf3f7cfb128efa4654ece70b1012a941dbb797",
       "references": [
         {
           "line": 8,
@@ -3295,77 +3308,77 @@
           "code": "Err(\"--native-bootstrap-only requires --renderer native-gl2\".into())"
         },
         {
-          "line": 104,
+          "line": 105,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "for args in [&[][..], &[\"--renderer\", \"modern\"][..]] {"
         },
         {
-          "line": 106,
+          "line": 107,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert_eq!(o.renderer, Renderer::Modern);"
         },
         {
-          "line": 108,
+          "line": 109,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert_eq!(o.renderer.menu_background(), MenuBackground::Panorama);"
         },
         {
-          "line": 114,
+          "line": 115,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert!(Renderer::parse(value).is_err());"
         },
         {
-          "line": 116,
+          "line": 117,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert_eq!(Renderer::parse(\"native-gl2\").unwrap(), Renderer::NativeGl2);"
         },
         {
-          "line": 121,
+          "line": 122,
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": "assert!(options(&[\"--renderer\", \"native-gl2\"]).is_err());"
+          "code": "assert!(options(&[\"--renderer\", \"native-gl2\", \"--offscreen\"]).is_err());"
         },
         {
-          "line": 126,
+          "line": 127,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let menu = Renderer::NativeGl2.menu(&hud);"
         },
         {
-          "line": 132,
+          "line": 133,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let visible = Renderer::context_kind(false);"
         },
         {
-          "line": 133,
+          "line": 134,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let offscreen = Renderer::context_kind(true);"
         },
         {
-          "line": 176,
+          "line": 177,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let settings = Renderer::NativeGl2.load_settings(&options);"
         },
         {
-          "line": 186,
+          "line": 187,
           "kinds": [
             "owner/factory/reference"
           ],
@@ -3376,10 +3389,24 @@
           "kinds": [
             "owner/factory/reference"
           ],
+          "code": "let o = options(&[\"--renderer\", \"native-gl2\", \"--frames\", \"2\"]).unwrap();"
+        },
+        {
+          "line": 196,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "assert!(o.renderer.is_native());"
+        },
+        {
+          "line": 203,
+          "kinds": [
+            "owner/factory/reference"
+          ],
           "code": "\"--renderer\","
         },
         {
-          "line": 208,
+          "line": 217,
           "kinds": [
             "owner/factory/reference"
           ],

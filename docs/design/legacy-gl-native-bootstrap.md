@@ -69,3 +69,38 @@ prepared resources в текущем sandbox не выполнен: такого
 Этап 1 остаётся открытым до наблюдаемого actual Game runtime evidence; профиль для world
 CPU poses/visibility ещё не подключён. Следом по [MVP-плану](legacy-gl-mvp-path.md): native visible
 Linux window, event adapter и настоящий loading/menu loop; не добавление новых renderer effects.
+
+
+## MVP 2a: видимый native menu-only route
+
+Текущий код также принимает **без** bootstrap flag:
+
+```sh
+# Те же new scratch game/player/home paths и ваши normal prepared resources.
+# На Linux DISPLAY должен указывать на настоящий X11/XWayland/Xvfb server.
+./target/debug/horizon-client --renderer native-gl2 \
+  --resources "$RESOURCE_DIR" --game-dir "$scratch/game" \
+  --player-dir "$scratch/player" --name NativeMenu \
+  --smoke-report "$scratch/menu.json"
+```
+
+Linux выбирает GLX + собственное X11 окно, Windows — WGL. Не создаётся winit окно/loop.
+`--frames N` (N > 0) ограничивает показанные menu frames; без него — до native close/Quit/stop.
+`--offscreen` по-прежнему только с `--native-bootstrap-only`.
+
+`Game::hud` рисует тот же Title. Native adapter вызывает существующие Title hit tests,
+navigation/edit/scroll methods; focus loss/overflow сбрасывают held UI input. Minimize
+откладывает draw, restore не пересоздаёт context. Это menu pump, **не второй Game::idle**.
+Поддержаны pointer/drag/scroll, базовые navigation keys, direct Unicode keysym text. Нет
+XIM/preedit/compose, clipboard shortcuts, gameplay bindings/relative mouse и полноценного
+options UI. World entry/подключение/options/external actions показывают существующий
+Title error screen **до** вызова неподключённых producers. Молчаливого world skipping нет.
+
+Существующие Title world-management действия могут менять файлы, как в modern UI;
+проверять **только scratch saves**. Режим не является read-only браузером пользовательских миров.
+Профиль не меняет сохранённые HDR/pack picks; явные Title preferences пользователя могут сохраняться.
+
+Responsive loading window пока нет: full CPU startup происходит до native context/window.
+Это промежуточная реализация, не закрытый этап 2 и не playable world. GLX window fixture
+проверяется на Xvfb с llvmpipe (включая actual X11 front pixels), а не выдаётся за real Game
+runtime. Normal prepared resource folder по-прежнему отсутствует в текущем sandbox.

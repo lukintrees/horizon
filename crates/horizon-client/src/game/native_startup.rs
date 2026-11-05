@@ -1,6 +1,6 @@
-//! Actual Game bootstrap, not a second simulator/event loop. This first route
-//! owns native resources and submits Game::hud once; visible lifecycle/world
-//! integration remains blocked explicitly, not silently skipped.
+//! Actual Game native menu ownership/submission. The visible menu pump is a
+//! platform adapter only, not Game simulation. World/loading remain explicit
+//! unsupported actions; offscreen startup stays bounded bootstrap validation.
 use super::*;
 use horizon_client::render_contract::{
     Backend, FrameOptions, FrameOutcome, ResourceGeneration, VisibleSections,
@@ -35,7 +35,7 @@ pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
         || game.pending_entry.is_some()
         || game.pack_reload.is_some()
     {
-        return Err("native Game currently supports static-menu bootstrap only; world/loading/reload submission is not connected".into());
+        return Err("native Game currently supports static menus only; world/loading/reload submission is not connected".into());
     }
     game.gui.atlas.font.begin_frame();
     game.glint_frame = game.capture_glint_frame();
@@ -57,20 +57,27 @@ pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
 
 pub(super) fn run(mut game: Game<'_>) -> Result<()> {
     game.options.renderer.validate(&game.options)?;
-    let outcome = render_menu(&mut game)?;
-    match (game.options.offscreen, outcome) {
-        (true, FrameOutcome::Offscreen) | (false, FrameOutcome::Presented) => {}
-        _ => {
-            return Err(
-                "native bootstrap did not complete the requested offscreen/window presentation"
-                    .into(),
-            );
+    let bootstrap = game.options.native_bootstrap_only;
+    let outcome = if bootstrap {
+        render_menu(&mut game)?
+    } else {
+        super::native_menu::run(&mut game)?
+    };
+    if bootstrap {
+        match (game.options.offscreen, outcome) {
+            (true, FrameOutcome::Offscreen) | (false, FrameOutcome::Presented) => {}
+            _ => {
+                return Err(
+                    "native bootstrap did not complete the requested offscreen/window presentation"
+                        .into(),
+                );
+            }
         }
+        game.frames = 1;
     }
-    game.frames = 1;
     game.frame_drawn = outcome.was_presented();
     log::info!(
-        "native Game bootstrap-only: existing Game constructed, native owner installed, actual menu submission {outcome:?}; no event loop/world/playable qualification"
+        "native Game menu: bootstrap_only={bootstrap}, last submission {outcome:?}; no world/playable qualification"
     );
     if let Some(path) = &game.options.report {
         let generation = game
@@ -79,7 +86,7 @@ pub(super) fn run(mut game: Game<'_>) -> Result<()> {
             .ok_or("missing native owner after bootstrap")?
             .resource_generation();
         let report = serde_json::json!({
-            "scenario": "native-game-bootstrap-only",
+            "scenario": if bootstrap {"native-game-bootstrap-only"} else {"native-game-menu-only"},
             "game_constructed": true,
             "backend": "native-gl2",
             "resource_generation": generation.map(|g|g.0),

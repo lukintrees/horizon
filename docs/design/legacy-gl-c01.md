@@ -425,3 +425,26 @@ World/loading/reload state отвергается; Offscreen остаётся н
 
 Новый factory тест использует CPU RenderAssets/HudAtlas fixtures. Он не заменяет полный
 Game resource-load/runtime прогон, который здесь пока невозможен без normal prepared folder.
+
+
+## 16. MVP 2a: GLX window и native menu adapter (2026-11-05)
+
+`Context::new("glx", size)` — desktop legacy GLX context + собственный mapped X11 window.
+Dlopen X11/GL/xkbcommon, без новых Rust dependencies; EGL/OSMesa и modern default не меняются.
+GL2 не подменяется GLES/wgpu. Lifecycle: bounded 256-native-message pump, existing bounded
+queue/coalescing/overflow notification, focus/capture reset, minimize/restore, WM_DELETE
+persistent close; context/window/colormap/display cleanup и thread confinement.
+
+`WindowEvent::X11Key` явно несёт X11 keysym/keycode, **не Win32 scancode**; старый `Key`
+остаётся Win32. Unicode decoding через xkbcommon, без process-global setlocale. XIM/compose
+не реализованы. GLX test проверяет back-buffer GL readback, native swap и XGetImage front
+pixels; input/repeat/focus/minimize, repeat context teardown/window counts. Это window fixture,
+не actual Game runtime acceptance.
+
+Фасад получает `poll_native_window_events`, modern отвечает явной ошибкой (его owner — winit).
+Native Game menu pump использует existing Game::hud и Title navigation/edit/hit tests, без
+fake DeviceId/WindowId и без Game simulation clone. Unsupported world/options/external
+producers показывают Title::failed до world entry. Native startup без bootstrap flag теперь
+выбирает видимый menu-only loop; offscreen ограничен bootstrap-only. Lifecycle/platform
+часть этапа 2 начата, responsive loading/full UI/gameplay и actual-resource runtime evidence
+ещё открыты. См. [команды и ограничения](legacy-gl-native-bootstrap.md).

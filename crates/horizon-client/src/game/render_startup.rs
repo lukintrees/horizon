@@ -56,8 +56,8 @@ impl Renderer {
                     .into(),
             );
         }
-        if !o.native_bootstrap_only {
-            return Err("native Game event loop is not connected yet; only --native-bootstrap-only is available (not playable)".into());
+        if o.offscreen && !o.native_bootstrap_only {
+            return Err("offscreen native startup is bootstrap-only; use a visible native window for the menu loop".into());
         }
         if o.headless
             || !o.execution_role.is_client()
@@ -69,13 +69,14 @@ impl Renderer {
             || o.test_terrain
             || o.world_frames.is_some()
             || o.screenshot_after.is_some()
-            || o.frames.is_some_and(|n| n != 1)
+            || o.frames
+                .is_some_and(|n| n == 0 || (o.native_bootstrap_only && n != 1))
             || o.fullscreen
             || !o.dev_mods.is_empty()
             || o.session_stdin
             || o.session_file.is_some()
         {
-            return Err("native bootstrap is one menu submission only: no world/server/headless/control/benchmark/fullscreen/mods/session/screenshot; --frames may only be 1".into());
+            return Err("native startup is menu-only: no world/server/headless/control/benchmark/fullscreen/mods/session/screenshot; --frames must be positive (bootstrap-only requires 1)".into());
         }
         // Each context owns its own surface. Never manufacture a hidden winit
         // window or show a WGL window in response to an offscreen request.
@@ -86,7 +87,7 @@ impl Renderer {
         match (std::env::consts::OS, offscreen) {
             ("linux", true) => Ok("osmesa"),
             ("windows", false) => Ok("wgl"),
-            ("linux", false) => Err("visible native Linux window is not connected yet; --offscreen is bootstrap validation only".into()),
+            ("linux", false) => Ok("glx"),
             ("windows", true) => Err("native WGL owns a visible window; offscreen native bootstrap is not supported on Windows".into()),
             _ => Err("native GL2 startup is not supported on this platform".into()),
         }
@@ -116,9 +117,9 @@ mod tests {
         assert_eq!(Renderer::parse("native-gl2").unwrap(), Renderer::NativeGl2);
     }
     #[test]
-    fn bootstrap_cannot_be_requested_on_modern_or_claim_an_event_loop() {
+    fn bootstrap_cannot_be_requested_on_modern_and_offscreen_requires_bounded_mode() {
         assert!(options(&["--native-bootstrap-only"]).is_err());
-        assert!(options(&["--renderer", "native-gl2"]).is_err());
+        assert!(options(&["--renderer", "native-gl2", "--offscreen"]).is_err());
     }
     #[test]
     fn native_menu_policy_is_selected_before_submission() {
@@ -134,7 +135,7 @@ mod tests {
         match std::env::consts::OS {
             "linux" => {
                 assert_eq!(offscreen.unwrap(), "osmesa");
-                assert!(visible.is_err());
+                assert_eq!(visible.unwrap(), "glx");
             }
             "windows" => {
                 assert_eq!(visible.unwrap(), "wgl");
@@ -186,6 +187,14 @@ mod tests {
         assert!(!Renderer::Modern.load_settings(&options).horizon.hdr);
         assert!(!dir.join(HDR_MARKER).exists());
         fs::remove_dir_all(&dir).unwrap();
+    }
+    #[cfg(all(feature = "legacy-gl", any(target_os = "linux", windows)))]
+    #[test]
+    fn native_visible_menu_does_not_need_the_bootstrap_flag() {
+        let o = options(&["--renderer", "native-gl2", "--frames", "2"]).unwrap();
+        assert!(!o.native_bootstrap_only);
+        assert!(o.renderer.is_native());
+        assert!(!o.offscreen);
     }
     #[cfg(not(feature = "legacy-gl"))]
     #[test]

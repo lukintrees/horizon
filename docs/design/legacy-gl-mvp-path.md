@@ -68,6 +68,14 @@ native window/event loop/loading menu; world CPU poses/visibility остаютс
 - Подключить actual loading/menu/HUD/glyphs; статический фон явно часть profile.
 - Resize, close, pointer для UI, keyboard/text, focus/minimize и scheduling.
 
+Промежуточный patch MVP 2a: добавлен один Linux GLX/X11 owner (реальное mapped window,
+не pbuffer), native event pump и menu-only adapter в существующий Game/Title. Resize/focus/
+close, pointer, базовые UI keys/Unicode text идут без поддельных winit IDs. World entry,
+modern-only options и external actions пока показывают явную ошибку в настоящем Title;
+симуляция не запускается. CPU resources по-прежнему загружаются синхронно до окна:
+responsive loading/handoff ещё не подключён. XIM/preedit/compose и gameplay input не закрыты.
+Window-level Xvfb/llvmpipe evidence не заменяет actual Game runtime с normal resources.
+
 **Выход:** в видимом окне Game можно пройти меню и выбрать мир. Pbuffer/OSMesa не замена.
 Полную main-menu panorama/blur не делать до playable world.
 
