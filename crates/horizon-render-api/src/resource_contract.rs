@@ -34,14 +34,24 @@ fn byte_len(width: u32, height: u32, layers: u32) -> Result<usize, ResourceError
         .and_then(|n| n.checked_mul(4))
         .ok_or(ResourceError::Budget)
 }
+/// Checked RGBA8 byte length for producer-side validation before decoding.
+pub fn image_bytes(width: u32, height: u32) -> Result<usize, ResourceError> {
+    byte_len(width, height, 1)
+}
+impl TextureLayers<'_> {
+    pub fn validate(&self) -> Result<usize, ResourceError> {
+        let bytes = byte_len(self.size, self.size, self.layers)?;
+        if self.rgba.len() != bytes {
+            return Err(ResourceError::InvalidPixels);
+        }
+        Ok(bytes)
+    }
+}
 impl Resources<'_> {
     /// Validate before allocation. `max_bytes` bounds the total borrowed base
     /// pixels, not peak staging/VRAM usage; A01 must budget those separately.
     pub fn validate(&self, max_bytes: usize) -> Result<usize, ResourceError> {
-        let mut total = byte_len(self.terrain.size, self.terrain.size, self.terrain.layers)?;
-        if self.terrain.rgba.len() != total {
-            return Err(ResourceError::InvalidPixels);
-        }
+        let mut total = self.terrain.validate()?;
         for image in [&self.hud, &self.item_glint, &self.armor_glint] {
             let bytes = byte_len(image.width, image.height, 1)?;
             if image.rgba.len() != bytes {

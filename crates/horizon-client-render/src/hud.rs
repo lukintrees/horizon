@@ -743,6 +743,49 @@ impl HudAtlas {
                 .unwrap_or_else(|| vec![0; size]),
         )
     }
+    /// Strict, bounded read for native resource staging. Unlike the historical
+    /// `pixels()` compatibility path, corrupt/missing pixels are an error, not
+    /// a transparent replacement. Validate metadata and the LZ4 size prefix
+    /// before allocation; decompress into an exactly bounded output buffer.
+    pub fn checked_pixels(
+        &self,
+        max_bytes: usize,
+    ) -> std::result::Result<std::borrow::Cow<'_, [u8]>, String> {
+        let expected = horizon_render_api::resource_contract::image_bytes(self.width, self.height)
+            .map_err(|e| format!("HUD pixels: {e:?}"))?;
+        if expected > max_bytes {
+            return Err("HUD pixel budget exceeded".into());
+        }
+        let packed = match self.packed.as_ref().filter(|_| self.pixels.is_empty()) {
+            Some(packed) => packed,
+            None => {
+                if self.pixels.len() != expected {
+                    return Err("invalid HUD pixel length".into());
+                }
+                return Ok(std::borrow::Cow::Borrowed(&self.pixels));
+            }
+        };
+        let packed = packed.wait();
+        let prefix: [u8; 4] = packed
+            .get(..4)
+            .ok_or("invalid HUD LZ4 header")?
+            .try_into()
+            .unwrap();
+        if u32::from_le_bytes(prefix) as usize != expected {
+            return Err("HUD LZ4 size does not match atlas dimensions".into());
+        }
+        let mut pixels = Vec::new();
+        pixels
+            .try_reserve_exact(expected)
+            .map_err(|_| "HUD pixel allocation failed")?;
+        pixels.resize(expected, 0);
+        let written = lz4_flex::block::decompress_into(&packed[4..], &mut pixels)
+            .map_err(|e| e.to_string())?;
+        if written != expected {
+            return Err("invalid decoded HUD pixel length".into());
+        }
+        Ok(std::borrow::Cow::Owned(pixels))
+    }
     /// Keep the pixels compressed from now on, once a renderer has them: the
     /// window's GPU holds the atlas, and a copy as built only serves a
     /// renderer made again (another window, a lost device, another graphics
@@ -2790,6 +2833,47 @@ impl HudRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn checked_pixels_preserve_raw_borrows_and_decode_exact_packed_pixels() {
+        let mut atlas = HudAtlas::boot();
+        let bytes = atlas.pixels.len();
+        assert_eq!(
+            atlas.checked_pixels(bytes).unwrap().as_ptr(),
+            atlas.pixels.as_ptr()
+        );
+        assert!(atlas.checked_pixels(bytes - 1).is_err());
+        let expected = atlas.pixels.clone();
+        atlas.pack_pixels();
+        assert!(atlas.pixels.is_empty());
+        assert_eq!(atlas.checked_pixels(bytes).unwrap().as_ref(), expected);
+    }
+    #[test]
+    fn checked_pixels_reject_corrupt_headers_dimensions_and_payloads_without_fallback() {
+        let mut atlas = HudAtlas::boot();
+        atlas.width = 0;
+        assert!(atlas.checked_pixels(usize::MAX).is_err());
+        atlas.width = 1024;
+        atlas.pixels.clear();
+        assert!(atlas.checked_pixels(usize::MAX).is_err());
+        // An unfinished packing job must not be awaited when the budget already fails.
+        atlas.packed = Some(Arc::new(OnceLock::new()));
+        assert!(atlas.checked_pixels(0).is_err());
+        let expected = atlas.width * atlas.height * 4;
+        for data in [
+            vec![0],
+            u32::MAX.to_le_bytes().to_vec(),
+            expected.to_le_bytes().to_vec(),
+            lz4_flex::compress_prepend_size(&[255; 4]),
+        ] {
+            atlas.packed = Some(Arc::new(OnceLock::from(data)));
+            assert!(atlas.checked_pixels(usize::MAX).is_err());
+        }
+        // Header claims a full atlas but the valid block only decodes four bytes.
+        let mut short = lz4_flex::compress_prepend_size(&[255; 4]);
+        short[..4].copy_from_slice(&expected.to_le_bytes());
+        atlas.packed = Some(Arc::new(OnceLock::from(short)));
+        assert!(atlas.checked_pixels(usize::MAX).is_err());
+    }
 
     /// The mod image slot is paid only by a game with a native mod loaded.
     #[test]

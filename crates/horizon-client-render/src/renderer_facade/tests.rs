@@ -652,3 +652,5 @@ fn native_resource_factory_streams_stable_layers_hud_and_generation_without_mode
     );
     assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
 }
+
+mod asset_snapshot;

@@ -228,3 +228,28 @@ B1–B4, F01/G01/resource completion и настоящая Win7/X1650 qualificat
 Pack decode/borrow extraction, animation updates/font-cache reset при commit, F01 policy negotiation,
 resource replacement/context recovery и native platform loop остаются открыты. Реальный pack/hardware
 не заменяется синтетическими fixtures: B1–B4/Win7-X1650 qualification не заявляются.
+
+
+## 10. A01c/R03b: snapshot producers и glyph-cache commit (2026-11-05)
+
+- `legacy_gfx::AssetSnapshot` берёт **существующие** `RenderAssets`/`HudAtlas`, не вводит второй pack
+  loader. Terrain и оба glint buffers borrowed; `RenderAssets::generation` и layer IDs сохраняются.
+  Combined base-byte budget проверяется до ожидания/распаковки HUD. Snapshot — явно base-frame SDR;
+  animation counts доступны отдельно, live animation loop этим не реализован. Custom core text/line
+  shaders отклоняются, не теряются молча.
+- `HudAtlas::checked_pixels` — strict native staging path: dimensions/exact length/base budget,
+  LZ4 header и bounded decompression в заранее ограниченный buffer. Corrupt input возвращает ошибку,
+  не transparent fallback. Старый `pixels()` и default modern behavior не менялись.
+- `TerrainHudRenderer::stage_assets` использует snapshot и initial CPU factory, но не сбрасывает
+  активный font cache. Failed/discarded stage освобождает свой owner, не меняет epoch/UV/patches.
+  `StagedAssetRenderer::commit` — явная publication boundary: changed font epoch отклоняет stage;
+  успешный commit сбрасывает cached glyphs **и старые pending patches**, после чего нужно заново
+  построить text/HUD batches. После reset нет fallible GPU upload в commit.
+- CPU fixtures проверяют borrow provenance, generation/base budget, raw/packed HUD roundtrip,
+  malformed headers/payloads и glyph re-rasterization после renderer commit. Новый OSMesa fixture
+  использует RenderAssets fixture + packed HudAtlas, проверяет fail/drop/stale-epoch/commit и настоящий
+  Unicode glyph patch в framebuffer. Теперь focused CI исполняет **21** ignored game GPU fixture.
+
+Это producer/factory seam, а не вызов из Game startup. Native owner publication в Game, platform loop,
+animation updates, transactional reload всех ресурсов, F01 negotiation и Win7/X1650 qualification ещё
+открыты. Синтетический font fixture — не импорт Mojang assets и не доказательство запуска полного pack.

@@ -335,3 +335,13 @@ Game пока modern-owned, interactive native menu/startup и resource/profile 
 [C01 §9](legacy-gl-c01.md#9-a01br03a-native-factory-из-cpu-resources-2026-11-05).
 Это заготовка для owning factory wiring, **не завершение A01/R03/G01**: transactional reload,
 animations, реальные pack producers и выбор native owner в Game ещё не подключены.
+
+
+### Продолжение A01c/R03b (2026-11-05)
+
+Snapshot adapter теперь принимает существующие RenderAssets/HudAtlas; strict bounded HUD decode и
+staged native construction не сбрасывают glyph cache до explicit commit. Drop/failure/stale font epoch
+не меняют active cache; commit очищает старые glyph UVs и pending patches, новый Unicode patch проверен
+OSMesa fixture. Details — [C01 §10](legacy-gl-c01.md#10-a01cr03b-snapshot-producers-и-glyph-cache-commit-2026-11-05).
+Game startup пока modern-owned; этот шаг не включает native factory автоматически и не закрывает
+animated pack/reload lifecycle, F01/G01 или B1–B4.

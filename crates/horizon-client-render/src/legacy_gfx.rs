@@ -18,6 +18,10 @@ use horizon_render_api::{
     scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
 
+mod asset_snapshot;
+#[cfg(test)]
+pub(crate) use asset_snapshot::tests::assets as test_assets;
+pub use asset_snapshot::{AssetSnapshot, StagedAssetRenderer};
 pub mod frame;
 mod resources;
 pub use resources::ResourceLimits;
