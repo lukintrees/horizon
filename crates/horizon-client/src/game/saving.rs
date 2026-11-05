@@ -274,7 +274,7 @@ impl Game<'_> {
             "Saving world...",
             progress,
         );
-        renderer.render(&loading_frame(&hud))?;
+        horizon_client::renderer_facade::render_menu_modern(renderer, &loading_frame(&hud))?;
         Ok(())
     }
 }

@@ -72,7 +72,7 @@ wgpu-free dependency graph остаётся за D01.
 
 ## 2. Что уже подключено к настоящему Game
 
-Все семь прямых renderer submission call sites (world/loading/reload/missing resources) используют
+Все восемь прямых renderer submission call sites (world/loading/save/reload/missing resources) используют
 `renderer_facade::render_modern`. Ошибки и прежняя offscreen bool semantics для существующего
 `frame_drawn` сохранены. Offscreen outcome не переименован в окно, показавшее кадр.
 Headless и winit adapters используют один `WakePolicy`; Poll/Wait/WaitUntil semantics сохранены.
@@ -156,7 +156,7 @@ Trusted-target bootstrap/default-branch protection по-прежнему отд�
 - Facade `render_menu` поддерживает modern panorama/static и native static. Legacy panorama
   возвращает capability error, не подменяется фоном молча. Native empty visibility не удаляет
   resident terrain/atlas/lightmap. GUI conversion/validation выполняется до framebuffer mutation.
-- Шесть loading/no-resources submissions используют menu helper; canonical `Frame::menu` перенесён
+- Семь loading/save/no-resources submissions используют menu helper; canonical `Frame::menu` перенесён
   из loading constructor без изменения default panorama. Основной world/title submission пока остаётся
   полным Frame. Game всё ещё владеет modern renderer; F01/G01 обязаны выбрать static profile явно.
 - Modern static background прокинут per-call через обычный и scaled-screenshot draw; persistent

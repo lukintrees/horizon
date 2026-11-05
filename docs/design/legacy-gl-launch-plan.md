@@ -309,7 +309,7 @@ R02g проверен restored Actions на `904e30d`/`0dbd7bd` (run IDs и гр
 лишний CI архивирован; focused workflow сохраняет modern/full-client, native GL2 и x86 gates.
 
 Первый U01 этап: общий typed `MenuFrame`, явный static RGBA background, modern panorama по умолчанию,
-legacy capability rejection для panorama и шесть loading/no-resource menu submissions. Readback fixture
+legacy capability rejection для panorama и семь loading/save/no-resource menu submissions. Readback fixture
 проверяет, что menu не уничтожает resident world и invalid input не стирает прошлый кадр.
 Это submission seam, **не закрытие U01/B1**: главный title/world path и owning Game пока modern;
 F01 profile negotiation, R03 resources, native factory/startup, screenshot completion и настоящий

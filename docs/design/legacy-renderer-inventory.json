@@ -2980,7 +2980,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/saving.rs",
-      "sha256": "7cc1d563def5c6379b670a92754c4ca452f7d3c9104c3bc4f0066ccb88362835",
+      "sha256": "ddd018949e17e19f5616f78af349e6af40eec98937490f2a8b53731eb132bb07",
       "references": [
         {
           "line": 261,
@@ -2999,10 +2999,9 @@
         {
           "line": 277,
           "kinds": [
-            "owner/factory/reference",
-            "candidate-member-access"
+            "owner/factory/reference"
           ],
-          "code": "renderer.render(&loading_frame(&hud))?;"
+          "code": "horizon_client::renderer_facade::render_menu_modern(renderer, &loading_frame(&hud))?;"
         }
       ]
     },
