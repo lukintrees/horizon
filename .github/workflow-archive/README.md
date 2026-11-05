@@ -20,3 +20,8 @@ Restore a file only deliberately, with an explicit need and permissions review.
 Paths between archived workflows may still refer to their original locations;
 this is an archive, not an alternative executable CI directory. No upstream
 repository settings or workflows outside this fork were changed.
+
+The existing Python workflow-security tests read the archived definitions at
+this location (and the runner-routing test checks both active and archived
+files). Assertions are retained, not skipped after moving the YAML files.
+The focused policy job continues running these regression tests.

@@ -25,7 +25,9 @@ def triggers(text):
 class ChecksRunnerTests(unittest.TestCase):
     def test_self_hosted_jobs_never_take_a_fork_pull_request(self):
         routed = 0
-        for path in sorted(WORKFLOWS.glob("*.yml")):
+        # Preserve the self-hosted security assertions on the archived definitions too.
+        paths = list(WORKFLOWS.glob("*.yml")) + list((ROOT / ".github/workflow-archive").glob("*.yml"))
+        for path in sorted(paths):
             text = path.read_text()
             on = triggers(text)
             for name, block in jobs(text):

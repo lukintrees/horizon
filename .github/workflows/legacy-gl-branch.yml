@@ -79,6 +79,10 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_legacy_renderer_inventory.py'
           python3 -m unittest discover -s tests -p 'test_legacy_cpu_contracts.py'
           python3 -m unittest discover -s tests -p 'test_legacy_workflow_scope.py'
+          # Archiving unused automation must not remove its security regression tests.
+          for suite in ci_runners claim_command nightly overlap_note pr_labels triage_command; do
+            python3 -m unittest discover -s tests -p "test_${suite}.py"
+          done
           python3 tools/ci/legacy_renderer_inventory.py --check
           python3 tools/check_public_tree.py
 
