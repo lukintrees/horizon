@@ -296,4 +296,19 @@ fn visible_glx_window_draws_resizes_pumps_bounded_input_and_reclaims_native_wind
     assert!(context.poll_events().unwrap().close_requested); // persistent until owner drop
     // Window remains alive on close request so Game can finish its lifecycle.
     assert_eq!(context.geometry().unwrap(), [96, 48]);
+    // Also exercise an actual server-side destruction notification. Public
+    // operations must not call Xlib with a dead XID (default BadWindow is fatal).
+    // SAFETY: destroy our own live X window once, then let its notification
+    // transfer cleanup responsibility before the owner drops.
+    unsafe {
+        (context.calls.destroy_window)(context.display, context.window);
+        (context.calls.sync)(context.display, 0);
+    }
+    assert!(context.poll_events().unwrap().close_requested);
+    assert!(context.destroyed.get());
+    assert_eq!(context.drawable_size(), Some([0; 2]));
+    assert!(context.make_current().is_err());
+    assert!(context.resize([32; 2]).is_err());
+    assert!(context.set_title("already closed").is_err());
+    assert!(!context.present().unwrap());
 }

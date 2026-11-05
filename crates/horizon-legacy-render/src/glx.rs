@@ -404,6 +404,9 @@ impl crate::ContextImpl for Context {
         }
     }
     fn set_title(&self, title: &str) -> Result<(), String> {
+        if self.destroyed.get() {
+            return Err("cannot set title on destroyed GLX window".into());
+        }
         let text = CString::new(title).map_err(|_| "native window title contains NUL")?;
         let length = c_int::try_from(title.len()).map_err(|_| "native window title too long")?;
         // SAFETY: native display/window live, strings and bytes remain borrowed

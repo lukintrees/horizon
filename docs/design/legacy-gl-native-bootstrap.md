@@ -1,9 +1,10 @@
-# Native Game bootstrap-only (MVP 1b)
+# Native Game: bootstrap diagnostic и видимое menu-only окно (MVP 1b/2a)
 
-Это промежуточный startup path в **существующем Game**, не playable MVP и не замена
-будущему visible-window/menu gate. Флаг experimental и не часть Launch API 0.1.0.
+Это промежуточный startup path в **существующем Game**, не playable MVP.
+Visible-window/menu gate ещё открыт: есть adapter и window-level evidence, но не
+actual Game runtime с normal assets. Флаги experimental и не часть Launch API 0.1.0.
 
-## Кодовый маршрут
+## Однокадровый диагностический маршрут
 
 `Options::parse` → explicit `renderer=native-gl2` → validation → synchronous CPU resource load
 → `Game::new` → native owner from `pack.render` + `gui.atlas` → настоящий initial Title
@@ -15,8 +16,8 @@ store, shader/resource packs или запуска внешних модов н�
 lightmap здесь намеренно menu-only, **не live world lighting**. World producers пока запрещены,
 а не неявно урезаны до поддержанного subset. Native CLI не aliases wgpu `GraphicsApi::OpenGl`.
 
-`--native-bootstrap-only` обязателен до подключения native event loop. Он рисует ровно один
-кадр; `--frames`, если указан, допускает только `1`. World/server, control, benchmark,
+`--native-bootstrap-only` выбирает отдельную однокадровую диагностику вместо menu loop.
+Он рисует ровно один кадр; `--frames`, если указан, допускает только `1`. World/server, control, benchmark,
 headless, dev mods, session credentials, fullscreen и screenshot arguments отвергаются до
 startup side effects. Native feature выключен — usage error, не modern fallback.
 
@@ -48,8 +49,8 @@ MESA_GL_VERSION_OVERRIDE=2.0 MESA_GLSL_VERSION_OVERRIDE=120 \
 
 Успех этого сценария должен дать `scenario=native-game-bootstrap-only`, `backend=native-gl2`,
 `menu_submissions=1`, `outcome=Offscreen`, `presented=false`, `playable=false`, `world_opened=false`.
-Это завершённый offscreen draw, **не показанное окно**. Default native запуск Linux без
-`--offscreen` сейчас явно отвергается до реализации visible window.
+Это завершённый offscreen draw, **не показанное окно**. Native запуск Linux без
+`--offscreen` теперь использует видимый GLX owner (menu-only route ниже).
 
 Windows: bootstrap выбирает существующий WGL owner и требует **отсутствия** `--offscreen`;
 если выполнен реальный запуск, ожидается `Presented`. Это короткое окно без event loop,
@@ -68,7 +69,8 @@ prepared resources в текущем sandbox не выполнен: такого
 
 Этап 1 остаётся открытым до наблюдаемого actual Game runtime evidence; профиль для world
 CPU poses/visibility ещё не подключён. Следом по [MVP-плану](legacy-gl-mvp-path.md): native visible
-Linux window, event adapter и настоящий loading/menu loop; не добавление новых renderer effects.
+Linux window/input/menu adapter (начаты в MVP 2a ниже), затем responsive loading lifecycle;
+не добавление новых renderer effects.
 
 
 ## MVP 2a: видимый native menu-only route
@@ -78,6 +80,7 @@ Linux window, event adapter и настоящий loading/menu loop; не доб
 ```sh
 # Те же new scratch game/player/home paths и ваши normal prepared resources.
 # На Linux DISPLAY должен указывать на настоящий X11/XWayland/Xvfb server.
+HORIZON_HOME="$scratch/home" HORIZON_TELEMETRY_URL=off \
 ./target/debug/horizon-client --renderer native-gl2 \
   --resources "$RESOURCE_DIR" --game-dir "$scratch/game" \
   --player-dir "$scratch/player" --name NativeMenu \
@@ -104,3 +107,17 @@ Responsive loading window пока нет: full CPU startup происходит
 Это промежуточная реализация, не закрытый этап 2 и не playable world. GLX window fixture
 проверяется на Xvfb с llvmpipe (включая actual X11 front pixels), а не выдаётся за real Game
 runtime. Normal prepared resource folder по-прежнему отсутствует в текущем sandbox.
+
+
+### Проверенный срез MVP 2a
+
+Код `6c77d27972755d4cb5d080cb9dc423cc3a896720`: собственные
+[push 42012173292](https://github.com/lukintrees/horizon/actions/runs/42012173292) и
+[PR 42012180338](https://github.com/lukintrees/horizon/actions/runs/42012180338),
+оба 7/7 SUCCESS. Включают full-client feature compile + native_menu/startup CPU tests,
+unchanged modern checks, native x86 compile/link/CPU (не Win7 runtime), real Game HUD
+GL2 fixtures и отдельный `visible_glx` ignored fixture, явно запущенный на Xvfb/llvmpipe
+с GL 2.0/GLSL 1.20 overrides. Это **не** normal-assets Game launch/menu evidence.
+Локально: 56 standalone Rust tests, Clippy `-D warnings`, 682 Python tests (1 skipped),
+fmt/inventory/public-tree/diff checks. Subsequent dead-window guard/focus refinement
+должен получить собственный exact-head CI result; не наследует эти результаты.

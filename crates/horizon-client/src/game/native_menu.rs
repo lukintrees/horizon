@@ -217,6 +217,7 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
             for event in events.events {
                 if let Event::Focused(focused) = event {
                     input.focused = focused;
+                    game.focused = focused;
                     if !focused {
                         input.reset(game);
                     }

@@ -2457,7 +2457,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_menu.rs",
-      "sha256": "5a7fd1143531f6854facabd2ad627a970ee71938d0b1bb8434b9f8c886471e0f",
+      "sha256": "d4162e8ce2809030b84e4ace86b68b5ac4b25b8d348b481a2c96db0b88da3c4e",
       "references": [
         {
           "line": 206,

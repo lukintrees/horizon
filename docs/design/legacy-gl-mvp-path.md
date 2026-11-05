@@ -54,8 +54,9 @@ initialization. Ownership refactor сам по себе этот пункт не
 Этот patch не уменьшает dependency closure и не меняет toolchain/CRT. Этот риск не задерживает Linux окно.
 
 Продолжение MVP 1b: opt-in `--renderer native-gl2`, native client feature, static-menu CPU
-resource profile и factory связаны с существующим `Game::new`/`Game::hud`. Пока доступен
-только явно ограниченный `--native-bootstrap-only` (на Linux offscreen), не playable startup.
+resource profile и factory связаны с существующим `Game::new`/`Game::hud`. В том patch был
+доступен только явно ограниченный `--native-bootstrap-only` (на Linux offscreen).
+MVP 2a ниже добавляет visible menu-only route без этого flag, но не playable startup.
 [Команда и ограничения](legacy-gl-native-bootstrap.md). Full Game runtime с normal prepared
 resources здесь ещё не проверен, поэтому gate 1 **не закрыт**. Следующий blocker — visible
 native window/event loop/loading menu; world CPU poses/visibility остаются впереди.
