@@ -35,6 +35,13 @@ impl Renderer {
             MenuBackground::Static(rgba) => MenuFrame::static_color(hud, rgba),
         }
     }
+    pub fn load_settings(self, path: &std::path::Path) -> horizon_client::settings::Settings {
+        if self.is_native() {
+            horizon_client::settings::Settings::load_preserving_startup_marker(path)
+        } else {
+            horizon_client::settings::Settings::load(path)
+        }
+    }
     pub fn validate(self, o: &Options) -> Result<()> {
         if !self.is_native() {
             return if o.native_bootstrap_only {
@@ -138,6 +145,47 @@ mod tests {
                 assert!(offscreen.is_err());
             }
         }
+    }
+    #[test]
+    fn native_settings_read_preserves_modern_hdr_recovery_and_saved_options() {
+        use horizon_client::graphics::{FILE, Graphics, HDR_MARKER};
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-native-startup-settings-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let options = dir.join("options.txt");
+        let original = b"gamma:0.75\nresourcePacks:[\"file/kept.zip\"]\n";
+        fs::write(&options, original).unwrap();
+        let graphics = Graphics {
+            hdr: true,
+            shader_pack: "kept-shaders".into(),
+            ..Default::default()
+        };
+        graphics.save(&dir);
+        fs::write(dir.join(HDR_MARKER), b"pending").unwrap();
+        let saved_graphics = fs::read(dir.join(FILE)).unwrap();
+        let settings = Renderer::NativeGl2.load_settings(&options);
+        assert!(settings.horizon.hdr);
+        assert_eq!(settings.horizon.shader_pack, "kept-shaders");
+        assert_eq!(settings.resource_packs, ["file/kept.zip"]);
+        assert_eq!(settings.gamma, 0.75);
+        assert_eq!(fs::read(&options).unwrap(), original);
+        assert_eq!(fs::read(dir.join(FILE)).unwrap(), saved_graphics);
+        assert_eq!(fs::read(dir.join(HDR_MARKER)).unwrap(), b"pending");
+        // Default modern keeps its old recovery behavior; this change must not
+        // turn off HDR crash recovery for ordinary players.
+        assert!(!Renderer::Modern.load_settings(&options).horizon.hdr);
+        assert!(!dir.join(HDR_MARKER).exists());
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[cfg(not(feature = "legacy-gl"))]
     #[test]

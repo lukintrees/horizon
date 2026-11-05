@@ -4,7 +4,7 @@
   "sources": [
     {
       "path": "crates/horizon-client/src/game.rs",
-      "sha256": "be8e46b0e5c7c9bec69cd252554561ec1a75bd65a7ec2567bf331f3cbd9614e3",
+      "sha256": "6c612521374f0614dfdc1859a5531bfaca9960a4a7d37c11c630588bfef63193",
       "references": [
         {
           "line": 377,
@@ -1310,6 +1310,13 @@
             "owner/factory/reference"
           ],
           "code": "renderer: None,"
+        },
+        {
+          "line": 21459,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "let mut early_settings = options.renderer.load_settings(&Game::options_path());"
         },
         {
           "line": 21462,
@@ -3244,7 +3251,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/render_startup.rs",
-      "sha256": "d97622ee07682951812a088c564427d59afc88dc634a77726de8bcb6d0124102",
+      "sha256": "dc1b0d7335c5e7a985dd4425c871474fc8148785c875803d8fb6daef414b855d",
       "references": [
         {
           "line": 8,
@@ -3261,84 +3268,98 @@
           "code": "impl Renderer {"
         },
         {
-          "line": 41,
+          "line": 48,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Err(\"--native-bootstrap-only requires --renderer native-gl2\".into())"
         },
         {
-          "line": 97,
+          "line": 104,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "for args in [&[][..], &[\"--renderer\", \"modern\"][..]] {"
         },
         {
-          "line": 99,
+          "line": 106,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert_eq!(o.renderer, Renderer::Modern);"
         },
         {
-          "line": 101,
+          "line": 108,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert_eq!(o.renderer.menu_background(), MenuBackground::Panorama);"
         },
         {
-          "line": 107,
+          "line": 114,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert!(Renderer::parse(value).is_err());"
         },
         {
-          "line": 109,
+          "line": 116,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert_eq!(Renderer::parse(\"native-gl2\").unwrap(), Renderer::NativeGl2);"
         },
         {
-          "line": 114,
+          "line": 121,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "assert!(options(&[\"--renderer\", \"native-gl2\"]).is_err());"
         },
         {
-          "line": 119,
+          "line": 126,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let menu = Renderer::NativeGl2.menu(&hud);"
         },
         {
-          "line": 125,
+          "line": 132,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let visible = Renderer::context_kind(false);"
         },
         {
-          "line": 126,
+          "line": 133,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let offscreen = Renderer::context_kind(true);"
         },
         {
-          "line": 146,
+          "line": 176,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "let settings = Renderer::NativeGl2.load_settings(&options);"
+        },
+        {
+          "line": 186,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "assert!(!Renderer::Modern.load_settings(&options).horizon.hdr);"
+        },
+        {
+          "line": 194,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "\"--renderer\","
         },
         {
-          "line": 160,
+          "line": 208,
           "kinds": [
             "owner/factory/reference"
           ],

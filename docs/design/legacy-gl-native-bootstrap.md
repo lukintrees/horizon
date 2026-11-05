@@ -55,7 +55,7 @@ Windows: bootstrap выбирает существующий WGL owner и тре
 если выполнен реальный запуск, ожидается `Presented`. Это короткое окно без event loop,
 не интерактивное меню и не Win7/X1650 qualification. Windows hardware здесь не проверялся.
 
-Профиль не переписывает HDR/shader/resource-pack picks в saved options; native bootstrap не
+Профиль не переписывает HDR/shader/resource-pack picks в saved options и не потребляет modern HDR recovery marker (отдельный non-destructive settings read); native bootstrap не
 запускает normal onGameLoadFinished settings-save/shut_down path. Shared resource loader всё
 ещё может писать штатные derived caches, имя игрока и logs — поэтому только scratch paths.
 

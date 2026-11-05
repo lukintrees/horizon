@@ -704,6 +704,19 @@ fn bool_text(v: bool) -> &'static str {
 }
 impl Graphics {
     pub fn load(dir: &Path) -> Self {
+        let mut g = Self::load_preserving_startup_marker(dir);
+        if fs::remove_file(dir.join(HDR_MARKER)).is_ok() && g.hdr {
+            g.hdr = false;
+            g.save(dir);
+            log::warn!(
+                "the last start ended before HDR output showed a frame; HDR is off now (graphics option hdr, in {FILE})"
+            );
+        }
+        g
+    }
+    /// Diagnostic/native bootstrap read: preserve the modern HDR recovery
+    /// marker and saved pick. A non-modern start must not consume its evidence.
+    pub fn load_preserving_startup_marker(dir: &Path) -> Self {
         let mut g: Self = fs::read_to_string(dir.join(FILE))
             .map(|t| Self::parse(&t))
             .unwrap_or_default();
@@ -715,13 +728,6 @@ impl Graphics {
                 Vec::new()
             }
         };
-        if fs::remove_file(dir.join(HDR_MARKER)).is_ok() && g.hdr {
-            g.hdr = false;
-            g.save(dir);
-            log::warn!(
-                "the last start ended before HDR output showed a frame; HDR is off now (graphics option hdr, in {FILE})"
-            );
-        }
         g
     }
     pub fn parse(text: &str) -> Self {
