@@ -294,3 +294,45 @@ animation updates, transactional reload всех ресурсов, F01 negotiati
 без явного clock command остаётся base frame. Owning native startup/authoritative clock wiring,
 transactional reload/context recovery, F01/G01/W01 и Win7 x86/X1650 qualification остаются открыты.
 Ни A02 целиком, ни B1–B4, ни playable pack/release этот шаг не объявляет завершёнными.
+
+
+## 12. A02b: transactional same-context native resource replacement (2026-11-05)
+
+- `TerrainHudRenderer::stage_reload_assets` получает existing producers, expected/next full-bundle
+  generation, authoritative tick и preparation limits. Native `StagedAssetReload` эксклюзивно заимствует
+  active owner: во время synchronous staging нельзя рисовать, resize или аллоцировать его ресурсы.
+  При drop/error прежние generation, terrain/HUD/glint/animation data, sections, screenshot slots и
+  font cache не публикуются заново. Base framebuffer не очищается. Source font change отклоняет commit.
+- Backend candidate использует **тот же Rc-owned Context/window**, но отдельные shader/resource IDs.
+  Staging payload/object caps равны оставшейся capacity active backend, не второму полному GPU budget.
+  Old + candidate RGBA/VBO payloads и tracked objects поэтому bounded во время подготовки. Это
+  дисциплина exclusive owner guard, **не глобальный ledger для произвольных сторонних GL owners**;
+  shader/program/driver overhead и реальный VRAM peak не приравниваются к payload accounting.
+- Source targets/frame counts/shared RGBA и compressed HUD backing также получают только остаток
+  соответствующего budget после active usage. Arc-shared source может conservatively учитываться
+  дважды. Нет destructive fallback «удалить старое и попробовать»: insufficient joint capacity — ошибка.
+  Preparation base pixels/update scratch/codec overhead по-прежнему имеют отдельные границы; полный
+  process peak и ресурсы внешнего Game/pack loader этот шаг не ограничивает.
+- До commit candidate уже содержит новые terrain, HUD, оба glints, copied lightmap и animations sampled
+  на requested tick; dimension min_y сохранён. Все fallible validation/budget/cache promotion завершены
+  **до** glyph reset/publication. Commit переносит оба screenshot slots без повторного request/I/O,
+  сбрасывает cached glyph UVs/pending patches нового producer и заменяет owner. Старые meshes/cache/
+  resources уничтожаются; никакой UV-bearing section не переживает смену layout/generation.
+  Нормальные full limits и HUD cache capacity восстанавливаются, staging cap не накапливается.
+- Публикуется только строго более новая full-bundle generation; anonymous/foreign/reused/older commands
+  отклоняются. Caller обязан опубликовать matching CPU producers, перестроить text batches/world meshes
+  и stamp/filter streaming jobs. Этот native command сам не реализует W01 stale job scheduling.
+  При `legacy-gl` включён и synchronous `RendererFacade::reload_assets`; modern adapter его явно
+  отклоняет и сохраняет прежний Game-owned reload path. Default modern startup не меняется.
+- CPU checks покрывают generation/capacity subtraction и checked backing-limit promotion. Новый
+  OSMesa fixture проверяет context identity, rollback/drop/stale font, joint GPU/source exhaustion,
+  partial staged resource cleanup, unchanged old pixels/sections, commit/animation tick/layout min_y,
+  transferred screenshot request+completion и повторные reload cycles со стабильной tracked residency.
+  Существующий Unicode fixture расширен реальной glyph re-rasterization после same-context reload.
+  Focused CI теперь выбирает **23** ignored Game GL2 GPU fixtures.
+
+Это synchronous native renderer transaction, **не full Game pack reload**: CPU pack/language publication,
+streaming queues, native Game startup/platform input/clock wiring ещё требуют A02/F01/G01/W01.
+Context loss/recreation — отдельный lifecycle, не «recover» через текущий possibly-lost context.
+Window identity проверена shared-context ownership/readback, но interactive Win32/Win7/X1650 и Alt-Tab
+этим OSMesa fixture не квалифицируются. B1–B4 и release не объявляются завершёнными.

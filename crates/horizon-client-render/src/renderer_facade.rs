@@ -98,6 +98,27 @@ impl<'a> RendererFacade<'a> {
                 .map_err(Into::into),
         }
     }
+    /// Synchronous native resource publication. The opt-in preparation policy
+    /// does not replace the modern Game's existing reload path. Callers must
+    /// publish matching CPU producers and rebuild UV-bearing batches/sections.
+    #[cfg(feature = "legacy-gl")]
+    pub fn reload_assets(
+        &mut self,
+        assets: &crate::assets::RenderAssets,
+        hud: &crate::hud::HudAtlas,
+        expected: horizon_render_api::render_contract::ResourceGeneration,
+        next: horizon_render_api::render_contract::ResourceGeneration,
+        tick: u64,
+        preparation: crate::legacy_gfx::ResourceLimits,
+    ) -> Result<horizon_render_api::render_contract::ResourceGeneration> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern resource reload belongs to its Game owner".into()),
+            Adapter::Legacy { renderer, .. } => renderer
+                .stage_reload_assets(assets, hud, expected, next, tick, preparation)?
+                .commit()
+                .map_err(Into::into),
+        }
+    }
     /// Modern render already presents internally. Legacy submits then presents
     /// once; offscreen success is distinct from a displayed window frame.
     pub fn render(&mut self, frame: &Frame<'_>) -> Result<FrameOutcome> {

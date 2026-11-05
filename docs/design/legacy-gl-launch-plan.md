@@ -357,3 +357,15 @@ CPU + OSMesa проверяют interpolation/frame sequence/wrap, stale generat
 HUD cache и восстановление после реального partial update failure. Details — [C01 §11](legacy-gl-c01.md#11-a02a-explicit-native-terrainhud-animation-maintenance-2026-11-05).
 Это maintenance seam, **не завершение A02/F01/G01**: authoritative Game clock/native startup пока не
 подключены, full transactional reload и целевая Win7/X1650 qualification остаются необходимы.
+
+
+### Продолжение A02b (2026-11-05)
+
+Native staged reload теперь готовит replacement на **том же Context/window** под exclusive borrow
+активного owner. GPU payload/object, retained animation source и compressed HUD staging ограничены
+остатком joint capacity; failed/drop/stale-font stage сохраняет прежние ресурсы/sections/framebuffer.
+Commit публикует новый bundle/tick, очищает старые UV-bearing sections и glyph caches, переносит
+screenshot request/result и восстанавливает normal budgets/cache capacity. Проверяются repeated cycles,
+context identity и Unicode glyph после reload. Details — [C01 §12](legacy-gl-c01.md#12-a02b-transactional-same-context-native-resource-replacement-2026-11-05).
+Это renderer-level transaction, **не полный A02/Game reload**: publication CPU pack/language,
+stamped streaming queues, native startup/platform/clock и context-loss recovery остаются открыты.

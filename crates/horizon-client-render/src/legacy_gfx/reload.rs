@@ -383,6 +383,17 @@ mod gpu_tests {
                 context
             );
             let new = stage.replacement.world.backend_mut().stats();
+            let free = stage.replacement.world.backend_mut().remaining();
+            assert_eq!(
+                stats.texture_bytes + new.texture_bytes + free.texture_bytes,
+                limits.gpu.texture_bytes
+            );
+            assert_eq!(
+                stats.mesh_bytes + new.mesh_bytes + free.mesh_bytes,
+                limits.gpu.mesh_bytes
+            );
+            assert_eq!(stats.textures + new.textures + free.textures, 4096);
+            assert_eq!(stats.meshes + new.meshes + free.meshes, 65536);
             assert!(stats.texture_bytes + new.texture_bytes <= limits.gpu.texture_bytes);
             assert!(stats.mesh_bytes + new.mesh_bytes <= limits.gpu.mesh_bytes);
             assert!(stats.textures + new.textures <= 4096);
@@ -444,11 +455,13 @@ mod gpu_tests {
         let mut generation = next;
         for number in 79..83 {
             let next = ResourceGeneration(number);
-            renderer
-                .stage_reload_assets(&next_assets, &next_hud, generation, next, 2, preparation)
-                .unwrap()
-                .commit()
-                .unwrap();
+            crate::renderer_facade::RendererFacade::legacy(
+                &mut renderer,
+                frame::VisibleSections::default(),
+                frame::Options::default(),
+            )
+            .reload_assets(&next_assets, &next_hud, generation, next, 2, preparation)
+            .unwrap();
             renderer.upload_section([0; 3], &mesh()).unwrap();
             renderer.render(&scene, &new_batch).unwrap();
             assert_eq!(renderer.world.backend_mut().stats(), stable);
