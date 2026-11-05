@@ -108,6 +108,23 @@ Reproducer: `tools/native_game_menu_smoke.py` с собственными normal
 - Existing gameplay bindings: WASD, jump, mouse-look/capture, Escape; simulation не переписывать.
 - Ходьба должна вызывать загрузку новых и unload старых sections, edits/teleport не принимают stale jobs.
 
+Начатый срез 3a: `Game::render` берёт размер кадра у `RendererOwner::size` и
+строит camera frustum через `gfx::camera_frustum` — тот же код, которым
+пользуется modern renderer. Это первый seam: у native owner нет wgpu device,
+чтобы спросить frustum, а без него не построить CPU visibility ни для entities,
+ни для sections. Поведение modern owner не изменилось.
+
+Следующие seam'ы по порядку:
+1. Resident section keys у legacy owner → `VisibleSections` (frustum по AABB
+   секции 16³ и distance; cave graph современного renderer'а пока не
+   переносится — это оптимизация, не корректность) и submission кадра в
+   facade. Без этого native frame рисует небо/entities без terrain.
+2. Native loop: `idle`-эквивалент (world entry, save-on-close, control) и
+   frame tick вместо menu-only pump; loading/progress screens через facade.
+3. Streaming: upload/unload в `update_world` через facade для legacy owner
+   (сейчас весь блок под `modern_mut()`); tickets W01a уже в ветке.
+4. Gameplay input (WASD/jump/capture/Escape) на native pump.
+
 **Выход:** игрок ходит по настоящему миру; chunks появляются и выгружаются в движении.
 Только конкретные unsupported producers этого сценария становятся blockers следующего patch.
 
