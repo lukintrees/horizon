@@ -1,11 +1,45 @@
 # Последовательный путь к MVP игры на native OpenGL 2
 
-Дата: 2026-11-05. Цель устройства: Windows 7 SP1 x86 / Radeon X1650 / desktop GL 2.0–2.1.
+Дата: 2026-11-06. Цель устройства: Windows 7 SP1 x86 / Radeon X1650 / desktop GL 2.0–2.1.
 Рабочая ветка: `arena/a7e96628-horizon`, integration draft PR #4.
 
 Это **приоритет исполнения**, а не ещё один параллельный backlog. Он уточняет
 [общий launch plan](legacy-gl-launch-plan.md); [правила интегратора](legacy-gl-integration.md)
 и запрет менять default modern поведение остаются в силе.
+
+## Текущий прогресс — контрольная точка 2026-11-06
+
+Все проектные правки этого среза закоммичены и отправлены в integration branch.
+Последний проверенный **кодовый** head: `de84398c74c2d5cb7b6b579fb3cf85800b0b90c4`.
+`7a9c2deff` добавил native resident visibility/order и scope protection;
+`de84398c7` исправил YAML запуска новой CPU-проверки. Это ещё **не playable MVP**.
+
+| Участок | Что уже реализовано |
+|---|---|
+| MVP 1a/1b | Owning Modern/Native/Empty, opt-in `--renderer native-gl2`, CPU resource profile/factory; native не создаёт wgpu device/surface или GPU skin store |
+| MVP 2a–2c | Visible GLX/WGL owner, native menu input, настоящее static-menu/HUD; окно до joined/cancellable resource worker, same-context checkpointed staging и atomic owner publication |
+| MVP 3a/3b | Shared frustum, общие `Game::idle`/`frame_tick`, existing closing-save/progress routing; cadence 16/32 ms с минимумом 4 ms для save deadline, focus/lost-event reset |
+| MVP 3c | `RendererOwner::native_visible_sections` и caller-owned `SectionOrder`: committed membership/Y origin, full 16³ AABB, f64 subtraction, solid nearest-first/key ties и обратный translucent order; pending GPU removal блокирует список |
+| Scope/CI | `renderer_owner/**` защищён от task edits; CPU default/native и actual-Frame/facade OSMesa regressions включены в focused matrix |
+
+**Проверки кодового head:** [aggregate 42088555293](https://github.com/lukintrees/horizon/actions/runs/42088555293),
+[PR 42088565354](https://github.com/lukintrees/horizon/actions/runs/42088565354) и
+[PR после body refresh 42089916894](https://github.com/lukintrees/horizon/actions/runs/42089916894)
+завершились SUCCESS, все семь jobs. Новая OSMesa fixture действительно исполнилась и прошла;
+это renderer readback, не запуск normal-resource Game и не Win7 qualification.
+Локально: 1308 Rust tests и 47 standalone render-api tests passed, Clippy/fmt прошли;
+LF-normalized Python snapshot — 689 tests, 27 skipped, stable source hashes.
+Windows `pr_ready --quick --base 1a12a2d51` остаётся **не green** только из-за unchanged
+vendor-security symlink privilege error `WinError 1314` (689 Python tests, 15 skipped).
+Crash source-location tests прошли с line tables; assertions/security tests не ослаблялись.
+
+**Остаток:** native Game всё ещё menu/progress-only. Visibility не имеет Game world caller;
+existing world `Frame`/live camera/lightmap/animations/CPU poses, stamped Game worker dispatch
+и upload/unload в `update_world`, затем gameplay input ещё не подключены. World-entry,
+options/reconnect/deferred-entry guards остаются до working native world submission;
+controller polling отложен до adapter без fabricated winit IDs. Продолжать с seam'ов §3 ниже,
+не повторять resident-order patch. Actual Game с normal prepared resources здесь не запускался:
+runtime gates 1/2/3, полный save/reopen сценарий и Win7/X1650 остаются открытыми.
 
 ## Критерий MVP
 
@@ -58,8 +92,9 @@ resource profile и factory связаны с существующим `Game::ne
 доступен только явно ограниченный `--native-bootstrap-only` (на Linux offscreen).
 MVP 2a ниже добавляет visible menu-only route без этого flag, но не playable startup.
 [Команда и ограничения](legacy-gl-native-bootstrap.md). Full Game runtime с normal prepared
-resources здесь ещё не проверен, поэтому gate 1 **не закрыт**. Следующий blocker — visible
-native window/event loop/loading menu; world CPU poses/visibility остаются впереди.
+resources здесь ещё не проверен, поэтому gate 1 **не закрыт**. Код native window/event loop/
+loading menu добавлен в 2a–2c ниже; world Frame/live CPU poses и Game caller visibility
+ещё не подключены.
 
 
 ## 2. Видимое окно, загрузка и настоящее меню — ОЖИДАЕТ 1
