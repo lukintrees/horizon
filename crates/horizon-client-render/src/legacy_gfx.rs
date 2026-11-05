@@ -20,11 +20,14 @@ use horizon_render_api::{
 
 pub mod frame;
 mod screen;
+mod screenshot;
 mod sky;
 mod weather;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
+    /// Combined source + icon RGBA buffers, excluding PNG codec overhead.
+    pub screenshot_bytes: usize,
     pub gpu: Budget,
     pub sections: usize,
     pub section_vertices: usize,
@@ -46,6 +49,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            screenshot_bytes: 16 << 20,
             gpu: Budget::default(),
             sections: 1024,
             section_vertices: 262144,
@@ -112,6 +116,7 @@ pub struct TerrainHudRenderer {
     limits: Limits,
     game_layout: Option<crate::chunk::ColumnLayout>,
     screen: screen::Resources,
+    pub(crate) screenshots: screenshot::State,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
     format!("legacy terrain/HUD: {error:?}")
@@ -160,6 +165,7 @@ impl TerrainHudRenderer {
             limits,
             game_layout: None,
             screen: screen::Resources::default(),
+            screenshots: screenshot::State::new(limits.screenshot_bytes),
         })
     }
 
@@ -767,6 +773,29 @@ impl TerrainHudRenderer {
     }
     pub fn present(&mut self) -> Result<bool, String> {
         self.world.backend_mut().context().present()
+    }
+    pub(crate) fn request_screenshot(
+        &mut self,
+        request: horizon_render_api::render_contract::ScreenshotRequest,
+    ) -> Result<(), String> {
+        let size = self.size();
+        self.screenshots.request(request, size)
+    }
+    /// Only the facade's successful submissions complete commands. Rejected or
+    /// deferred frames leave the request pending. Read before the window swaps;
+    /// encoding/readback failures are reported separately from frame presentation.
+    pub(crate) fn finish_screenshot(&mut self) {
+        let Some(request) = self.screenshots.pending.take() else {
+            return;
+        };
+        let size = self.size();
+        let result = (|| {
+            // Revalidate after resize and before GL allocates the readback Vec.
+            let plan = self.screenshots.plan(&request, size)?;
+            let pixels = self.read_rgba([0, 0, size[0], size[1]])?;
+            screenshot::write(&request, &plan, pixels)
+        })();
+        self.screenshots.result = Some(result);
     }
     pub fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, String> {
         self.world.read_rgba(rect).map_err(diagnostic)

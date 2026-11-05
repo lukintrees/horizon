@@ -314,3 +314,14 @@ legacy capability rejection для panorama и семь loading/save/no-resource
 Это submission seam, **не закрытие U01/B1**: главный title/world path и owning Game пока modern;
 F01 profile negotiation, R03 resources, native factory/startup, screenshot completion и настоящий
 interactive menu/world остаются необходимы. Default modern path не переключается на legacy автоматически.
+
+
+### Продолжение U01b (2026-11-05)
+
+Native screenshot commands фасада теперь выполняются после успешного world/menu draw до present:
+SDR PNG native resolution и centre-cropped icons, одноразовые pending/result transfer, bounded CPU
+readback и явные I/O/budget errors. Современный screenshot path не изменён. Supersampling/upscaling
+не подменяются низким качеством: возвращается ошибка; F01 должен выбрать native-resolution F2 policy.
+Подробности/лимиты и проверка — [C01 §8](legacy-gl-c01.md#8-u01b-bounded-native-screenshot-completion-2026-11-05).
+Это закрывает initial native screenshot completion seam, но **не U01 целиком и не B1**:
+Game пока modern-owned, interactive native menu/startup и resource/profile integration ещё нужны.

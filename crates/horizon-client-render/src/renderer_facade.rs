@@ -92,6 +92,7 @@ impl<'a> RendererFacade<'a> {
                     return Ok(FrameOutcome::Deferred);
                 }
                 renderer.render_game_frame(frame, *visible, *options)?;
+                renderer.finish_screenshot();
                 Ok(if renderer.present()? {
                     FrameOutcome::Presented
                 } else if renderer.is_windowed() {
@@ -133,6 +134,7 @@ impl<'a> RendererFacade<'a> {
                     return Ok(FrameOutcome::Deferred);
                 }
                 renderer.render_menu(menu.hud, clear)?;
+                renderer.finish_screenshot();
                 Ok(if renderer.present()? {
                     FrameOutcome::Presented
                 } else if renderer.is_windowed() {
@@ -144,9 +146,9 @@ impl<'a> RendererFacade<'a> {
         }
     }
 
-    /// Queue a screenshot; the next rendered frame writes it. The legacy
-    /// adapter has no readback yet (U01), so it rejects the request rather
-    /// than silently dropping it.
+    /// Queue a screenshot; the next successful frame writes it before present.
+    /// Legacy supports bounded native-resolution/centre-cropped SDR PNGs;
+    /// supersampling and overwriting an outstanding command are explicit errors.
     pub fn request_screenshot(&mut self, request: ScreenshotRequest) -> Result<()> {
         match &mut self.inner {
             Adapter::Modern(renderer) => {
@@ -154,8 +156,8 @@ impl<'a> RendererFacade<'a> {
                 Ok(())
             }
             #[cfg(feature = "legacy-gl")]
-            Adapter::Legacy { .. } => {
-                Err("legacy GL2 screenshot readback is not implemented (U01)".into())
+            Adapter::Legacy { renderer, .. } => {
+                renderer.request_screenshot(request).map_err(Into::into)
             }
         }
     }
@@ -164,7 +166,7 @@ impl<'a> RendererFacade<'a> {
         match &self.inner {
             Adapter::Modern(renderer) => renderer.screenshot.is_some(),
             #[cfg(feature = "legacy-gl")]
-            Adapter::Legacy { .. } => false,
+            Adapter::Legacy { renderer, .. } => renderer.screenshots.pending.is_some(),
         }
     }
     /// Takes the waiting request without drawing it: a replacement renderer
@@ -173,16 +175,15 @@ impl<'a> RendererFacade<'a> {
         match &mut self.inner {
             Adapter::Modern(renderer) => renderer.screenshot.take(),
             #[cfg(feature = "legacy-gl")]
-            Adapter::Legacy { .. } => None,
+            Adapter::Legacy { renderer, .. } => renderer.screenshots.pending.take(),
         }
     }
     /// Puts back a finished screenshot the old renderer held when it was replaced.
     pub fn restore_screenshot_result(&mut self, result: std::result::Result<[u32; 2], String>) {
         match &mut self.inner {
             Adapter::Modern(renderer) => renderer.screenshot_result = Some(result),
-            // The legacy adapter produces no result, so there is none to carry.
             #[cfg(feature = "legacy-gl")]
-            Adapter::Legacy { .. } => {}
+            Adapter::Legacy { renderer, .. } => renderer.screenshots.result = Some(result),
         }
     }
     /// A finished screenshot's size, or why it failed; each result is reported once.
@@ -190,7 +191,7 @@ impl<'a> RendererFacade<'a> {
         match &mut self.inner {
             Adapter::Modern(renderer) => renderer.screenshot_result.take(),
             #[cfg(feature = "legacy-gl")]
-            Adapter::Legacy { .. } => None,
+            Adapter::Legacy { renderer, .. } => renderer.screenshots.result.take(),
         }
     }
     /// Hands the window surface away before a replacement renderer takes it.

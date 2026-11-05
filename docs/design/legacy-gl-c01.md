@@ -42,7 +42,8 @@ wgpu-free dependency graph остаётся за D01.
 - Screenshot — команды фасада (`request_screenshot`, `screenshot_pending`, `take_screenshot_request`,
   `take_screenshot_result`, `restore_screenshot_result`): Game не пишет поля renderer'а напрямую, а
   device-recovery/pack-reload переносят pending request/result через них. Modern снимает кадр сам;
-  legacy честно отвечает ошибкой «readback не реализован» до U01, а не молча теряет запрос.
+  legacy с U01b выполняет bounded native-resolution SDR PNG / centre-cropped icon после draw,
+  до present. Supersampling отклоняется явно; request/result можно забрать при замене owner (§8).
 - Surface handover (`release_surface`/`recreate_surface`) — тоже команды фасада: modern передаёт и
   восстанавливает wgpu surface, legacy возвращает ошибку, потому что его surface принадлежит native
   context (G01). Молчаливый no-op оставил бы два владельца окна.
@@ -73,7 +74,7 @@ wgpu-free dependency graph остаётся за D01.
 ## 2. Что уже подключено к настоящему Game
 
 Все восемь прямых renderer submission call sites (world/loading/save/reload/missing resources) используют
-`renderer_facade::render_modern`. Ошибки и прежняя offscreen bool semantics для существующего
+`renderer_facade::{render_modern, render_menu_modern}`. Ошибки и прежняя offscreen bool semantics для существующего
 `frame_drawn` сохранены. Offscreen outcome не переименован в окно, показавшее кадр.
 Headless и winit adapters используют один `WakePolicy`; Poll/Wait/WaitUntil semantics сохранены.
 
@@ -95,7 +96,7 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 | `build_renderer`, `loading_renderer`, `renderer_for`, `new_renderer`, `recover_device` | R02/R03/G01: factory, ownership, reload/recovery — интегратор |
 | `config`, `suspended`, window sizing / resize handlers | R02b/c: размер drawable через `renderer_facade::drawable_size`, surface handover через команды фасада; Game/reload resize уже команда facade (R02g); полноценный native minimize loop остаётся P01 |
 | `device`, `queue`, `hud` uploads в skins/maps/UI/glint | A01/A02/E01/R02: CPU patches/resource commands; не протаскивать device/queue в общий trait |
-| `screenshot*`, capture requests/results, device recovery | R02a: facade commands `request_screenshot`/`screenshot_pending`/`take_*`/`restore_*` уже используются Game; modern capture остаётся в modern adapter, legacy readback — U01 |
+| `screenshot*`, capture requests/results, device recovery | R02a: facade commands `request_screenshot`/`screenshot_pending`/`take_*`/`restore_*` уже используются Game; modern capture остаётся в modern adapter; native SDR readback/completion — U01b (§8) |
 | `info`, gpu times/census, HDR calibration, shader macros/packs | Backend-neutral diagnostics; modern-only commands явно capability gated |
 | `upload`, section membership/removals, `take_dropped_sections`, LOD / culling / static entities | W01/R02: upload/clear/remove/has/count уже методы facade; native Game key Y учитывает dimension minimum (R02g). W01 stamps, bounded queues, CPU visibility и modern GPU paths остаются |
 | `skins_entities`, `skinned_models`, GPU posing storage | E01: настоящее CPU posing, не только `skin=None` |
@@ -105,9 +106,10 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 
 ## 4. Что не замораживаем ложным обещанием
 
-В этой ступени **ещё не реализованы** common menu request/static menu path, оставшиеся visibility/resource
-descriptors и wgpu-free dependency graph, resource reload completion API, owning factory/renderer selection, legacy screenshot readback, полноценный
-platform adapter и Game legacy startup. Их точные новые signatures согласует и внесёт интегратор;
+В этой ступени **ещё не реализованы** оставшиеся visibility/resource descriptors и wgpu-free
+dependency graph, resource reload completion API, owning factory/renderer selection, native supersampled
+screenshots, полноценный platform adapter и Game legacy startup. Menu/static path и bounded native SDR
+screenshot completion добавлены в U01a/b (§7–8). Их точные новые signatures согласует и внесёт интегратор;
 нельзя самостоятельно добавлять конкурирующие common types в task PR.
 
 ## 5. `status.legacy` — хук подтверждения запускаемого legacy (G01/T01a)
@@ -161,7 +163,7 @@ Trusted-target bootstrap/default-branch protection по-прежнему отд�
   полным Frame. Game всё ещё владеет modern renderer; F01/G01 обязаны выбрать static profile явно.
 - Modern static background прокинут per-call через обычный и scaled-screenshot draw; persistent
   override отсутствует. Scene-capture format пока не представляет static background: запрос получает
-  явную ошибку, а не неверный panorama replay. Native screenshot command completion остаётся U01.
+  явную ошибку, а не неверный panorama replay. Native screenshot command completion на этапе U01a оставался открытым; U01b описан ниже.
 - CPU tests покрывают canonical empty menu, invalid view/color/layout и stale HUD после resize.
   Новый real-GL facade fixture проверяет clear/HUD pixels, отказы до clear, resize и возвращение к
   resident world после menu. Теперь в focused workflow **18** ignored game GPU fixtures;
@@ -171,3 +173,30 @@ Trusted-target bootstrap/default-branch protection по-прежнему отд�
 Full-client compile/GPU и hosted i686 выполняются focused Actions; локальный Rust target i686
 в текущем окружении недоступен. Ни B1–B4, ни owning Game/native factory, ни hardware qualification
 этот этап не закрывает.
+
+
+## 8. U01b: bounded native screenshot completion (2026-11-05)
+
+- CPU `horizon_render_api::screenshot::Plan` проверяет nonzero/overflow/size и combined source+icon
+  byte budget **до GL readback allocation**. Full-frame RGBA буфер переворачивается in place из GL
+  bottom-up в top-down и становится opaque; centre-square icon усредняется с широкими RGB sums.
+  Это CPU-only код без GPU handles, codec и filesystem; общий guard сканирует и этот файл.
+- Native owner хранит один pending request и один completion; borrowed facade recreation их не теряет.
+  Busy/невалидный запрос не перезаписывает существующий. `take_*` одноразовые; explicit restore result
+  и перенос взятого request работают при owner replacement. Modern request/result semantics не менялись.
+- После успешного world/menu draw facade завершает request **до swap/present**. Rejected/deferred draw
+  оставляет его pending. Readback/PNG/flush error публикуется как screenshot result, не ломает успешный
+  frame outcome. После resize budget проверяется повторно; постоянного readback буфера нет.
+- `Limits::screenshot_bytes` по умолчанию **16 MiB** на source + icon RGBA; PNG codec/stream overhead
+  сюда не входит. Supersampling (`scaled=true`, без explicit icon size) и upscaling отклоняются явно.
+  F01 обязан выбирать native-resolution policy для legacy F2; normal modern F2 не менялся. Это не
+  поддержка HDR/scene replay и не подключение Game к legacy owner.
+- CPU workspace tests проверяют orientation, opacity, centre crop/average, exact byte limits, overflow,
+  bad lengths и reuse full-frame allocation. Native queue test проверяет bounded slots/rejection.
+  Новый OSMesa facade fixture декодирует реальные PNG menu/world/icon, проверяет orientation/alpha,
+  pending/result/handover, rejected frame, I/O failure и resize-budget failure/recovery. Теперь focused CI
+  запускает **19** ignored game GPU fixtures; новый baseline требует exact-head green checks в PR.
+
+Локально: **47 native workspace Rust tests**, host all-targets Clippy, legacy Python guard tests,
+format/inventory/public-tree checks. Hosted x86 и full-client/19 GPU fixtures проверяются Actions.
+B1–B4, F01/G01/resource completion и настоящая Win7/X1650 qualification остаются открыты.
