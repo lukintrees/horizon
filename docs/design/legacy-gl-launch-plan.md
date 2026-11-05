@@ -345,3 +345,15 @@ staged native construction не сбрасывают glyph cache до explicit c
 OSMesa fixture. Details — [C01 §10](legacy-gl-c01.md#10-a01cr03b-snapshot-producers-и-glyph-cache-commit-2026-11-05).
 Game startup пока modern-owned; этот шаг не включает native factory автоматически и не закрывает
 animated pack/reload lifecycle, F01/G01 или B1–B4.
+
+
+### Продолжение A02a (2026-11-05)
+
+Native owner/facade теперь принимает explicit animation maintenance command с full-bundle generation
+и tick существующего SpriteAnimation. Terrain updates сохраняют placements/sections/VBOs и extrude
+padding; HUD updates используют bounded compressed backing и dirty-page invalidation. Shared source
+frames и combined update staging ограничены; partial upload failure блокирует draws до полного retry.
+CPU + OSMesa проверяют interpolation/frame sequence/wrap, stale generation, соседний static layer,
+HUD cache и восстановление после реального partial update failure. Details — [C01 §11](legacy-gl-c01.md#11-a02a-explicit-native-terrainhud-animation-maintenance-2026-11-05).
+Это maintenance seam, **не завершение A02/F01/G01**: authoritative Game clock/native startup пока не
+подключены, full transactional reload и целевая Win7/X1650 qualification остаются необходимы.

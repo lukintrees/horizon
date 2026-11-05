@@ -307,8 +307,18 @@ mod tests {
             vec![vec![0, 0, 0, 255], vec![200, 100, 0, 255]],
             r#"{"frametime":4,"interpolate":true}"#,
         );
-        let mut state =
-            Animations::new(&[clip.clone()], &[], &layout, hud, Limits::default()).unwrap();
+        let mut state = Animations::new(
+            std::slice::from_ref(&clip),
+            &[],
+            &layout,
+            hud,
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            state.sprites[0].clip.pixels(0).as_ptr(),
+            clip.pixels(0).as_ptr()
+        );
         let work = state.prepare(2, hud, 80).unwrap();
         assert_eq!(work.terrain[0].1, [100, 50, 0, 255].repeat(4));
         assert!(state.prepare(2, hud, 79).is_err()); // 16 sampled + 64 padded
@@ -340,6 +350,29 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn nearest_sampling_preserves_rgba_interpolation_and_clip_clock() {
+        let clip = crate::sprites::test_frames(
+            0,
+            vec![(0..16).collect(), (100..116).collect()],
+            r#"{"frametime":4,"interpolate":true}"#,
+        );
+        let first = clip.resized_pixels(0, 4, 2);
+        for (tick, offset) in [(0, 0), (2, 50), (4, 100), (8, 0), (u64::MAX, 25)] {
+            assert_eq!(
+                sample(&clip, clip.blend(tick), [4, 2]).unwrap(),
+                first.iter().map(|v| v + offset).collect::<Vec<_>>()
+            );
+        }
+        let step = crate::sprites::test_frames(
+            0,
+            vec![vec![0; 4], vec![100; 4]],
+            r#"{"frames":[1,0],"frametime":2}"#,
+        );
+        for (tick, value) in [(0, 100), (1, 100), (2, 0), (4, 100)] {
+            assert_eq!(sample(&step, step.blend(tick), [1, 1]).unwrap(), [value; 4]);
+        }
     }
     #[test]
     fn hud_dirty_pages_share_budget_with_terrain_and_inputs_are_checked() {
@@ -482,6 +515,23 @@ mod gpu_tests {
             ),
         ));
         let generation = ResourceGeneration(77);
+        let epoch = atlas.font.epoch();
+        assert!(
+            TerrainHudRenderer::stage_assets(
+                Context::new("osmesa", [64; 2]).unwrap(),
+                &assets,
+                &atlas,
+                generation,
+                &[255; 1024],
+                Limits {
+                    animation_source_bytes: 0,
+                    ..Limits::default()
+                },
+                ResourceLimits::default()
+            )
+            .is_err()
+        );
+        assert_eq!(atlas.font.epoch(), epoch);
         let mut renderer = TerrainHudRenderer::stage_assets(
             Context::new("osmesa", [64; 2]).unwrap(),
             &assets,
@@ -530,14 +580,15 @@ mod gpu_tests {
             (4, [0, 0, 200, 255], [0, 0, 200, 255]),
             (8, [200, 0, 0, 255], [255; 4]),
         ] {
-            let mut facade = RendererFacade::legacy(
-                &mut renderer,
-                frame::VisibleSections::default(),
-                frame::Options::default(),
-            );
-            assert_eq!(facade.advance_animations(generation, tick).unwrap(), 2);
-            assert_eq!(facade.advance_animations(generation, tick).unwrap(), 0);
-            drop(facade);
+            {
+                let mut facade = RendererFacade::legacy(
+                    &mut renderer,
+                    frame::VisibleSections::default(),
+                    frame::Options::default(),
+                );
+                assert_eq!(facade.advance_animations(generation, tick).unwrap(), 2);
+                assert_eq!(facade.advance_animations(generation, tick).unwrap(), 0);
+            }
             renderer.render(&scene, &hud).unwrap();
             assert_eq!(renderer.read_rgba([16, 32, 1, 1]).unwrap(), terrain);
             assert_eq!(
@@ -555,6 +606,12 @@ mod gpu_tests {
         );
         renderer.render(&scene, &hud).unwrap();
         assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
+        let limit = renderer.limits.animation_staging_bytes;
+        renderer.limits.animation_staging_bytes = 1;
+        assert!(renderer.advance_animations(generation, 4).is_err());
+        renderer.render(&scene, &hud).unwrap();
+        assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
+        renderer.limits.animation_staging_bytes = limit;
         // A real HUD backing-budget failure occurs AFTER terrain uploaded. Its
         // initial pixels are identical, so no artificial state mismatch is needed.
         let layout = renderer.hud.layout();
@@ -565,6 +622,16 @@ mod gpu_tests {
         let error = renderer.advance_animations(generation, 4).unwrap_err();
         assert!(error.contains("compressed HUD patch budget"), "{error}");
         assert!(renderer.render(&scene, &hud).is_err());
+        assert!(renderer.render_menu(&hud, [0.; 4]).is_err());
+        assert!(
+            renderer
+                .render_game_frame(
+                    &frame::tests::source(&hud),
+                    frame::VisibleSections::default(),
+                    frame::Options::default()
+                )
+                .is_err()
+        );
         assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
         assert!(
             renderer

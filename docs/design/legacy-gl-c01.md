@@ -255,3 +255,42 @@ resource replacement/context recovery и native platform loop остаются �
 Это producer/factory seam, а не вызов из Game startup. Native owner publication в Game, platform loop,
 animation updates, transactional reload всех ресурсов, F01 negotiation и Win7/X1650 qualification ещё
 открыты. Синтетический font fixture — не импорт Mojang assets и не доказательство запуска полного pack.
+
+
+## 11. A02a: explicit native terrain/HUD animation maintenance (2026-11-05)
+
+- `stage_assets` устанавливает контроллер из **существующих** `SpriteAnimation`. Clone разделяет Arc
+  с исходными frames/clip; второго parser/pack loader/таймера нет. Команда owner/facade
+  `advance_animations(full_bundle_generation, tick)` использует существующий `blend(tick)`, nearest
+  resampling и целочисленное `(a*(1000-millis)+b*millis+500)/1000` для всех RGBA channels. Первый tick
+  явно загружается; повторное sampled state не выделяет pixel buffers и не пишет textures.
+  Modern отклоняет эту maintenance-команду: его прежний in-draw animator не изменён.
+- Bounded `atlas::sprite_patch` extrudes gutters. `WorldScene::update_sprite` меняет только texture
+  subrectangle существующей страницы: layer IDs, placements/UVs, sections и VBOs не пересоздаются.
+  HUD использует существующий transactional compressed `Backing::patch`, затем инвалидирует только
+  изменённые cached pages; padding/gutters обслуживает прежний paging path.
+- Native defaults: **4096** animated targets, **65536** source frames, **32 MiB** conservatively
+  charged shared RGBA frames, **8 MiB** update staging. Повторно используемые frames могут считаться
+  несколько раз: это безопасная верхняя оценка, не новый physical copy. Проверяются target IDs,
+  duplicate terrain layers, finite/in-bounds/nonoverlapping HUD rectangles, непустые одинаковые
+  RGBA-square frames и checked arithmetic. Invalid installation не публикует owner/font-cache reset.
+- До allocation/upload changed pixels суммируются для terrain + HUD; к ним добавляется максимум из
+  одного padded terrain scratch и union decoded dirty HUD pages. При HUD patch retained terrain bytes
+  вычитаются из доступного working limit. Metadata ограничена count/page limits; codec/compressed
+  staging overhead, уже загруженные producer metadata и полный process/VRAM peak сюда не входят.
+  Compressed backing и GPU residency по-прежнему имеют отдельные budgets. Это не закрытие Q02/D01.
+- Foreign/untracked generation и healthy preflight failure ничего не меняют. После возможной частичной
+  upload/patch failure world/menu/Game-frame draw запрещён до успешного retry, без clear предыдущего
+  framebuffer. Retry принудительно обновляет **все** animations, даже если desired state совпадает
+  с последним успешно отмеченным: иначе уже перезаписанная terrain texture могла бы остаться чужой.
+- CPU fixtures проверяют interpolation/alpha/nearest, custom frame sequence, wrap/large tick,
+  repeated-state skip, Arc sharing, combined exact staging/page budget и malformed inputs. Новый OSMesa
+  fixture использует реальные RenderAssets/HudAtlas и SpriteAnimation producer, проверяет animated
+  terrain рядом со static neighbour, HUD/cache invalidation, tick 0/half/step/wrap/repeat, stale bundle,
+  stage/preflight failures и **настоящий HUD compressed-budget отказ после terrain upload** с полным
+  восстановлением при retry старого tick. Focused CI теперь запускает **22** ignored game GPU fixtures.
+
+Это native maintenance seam, **не live Game animation loop**: Game по-прежнему modern-owned, snapshot
+без явного clock command остаётся base frame. Owning native startup/authoritative clock wiring,
+transactional reload/context recovery, F01/G01/W01 и Win7 x86/X1650 qualification остаются открыты.
+Ни A02 целиком, ни B1–B4, ни playable pack/release этот шаг не объявляет завершёнными.
