@@ -27,6 +27,31 @@ impl RendererOwner {
             inner: Owner::Legacy(Box::new(renderer)),
         }
     }
+    /// Actual Game's first native bootstrap: CPU assets only, static-menu SDR.
+    /// The white lightmap is deliberate for this menu-only route, not a claim
+    /// of live world lighting. World startup must supply/tick its own lightmap.
+    #[cfg(feature = "legacy-gl")]
+    pub fn legacy_menu_bootstrap(
+        kind: &str,
+        size: [u32; 2],
+        assets: &crate::assets::RenderAssets,
+        hud: &crate::hud::HudAtlas,
+        generation: horizon_render_api::render_contract::ResourceGeneration,
+    ) -> crate::Result<Self> {
+        let context = horizon_legacy_render::Context::new(kind, size)?;
+        log::info!("native GL2 Game menu factory: {}", context.description());
+        let renderer = crate::legacy_gfx::TerrainHudRenderer::stage_assets(
+            context,
+            assets,
+            hud,
+            generation,
+            &[255; 1024],
+            crate::legacy_gfx::Limits::default(),
+            crate::legacy_gfx::ResourceLimits::default(),
+        )?
+        .commit()?;
+        Ok(Self::from_legacy(renderer))
+    }
     pub fn backend(&self) -> Option<Backend> {
         match self.inner {
             Owner::Empty => None,
@@ -171,5 +196,51 @@ mod tests {
         );
         // This verifies ownership/submission only, not Game/native startup.
         assert_eq!(owner.backend(), Some(Backend::LegacyGl));
+    }
+}
+
+#[cfg(all(test, feature = "legacy-gl"))]
+mod bootstrap_tests {
+    use super::*;
+    use horizon_render_api::render_contract::{FrameOutcome, ResourceGeneration};
+    #[test]
+    fn bad_bootstrap_surface_does_not_reset_the_cpu_font_or_load_a_driver() {
+        let assets = crate::legacy_gfx::test_assets();
+        let hud = crate::hud::HudAtlas::boot();
+        let epoch = hud.font.epoch();
+        assert!(
+            RendererOwner::legacy_menu_bootstrap(
+                "osmesa",
+                [0, 64],
+                &assets,
+                &hud,
+                ResourceGeneration(1)
+            )
+            .is_err()
+        );
+        assert_eq!(hud.font.epoch(), epoch);
+    }
+    #[test]
+    #[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
+    fn game_bootstrap_factory_uses_cpu_assets_and_submits_real_hud_batches() {
+        let assets = crate::legacy_gfx::test_assets();
+        let hud = crate::hud::HudAtlas::boot();
+        let mut owner = RendererOwner::legacy_menu_bootstrap(
+            "osmesa",
+            [64; 2],
+            &assets,
+            &hud,
+            ResourceGeneration(1),
+        )
+        .unwrap();
+        assert_eq!(owner.backend(), Some(Backend::LegacyGl));
+        let mut batch = crate::hud::HudBatch::new([64; 2]);
+        batch.fill(&hud, 0., 0., 64., 64., u32::MAX);
+        let menu = crate::frame::MenuFrame::static_color(&batch, [0., 0., 0., 1.]);
+        let mut facade = owner
+            .facade(VisibleSections::default(), FrameOptions::default())
+            .unwrap();
+        assert_eq!(facade.resource_generation(), Some(ResourceGeneration(1)));
+        assert_eq!(facade.render_menu(&menu).unwrap(), FrameOutcome::Offscreen);
     }
 }

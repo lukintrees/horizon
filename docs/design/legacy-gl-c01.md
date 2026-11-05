@@ -401,3 +401,27 @@ boxed Native. Storage не создаёт device/context, не имеет Deref/
 modern-only; флаг выбора, native Game bootstrap/profile и runtime dispatch ещё не подключены.
 Настоящий Game worker dispatch/visibility/input/save путь ещё modern. Новая offscreen owner
 fixture проверяет ownership/facade, а не menu/playable runtime. Default feature graph не менялся.
+
+
+## 15. MVP 1b: native bootstrap route, не playable Game (2026-11-05)
+
+`Options.renderer` отличает `modern` от `native-gl2`; client feature `legacy-gl` только
+включает native adapter, не отделяет dependency closure. Native требует явный
+`--native-bootstrap-only`. Без feature/с несовместимыми аргументами — usage error до
+`Options::read` startup side effects, без wgpu fallback. Existing Launch API не менялся.
+
+Общий synchronous loader теперь получает startup profile: native UI строит настоящий GUI
+atlas, не декодирует panorama, не включает LabPBR, не вызывает modern PreparedTextures даже
+при будущем menu handoff. Native bootstrap сознательно vanilla-only и не запускает внешние
+моды. Saved renderer/packs/HDR picks не меняются. Modern Loading отказывает native selection,
+пока не подключён его native owner/lifecycle, а не пытается передать wgpu surface.
+
+Настоящий `start_game` строит Game и устанавливает native owner из его `pack.render` и
+`gui.atlas` через `RendererOwner::legacy_menu_bootstrap`. Initial Title helper общий с modern.
+`native_startup::render_menu` вызывает **Game::hud**, затем existing facade, static SDR menu.
+World/loading/reload state отвергается; Offscreen остаётся не Presented. Native bootstrap
+не входит в simulation/save/normal event loop. Это промежуточная диагностическая ветка,
+**не закрытый runtime gate 1/2**, не альтернативный engine. [Инструкции и evidence boundaries](legacy-gl-native-bootstrap.md).
+
+Новый factory тест использует CPU RenderAssets/HudAtlas fixtures. Он не заменяет полный
+Game resource-load/runtime прогон, который здесь пока невозможен без normal prepared folder.

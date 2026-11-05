@@ -234,6 +234,8 @@ mod native_quick_move;
 mod native_recipes;
 mod native_server;
 mod native_shaders;
+#[cfg(feature = "legacy-gl")]
+mod native_startup;
 mod native_ticks;
 mod native_visuals;
 mod native_world_columns;
@@ -283,6 +285,7 @@ mod remote_projectiles;
 mod remote_stations;
 mod remote_vehicles;
 mod render_control;
+mod render_startup;
 mod render_tick;
 mod repro;
 mod respawn_anchor;
@@ -456,6 +459,8 @@ const AUTO_UPLOADS_AT_ONCE: usize = 8;
 
 #[derive(Clone)]
 struct Options {
+    renderer: render_startup::Renderer,
+    native_bootstrap_only: bool,
     resources: PathBuf,
     distance: i32,
     distance_override: Option<i32>,
@@ -605,6 +610,8 @@ impl Options {
             .ok_or("missing executable directory")?
             .join("resources");
         let mut o = Self {
+            renderer: render_startup::Renderer::Modern,
+            native_bootstrap_only: false,
             resources: if sibling.join("horizon-resources.json").exists() {
                 sibling
             } else {
@@ -654,7 +661,7 @@ impl Options {
             match arg.as_str() {
                 "--help" | "-h" => {
                     println!(
-                        "Horizon — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
+                        "Horizon — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --renderer modern|native-gl2  Experimental; native requires --features legacy-gl\n  --native-bootstrap-only  One actual Game menu submission, NOT playable; Linux also needs --offscreen\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
                         horizon_core::VANILLA_VERSION
                     );
                     return Ok(None);
@@ -663,6 +670,7 @@ impl Options {
                     println!("{}", launch_api::reply(&horizon_client::crash::version()));
                     return Ok(None);
                 }
+                "--native-bootstrap-only" => o.native_bootstrap_only = true,
                 "--fullscreen" => o.fullscreen = true,
                 "--session-stdin" => o.session_stdin = true,
                 "--dedicated" => {
@@ -694,6 +702,7 @@ impl Options {
                     // A launcher shows the error to the player: it names the option.
                     let read = || -> Result<()> {
                         match arg.as_str() {
+                            "--renderer" => o.renderer = render_startup::Renderer::parse(&value)?,
                             "--resources" => o.resources = value.into(),
                             "--render-distance" | "--radius" => {
                                 o.distance = value.parse()?;
@@ -779,6 +788,7 @@ impl Options {
                 }
             }
         }
+        o.renderer.validate(&o)?;
         Ok(Some(o))
     }
 }
@@ -2082,6 +2092,16 @@ impl UiResources {
                 atlas: atlas?,
                 panorama: Arc::new(panorama),
             })
+        })
+    }
+    fn load_static_menu(root: &std::path::Path, defaults: &std::path::Path) -> Result<Self> {
+        let atlas =
+            HudAtlas::build_over_with_image(root, defaults, mods::built_with_native_mods())?;
+        Ok(Self {
+            atlas,
+            // Compatibility CPU storage only. The native menu producer explicitly
+            // requests Static; these placeholder faces are never submitted.
+            panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([0; 4])),
         })
     }
     /// What a server's game holds, since it draws nothing: the font, which books
@@ -14253,7 +14273,7 @@ impl Game<'_> {
             self.all_sections_changed();
         }
         self.audio.master = self.settings.master_volume;
-        if self.settings.sound_device != self.audio.device() {
+        if !self.options.renderer.is_native() && self.settings.sound_device != self.audio.device() {
             let _ = self.audio.set_device(&self.settings.sound_device);
         }
         horizon_client::hud::GUI_SCALE.store(
@@ -15433,11 +15453,11 @@ impl Game<'_> {
         }
     }
     fn render(&mut self) -> Result<bool> {
-        // MVP step 1a only migrates ownership. Until native Game submission is
-        // connected, fail explicitly instead of treating modern_ref() == None
-        // as an empty frame. Offscreen fixtures are not a playable startup.
         if self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl) {
-            return Err("native GL2 Game frame routing is not connected yet".into());
+            #[cfg(feature = "legacy-gl")]
+            return native_startup::render_menu(self).map(|outcome| outcome.was_presented());
+            #[cfg(not(feature = "legacy-gl"))]
+            return Err("native owner requires the legacy-gl client feature".into());
         }
         // The window's GPU holds the atlas: its copy in memory is kept
         // compressed (a no-op once it is).
@@ -19795,7 +19815,8 @@ impl Progress {
 /// output stays byte-identical; only an ordinary launch shows the window first.
 fn synchronous_startup(options: &Options) -> bool {
     // A headless game has no window for the loading screen.
-    options.headless
+    options.renderer.is_native()
+        || options.headless
         || options.frames.is_some()
         || options.world_frames.is_some()
         || options.benchmark.is_some()
@@ -20029,6 +20050,7 @@ fn load_resources(
     started: Instant,
     menu: bool,
     headless: bool,
+    renderer: render_startup::Renderer,
     progress: &Progress,
     publish: &mut dyn FnMut(UiResources, &std::path::Path),
 ) -> Result<Loaded> {
@@ -20037,7 +20059,9 @@ fn load_resources(
     // server thread's (horizon_threads::jobs), sized before any world opens.
     horizon_threads::jobs::configure(threads);
     horizon_client::sprites::set_texture_budget(settings.horizon.texture_budget_mib);
-    horizon_client::sprites::set_labpbr_maps(shader_packs::picks_native_pack(settings));
+    horizon_client::sprites::set_labpbr_maps(
+        !renderer.is_native() && shader_packs::picks_native_pack(settings),
+    );
     // Stage A: the menu bundle (atlas and panorama). With a loading screen it is
     // published at once so the title screen can appear while the world bundle
     // loads; the synchronous launch instead carries it in `Loaded`.
@@ -20048,6 +20072,8 @@ fn load_resources(
         let _step = startup::step("ui.load");
         if headless {
             UiResources::server(root)
+        } else if renderer.is_native() {
+            UiResources::load_static_menu(root, vanilla_root)
         } else {
             UiResources::load(root, vanilla_root)
         }
@@ -20235,13 +20261,15 @@ fn load_resources(
     let prepared_at = Instant::now();
     let (game_cpu, renderer_cpu) = if menu {
         let (game_cpu, renderer_cpu) = std::thread::scope(|scope| {
-            let textures = Step::spawn(scope, parallel, || {
-                startup::time("handoff.renderer_textures", || {
-                    prepare_renderer_textures(&pack)
+            let textures = (!renderer.is_native()).then(|| {
+                Step::spawn(scope, parallel, || {
+                    startup::time("handoff.renderer_textures", || {
+                        prepare_renderer_textures(&pack)
+                    })
                 })
             });
             let game_cpu = startup::time("handoff.game_cpu", || GameCpuResources::load(&root));
-            (game_cpu, textures.join())
+            (game_cpu, textures.map(Step::join))
         });
         let game_cpu = match game_cpu {
             Ok(game_cpu) => game_cpu,
@@ -20256,7 +20284,7 @@ fn load_resources(
             "Horizon: handoff CPU resources prepared on worker in {} ms",
             prepared_at.elapsed().as_millis()
         );
-        (Some(game_cpu), Some(renderer_cpu))
+        (Some(game_cpu), renderer_cpu)
     } else {
         (None, None)
     };
@@ -20624,6 +20652,23 @@ fn loading_frame(hud: &HudBatch) -> horizon_client::renderer_facade::MenuFrame<'
     horizon_client::renderer_facade::MenuFrame::panorama(hud, 0., 10.)
 }
 
+impl Game<'_> {
+    fn initial_title(&self) -> Result<Title> {
+        let mut title = Title::new(
+            std::env::current_dir()?.join("saves"),
+            &self.options.resources,
+        )
+        .with_user(|| self.options.player_name());
+        title.last_server = self.settings.file.string("lastServer");
+        title.skip_multiplayer_warning = self.settings.file.bool("skipMultiplayerWarning");
+        // Gui.addInitialScreens: the accessibility onboarding comes first.
+        if self.settings.file.bool("onboardAccessibility") {
+            title.start_onboarding();
+        }
+        Ok(title)
+    }
+}
+
 /// The post-load setup once the resources are ready: `Game::new` and the
 /// options, packs, mods, control socket, benchmark and world selection the
 /// old `run` did after loading. `None` means a harness or dedicated run
@@ -20670,6 +20715,16 @@ fn start_game<'a>(
         game.options.no_pause = true;
     }
     game.apply_settings();
+    if game.options.renderer.is_native() {
+        #[cfg(feature = "legacy-gl")]
+        {
+            native_startup::initialize(&mut game)?;
+            game.title = Some(game.initial_title()?);
+            return Ok(Some(game));
+        }
+        #[cfg(not(feature = "legacy-gl"))]
+        return Err("native Game bootstrap was not built in".into());
+    }
     // Benchmarks measure the game alone.
     if game.options.benchmark.is_none() {
         game.mods.dev = game.options.dev_mods.clone();
@@ -20755,18 +20810,7 @@ fn start_game<'a>(
         }
         None if handoff => {}
         None => {
-            let mut title = Title::new(
-                std::env::current_dir()?.join("saves"),
-                &game.options.resources,
-            )
-            .with_user(|| game.options.player_name());
-            title.last_server = game.settings.file.string("lastServer");
-            title.skip_multiplayer_warning = game.settings.file.bool("skipMultiplayerWarning");
-            // Gui.addInitialScreens: the accessibility onboarding comes first.
-            if game.settings.file.bool("onboardAccessibility") {
-                title.start_onboarding();
-            }
-            game.title = Some(title);
+            game.title = Some(game.initial_title()?);
         }
     }
     if std::env::var_os("HORIZON_COMMAND_SCRIPT").is_some()
@@ -21415,7 +21459,7 @@ pub fn run_with() -> Result<()> {
     let mut early_settings = Settings::load(&Game::options_path());
     // Minecraft.<init>: read the last start's flag, then mark this one as not
     // finished until onGameLoadFinished. A dedicated server has no options.txt.
-    if options.execution_role.is_client() {
+    if options.execution_role.is_client() && !options.renderer.is_native() {
         if unclean_start_recovery(&mut early_settings) {
             log::warn!(
                 "Detected unexpected shutdown during last game startup: resetting fullscreen mode"
@@ -21428,11 +21472,11 @@ pub fn run_with() -> Result<()> {
         early_settings.save(&Game::options_path());
     }
     // Minecraft's constructor opens the narrator; a server has none.
-    if options.execution_role.is_client() {
+    if options.execution_role.is_client() && !options.renderer.is_native() {
         narrator::start(&early_settings);
     }
     // "Playing Horizon" on Discord: never for a server; an automated run only talks to a test's fake Discord.
-    if options.dedicated.is_none() {
+    if options.dedicated.is_none() && !options.renderer.is_native() {
         let automated = options.benchmark.is_some()
             || options.offscreen
             || options.frames.is_some()
@@ -21446,17 +21490,27 @@ pub fn run_with() -> Result<()> {
         return run_loading(options, early_settings, vanilla_root, None, started);
     }
     let mut pack_error = None;
-    options.resources = packs::startup_root(&vanilla_root, &early_settings.resource_packs, &[])
-        .unwrap_or_else(|e| {
-            log::warn!("Horizon: resource packs not applied: {e}");
-            pack_error = Some(e.to_string());
-            vanilla_root.clone()
-        });
-    options.resources = mods::content_root(
-        &options.resources,
-        &early_settings.mods.enabled,
-        &options.dev_mods,
-    );
+    options.resources = if options.renderer.is_native() {
+        log::info!(
+            "native bootstrap profile: vanilla CPU assets, static SDR menu, no panorama, shader/resource packs, external mods, modern texture preparation or world producers; saved settings unchanged"
+        );
+        vanilla_root.clone()
+    } else {
+        packs::startup_root(&vanilla_root, &early_settings.resource_packs, &[]).unwrap_or_else(
+            |e| {
+                log::warn!("Horizon: resource packs not applied: {e}");
+                pack_error = Some(e.to_string());
+                vanilla_root.clone()
+            },
+        )
+    };
+    if !options.renderer.is_native() {
+        options.resources = mods::content_root(
+            &options.resources,
+            &early_settings.mods.enabled,
+            &options.dev_mods,
+        );
+    }
     let loaded = load_resources(
         options.resources.clone(),
         launch_world(&options),
@@ -21465,17 +21519,22 @@ pub fn run_with() -> Result<()> {
         started,
         false,
         options.dedicated.is_some(),
+        options.renderer,
         &Progress::new(),
         &mut |_, _| {},
     )?;
     let gui = loaded.gui.ok_or("missing menu bundle")?;
     options.resources = loaded.root.clone();
-    let audio = if !options.execution_role.is_client() || options.headless {
+    let audio = if !options.execution_role.is_client()
+        || options.headless
+        || options.renderer.is_native()
+    {
         Audio::silent(&options.resources)
     } else {
         Audio::with_device(&options.resources, &early_settings.sound_device)
     };
     let resources = loaded.resources;
+    let options_native_settings = options.renderer.is_native().then_some(early_settings);
     let game = start_game(
         &resources,
         loaded.pack,
@@ -21486,10 +21545,16 @@ pub fn run_with() -> Result<()> {
         vanilla_root,
         started,
         loaded.rest_loader,
-        None,
+        options_native_settings,
         None,
     )?;
     if let Some(mut game) = game {
+        if game.options.renderer.is_native() {
+            #[cfg(feature = "legacy-gl")]
+            return native_startup::run(game);
+            #[cfg(not(feature = "legacy-gl"))]
+            return Err("native Game bootstrap was not built in".into());
+        }
         // Minecraft.onGameLoadFinished: a start that made it this far is clean.
         if game.options.execution_role.is_client() {
             game.settings.file.set(

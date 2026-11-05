@@ -349,6 +349,10 @@ pub(super) fn spawn_loader(
     started: Instant,
     progress: &Progress,
 ) -> Result<(Receiver<LoaderMsg>, JoinHandle<()>)> {
+    if options.renderer.is_native() {
+        return Err("native loading window/handoff is not connected; modern Loading cannot own native startup".into());
+    }
+    let renderer = options.renderer;
     let (sender, receiver) = std::sync::mpsc::channel();
     let settings = settings.clone();
     let vanilla_root = vanilla_root.to_path_buf();
@@ -373,6 +377,7 @@ pub(super) fn spawn_loader(
                 started,
                 true,
                 false,
+                renderer,
                 &progress,
                 &mut |gui, root| {
                     let _ = sender.send(LoaderMsg::Ui(gui, root.to_path_buf()));

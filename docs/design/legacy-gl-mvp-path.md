@@ -53,7 +53,13 @@ initialization. Ownership refactor сам по себе этот пункт не
 своего std; ordinary hosted `i686-pc-windows-msvc` нельзя выдавать за Win7 qualification.
 Этот patch не уменьшает dependency closure и не меняет toolchain/CRT. Этот риск не задерживает Linux окно.
 
-Остаток после него: startup selection/factory/profile, затем runtime loop — не объявлять уже работающими.
+Продолжение MVP 1b: opt-in `--renderer native-gl2`, native client feature, static-menu CPU
+resource profile и factory связаны с существующим `Game::new`/`Game::hud`. Пока доступен
+только явно ограниченный `--native-bootstrap-only` (на Linux offscreen), не playable startup.
+[Команда и ограничения](legacy-gl-native-bootstrap.md). Full Game runtime с normal prepared
+resources здесь ещё не проверен, поэтому gate 1 **не закрыт**. Следующий blocker — visible
+native window/event loop/loading menu; world CPU poses/visibility остаются впереди.
+
 
 ## 2. Видимое окно, загрузка и настоящее меню — ОЖИДАЕТ 1
 
