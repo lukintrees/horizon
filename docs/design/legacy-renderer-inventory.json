@@ -4,7 +4,7 @@
   "sources": [
     {
       "path": "crates/horizon-client/src/game.rs",
-      "sha256": "887fe2c88fd4c370b433ad62a7b40bedf98c4a75ca7b459cfbea681c325f3eed",
+      "sha256": "c6ad32c3fe2c92581bab8325b687ef7d8dc96542601540373dbb2d4bc160dbb0",
       "references": [
         {
           "line": 381,
@@ -491,47 +491,26 @@
           "code": "renderer,"
         },
         {
-          "line": 15596,
+          "line": 15595,
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": ".renderer"
+          "code": "let Some(size) = self.renderer.size() else {"
         },
         {
-          "line": 15598,
-          "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map(|r| [r.config.width, r.config.height])"
-        },
-        {
-          "line": 15644,
+          "line": 15640,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "&& let Some(renderer) = self.renderer.modern_mut()"
         },
         {
-          "line": 15647,
+          "line": 15643,
           "kinds": [
             "owner/factory/reference",
             "candidate-member-access"
           ],
           "code": "renderer.start_occlusion(camera, (self.streaming.radius * 16) as f32)"
-        },
-        {
-          "line": 15864,
-          "kinds": [
-            "owner/factory/reference"
-          ],
-          "code": ".renderer"
-        },
-        {
-          "line": 15866,
-          "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".map(|r| r.camera_frustum(fov_degrees, yaw, pitch, bob * spin, depth_far));"
         },
         {
           "line": 15995,
