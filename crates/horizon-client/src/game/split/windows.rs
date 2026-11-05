@@ -570,7 +570,7 @@ impl<'a> Split<'a> {
                 .map_err(Into::into)
                 .and_then(|w| {
                     let w = Arc::new(w);
-                    let renderer = self.host.renderer.as_ref().ok_or("no renderer")?;
+                    let renderer = self.host.renderer.modern_ref().ok_or("no renderer")?;
                     Ok::<_, Box<dyn std::error::Error>>((w.clone(), renderer.compositor(w)?))
                 });
             if let (Ok((window, _)), Some((at, size))) = (&made, cover) {

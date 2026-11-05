@@ -296,7 +296,7 @@ impl Game<'_> {
         if self.remote.is_none() {
             self.tick_conduit_servers();
         }
-        let Some(r) = &self.renderer else {
+        let Some(r) = self.renderer.modern_ref() else {
             if self.remote.is_none() {
                 self.tick_gateway_servers();
             }

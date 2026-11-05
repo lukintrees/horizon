@@ -14,19 +14,8 @@ use std::{
     fmt,
 };
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Options {
-    /// Brightness option before the darkness effect's brightness penalty.
-    pub gamma: f32,
-    pub fullbright: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct VisibleSections<'a> {
-    pub solid: &'a [SectionKey],
-    /// Back-to-front; quads within each section must also be sorted on upload.
-    pub translucent: &'a [SectionKey],
-}
+// Compatibility exports while callers move to the common C01 contract.
+pub use horizon_render_api::render_contract::{FrameOptions as Options, VisibleSections};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -391,7 +380,7 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{block_entity_render::StaticSectionSnapshot, environment::Sky};
     use glam::{DVec3, Vec3, Vec4};

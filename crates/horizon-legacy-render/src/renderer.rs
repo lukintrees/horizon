@@ -92,10 +92,32 @@ pub struct Renderer<'a> {
     textures: HashMap<TextureId, Texture>,
     meshes: HashMap<MeshId, Mesh>,
     budget: Budget,
+    object_limits: [usize; 2],
     stats: Stats,
     max_texture: u32,
 }
 static IDS: AtomicU64 = AtomicU64::new(1);
+fn reserved_capacity(free: Stats, reserve: Stats) -> Result<Stats, String> {
+    Ok(Stats {
+        texture_bytes: free
+            .texture_bytes
+            .checked_sub(reserve.texture_bytes)
+            .ok_or("reserved texture bytes exceed free capacity")?,
+        mesh_bytes: free
+            .mesh_bytes
+            .checked_sub(reserve.mesh_bytes)
+            .ok_or("reserved mesh bytes exceed free capacity")?,
+        textures: free
+            .textures
+            .checked_sub(reserve.textures)
+            .ok_or("reserved texture objects exceed free capacity")?,
+        meshes: free
+            .meshes
+            .checked_sub(reserve.meshes)
+            .ok_or("reserved mesh objects exceed free capacity")?,
+    })
+}
+
 fn id() -> Result<u64, String> {
     IDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
         .map_err(|_| "resource ID space exhausted".into())
@@ -192,6 +214,7 @@ impl<'a> Renderer<'a> {
             textures: HashMap::new(),
             meshes: HashMap::new(),
             budget,
+            object_limits: [4096, 65536],
             stats: Stats::default(),
             max_texture: max_texture as u32,
         };
@@ -243,9 +266,49 @@ impl<'a> Renderer<'a> {
         Stats {
             texture_bytes: self.budget.texture_bytes - self.stats.texture_bytes,
             mesh_bytes: self.budget.mesh_bytes - self.stats.mesh_bytes,
-            textures: 4096 - self.stats.textures,
-            meshes: 65536 - self.stats.meshes,
+            textures: self.object_limits[0] - self.stats.textures,
+            meshes: self.object_limits[1] - self.stats.meshes,
         }
+    }
+
+    /// A private object namespace on the SAME context/window, limited to this
+    /// owner's unoccupied payload/object capacity. The caller must freeze this
+    /// owner until the candidate is dropped or published (the client reload
+    /// guard enforces that with an exclusive borrow). Not a global GL ledger.
+    /// Shader/program/driver overhead is not part of the payload budget.
+    pub fn staging_replacement(&self) -> Result<Self, String> {
+        self.staging_replacement_reserving(Stats::default())
+    }
+    /// Same-context candidate leaving explicit transient capacity for the boot
+    /// HUD. The active owner must cap its allocations to resident + reserve;
+    /// callers may not create arbitrary other owners. This is not a global GL
+    /// ledger. Existing reloads use zero reserve and still freeze their owner.
+    pub fn staging_replacement_reserving(&self, reserve: Stats) -> Result<Self, String> {
+        let free = reserved_capacity(self.remaining(), reserve)?;
+        let mut candidate = Self::from_context(
+            self.gl.context.clone(),
+            Budget {
+                texture_bytes: free.texture_bytes,
+                mesh_bytes: free.mesh_bytes,
+            },
+        )?;
+        candidate.object_limits = [free.textures, free.meshes];
+        Ok(candidate)
+    }
+
+    /// Explicit owner budget policy, checked before mutation. Promotion after a
+    /// staged replacement is prepared must not allocate until the old owner has
+    /// been dropped. Object limits return to the normal backend hard caps.
+    pub fn set_budget(&mut self, budget: Budget) -> Result<(), String> {
+        if self.stats.texture_bytes > budget.texture_bytes
+            || self.stats.mesh_bytes > budget.mesh_bytes
+        {
+            return Err("new resource budget is below resident usage".into());
+        }
+        self.gl.context.make_current()?;
+        self.budget = budget;
+        self.object_limits = [4096, 65536];
+        Ok(())
     }
 
     fn check(&self) -> Result<(), String> {
@@ -264,7 +327,7 @@ impl<'a> Renderer<'a> {
         layout: MeshLayout,
         base: impl Fn(&T) -> &Vertex,
     ) -> Result<MeshId, String> {
-        if self.stats.meshes >= 65536 {
+        if self.stats.meshes >= self.object_limits[1] {
             return Err("mesh object limit exceeded".into());
         }
         if vertices.is_empty()
@@ -409,7 +472,7 @@ impl RenderBackend for Renderer<'_> {
     type Error = String;
     fn create_texture(&mut self, image: Image<'_>) -> Result<TextureId, String> {
         let bytes = bytes(&image)?;
-        if self.stats.textures >= 4096 {
+        if self.stats.textures >= self.object_limits[0] {
             return Err("texture object limit exceeded".into());
         }
         if [image.width, image.height]
@@ -967,3 +1030,151 @@ const _: () = {
     assert!(size_of::<Vertex>() == 44);
     assert!(std::mem::offset_of!(Vertex, color) == 28);
 };
+
+#[cfg(test)]
+mod reserve_tests {
+    use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires Mesa OSMesa; explicitly run by the GL2 CI job"]
+    fn boot_reserve_cancellation_deletes_actual_partial_texture_names() {
+        use horizon_render_api::{
+            atlas::{SpriteSize, pack_atlas},
+            scene::{SceneError, WorldScene},
+        };
+        let mut boot =
+            Renderer::owned(Context::new("osmesa", [32; 2]).unwrap(), Budget::default()).unwrap();
+        let white = boot
+            .create_texture(Image {
+                width: 1,
+                height: 1,
+                rgba: &[255; 4],
+            })
+            .unwrap();
+        let vertex = Vertex {
+            pos: [0.; 3],
+            uv: [0.; 2],
+            light_uv: [0.; 2],
+            color: [1.; 4],
+        };
+        let mesh = boot.create_mesh(&[vertex; 3], &[0, 1, 2]).unwrap();
+        let baseline = boot.stats();
+        let texture_name = boot.textures[&white].name;
+        let buffers = boot.meshes[&mesh].buffers;
+        // SAFETY: fixed GL1/GL1.5 signatures, addresses retained only within
+        // the live/current context below. No pointers or client memory involved.
+        let (is_texture, is_buffer) = unsafe {
+            (
+                std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32) -> u8>(
+                    boot.context().address(c"glIsTexture").unwrap(),
+                ),
+                std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32) -> u8>(
+                    boot.context().address(c"glIsBuffer").unwrap(),
+                ),
+            )
+        };
+        let atlas = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }; 3],
+            4,
+            1,
+            3,
+        )
+        .unwrap();
+        for stop in 0..=3 {
+            let candidate = boot
+                .staging_replacement_reserving(Stats {
+                    mesh_bytes: 256,
+                    meshes: 1,
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(candidate.remaining().meshes, 65534);
+            let mut names = Vec::new();
+            let result = WorldScene::new_paged_checked(
+                candidate,
+                atlas.clone(),
+                &[255; 1024],
+                1,
+                |_| Ok(vec![255; 64]),
+                |backend, completed, _| {
+                    // One temporary boot mesh fits the reserved bytes/slot
+                    // while candidate textures are live on the SAME context.
+                    let temporary = boot.create_mesh(&[vertex; 3], &[0, 1, 2])?;
+                    assert!(
+                        boot.stats().mesh_bytes + backend.stats().mesh_bytes
+                            <= Budget::default().mesh_bytes
+                    );
+                    assert!(
+                        boot.stats().texture_bytes + backend.stats().texture_bytes
+                            <= Budget::default().texture_bytes
+                    );
+                    boot.remove_mesh(temporary)?;
+                    names = backend.textures.values().map(|t| t.name).collect();
+                    if completed == stop {
+                        Err("cancel-real-pages".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(matches!(result, Err(SceneError::Backend(ref e)) if e == "cancel-real-pages"));
+            assert_eq!(names.len(), stop);
+            boot.context().make_current().unwrap();
+            // SAFETY: same live/current context and fixed signatures above.
+            unsafe {
+                assert!(
+                    names.iter().all(|&name| is_texture(name) == 0),
+                    "cancelled page remained a GL object"
+                );
+                assert_ne!(
+                    is_texture(texture_name),
+                    0,
+                    "candidate deleted boot texture"
+                );
+                assert!(
+                    buffers.iter().all(|&name| is_buffer(name) != 0),
+                    "candidate deleted boot buffers"
+                );
+            }
+            assert_eq!(boot.stats(), baseline);
+        }
+    }
+    #[test]
+    fn reserve_charges_bytes_and_object_slots_without_saturating_or_wrapping() {
+        let free = Stats {
+            texture_bytes: 8,
+            mesh_bytes: 9,
+            textures: 10,
+            meshes: 11,
+        };
+        assert_eq!(reserved_capacity(free, Stats::default()).unwrap(), free);
+        assert_eq!(reserved_capacity(free, free).unwrap(), Stats::default());
+        for reserve in [
+            Stats {
+                texture_bytes: 9,
+                ..Default::default()
+            },
+            Stats {
+                mesh_bytes: 10,
+                ..Default::default()
+            },
+            Stats {
+                textures: 11,
+                ..Default::default()
+            },
+            Stats {
+                meshes: 12,
+                ..Default::default()
+            },
+            Stats {
+                mesh_bytes: usize::MAX,
+                ..Default::default()
+            },
+        ] {
+            assert!(reserved_capacity(free, reserve).is_err());
+        }
+    }
+}

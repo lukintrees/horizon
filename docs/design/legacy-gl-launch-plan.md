@@ -1,5 +1,8 @@
 # От проверенного GL2 renderer к запускаемой игре: план и карта параллельных PR
 
+> Текущий порядок работ и runtime gates: [последовательный MVP-план](legacy-gl-mvp-path.md).
+> Параллельный backlog ниже не меняет его приоритет.
+
 Дата: **2026-11-04**. Цель: **Radeon X1650, Windows 7 SP1 32-bit, desktop OpenGL 2.0/2.1**.
 Срез кода: `d092519` (проверенный код `d760a9a`, затем только документация).
 Это актуальный план следующих работ; предыдущий [дизайн и журнал этапов](opengl2-win7-x86.md) сохраняет историю.
@@ -8,6 +11,11 @@
 Пользователь назначил главным интегратором координирующего Arena.ai Agent от имени `lukintrees`.
 Общий facade/contracts и центральные manifests/lockfiles пишет **только интегратор**;
 другие исполнители направляют запросы и работают в согласованных modules.
+
+**Начальный кодовый baseline C01/CI01:** [C01 v1](legacy-gl-c01.md). Submission/scheduling wiring,
+CI01a/b/c и R01a CPU Frame/related DTO extraction уже добавлены; owning facade, remaining
+visibility/resource split и настоящий legacy startup ещё не завершены. CI01d/branch
+protection/main-side trusted gate bootstrap не выдаются за выполненные.
 
 ## 1. Главное решение
 
@@ -99,15 +107,16 @@
 | **Capabilities/profile** | Реальные capabilities отдельно от выбранной policy; negotiation до geometry generation; explicit errors и локализованные настройки | Не заменять producer fields пустыми внутри renderer; не выдавать обычный wgpu OpenGL за GL2 |
 | **Streaming** | Section key + world/resource generation, mesh revision, visible order, replace/unload, bounded upload queue | Не принимать stale job после teleport/reload/unload; не отключать CPU simulation при GPU backpressure |
 
-Предлагаемые новые модули — **планируемые имена**, не существующие API: `render_contract`,
-`renderer_facade`, `legacy_resources`, `platform_contract`. C01 утверждает имена/владение; исполнители
+Начальные `render_contract`, `resource_contract`, `platform_contract`, borrowed `renderer_facade`
+и R01a `frame::Frame`/CPU DTO уже добавлены в [C01 v1](legacy-gl-c01.md); `legacy_resources`,
+visibility/resource descriptors и owning facade миграция ещё не реализованы. C01 утверждает имена/владение; исполнители
 не должны независимо придумывать несовместимые версии этих типов.
 
-Уже есть зацепка: `game/event_loop.rs::EventLoopCtl`, но она всё ещё принимает winit `ControlFlow`.
-Её нужно постепенно сделать нейтральной, а не писать новую симуляцию. Из `gfx::Frame`/связанных CPU типов
-необходимо убрать зависимость общего слоя от modern `entity_skin`, `pack_draw`, `pack_uniforms` и т. п.,
-оставив modern-only данные в отдельном пути. `Frame` уже CPU-ориентирован, но одного переноса объявления
-для legacy-only dependency graph недостаточно.
+Зацепка `game/event_loop.rs::EventLoopCtl` уже принимает нейтральный `WakePolicy` вместо winit
+`ControlFlow`; native handlers/window ownership ещё требуют P01–P04. Новая симуляция не нужна.
+`Frame`, `SkinFrame`, lightning inputs и shader-pack input/span DTO теперь объявлены в общем
+wgpu-handle-free `frame/` и совместимо re-exported из прежних `gfx::*` путей. Modern GPU state остался
+в `gfx`; одного переноса DTO для legacy-only dependency graph всё равно недостаточно.
 
 Решение v1 для ownership: сохранить существующий native owner окна/context на legacy-пути,
 modern window/loop оставить winit-adapter. Общий Game не должен требовать `Arc<winit::Window>`
@@ -125,9 +134,9 @@ PR `a/b/c`, сохраняя критерий приёмки строки и з�
 | ID | Приоритет | Работа и основной участок | Зависит от | Проверяемая приёмка |
 |---|---|---|---|---|
 | **C01** | P0 | Инвентаризация всех вызовов/полей renderer в Game; контракты §4, минимальные типы/скелеты, список запрещённых прямых доступов | — | Согласованный API и карта call sites; не осталось «потом решим», кто владеет окном/ресурсами/sections; default build не меняет поведения |
-| **CI01** | P0 | PR-triggered/reusable и aggregate CI, scope/ownership gate, modern/legacy/GL2/x86 matrix; [спецификация](legacy-gl-integration.md#6-ci01--praggregate-ci-для-параллельной-разработки) | design сразу; C01 для policy/contract paths | Task diff с facade/manifest/lockfile/workflow блокируется; exact base/head/merge SHA и expected jobs проверены; Win7 hardware gate отдельно; required checks не пропускаются. Пока запланирован, не реализован |
+| **CI01** | P0 | PR-triggered/reusable и aggregate CI, scope/ownership gate, modern/legacy/GL2/x86 matrix; [спецификация](legacy-gl-integration.md#6-ci01--praggregate-ci-для-параллельной-разработки) | design сразу; C01 для policy/contract paths | Task diff с facade/manifest/lockfile/workflow блокируется; exact base/head/merge SHA и expected jobs проверены; Win7 hardware gate отдельно; required checks не пропускаются. CI01a/b/c добавлены; CI01d и admin/bootstrap gates остаются открыты |
 | **R01** | P0 | Вынести CPU Frame/visibility/resource descriptors из monolithic gfx; совместимые re-exports | C01 | Общий слой компилируется без wgpu handle types; старые CPU/GPU тесты и public call sites сохраняются |
-| **R02** | P0 | Adapter существующего modern Renderer за facade; заменить прямые поля getter/commands | R01 | Обычный modern loading/menu/world/reload продолжает работать; новый API проверен на существующем backend |
+| **R02** | P0 | Adapter существующего modern Renderer за facade; заменить прямые поля getter/commands. R02a–g уже перевели screenshot request/result, drawable size, surface handover, GPU facts/present mode и terrain upload/clear/unload/resize на facade; native terrain учитывает dimension min_y; owning migration ещё нет | R01 | Обычный modern loading/menu/world/reload продолжает работать; новый API проверен на существующем backend |
 | **R03** | P0 | Adapter `TerrainHudRenderer` за тем же facade, native factory, render/present outcomes, budgets | R01, A01 | Общий вызов создаёт legacy, принимает resources/frame/sections; не вызывает wgpu initialization; ошибки не маскируются |
 | **A01** | P0 | Общий CPU resource bundle и legacy atlas preparation из настоящего pack: `PackResources`, `PreparedTextures`, `HudAtlas`, sprites | C01 | Реальные layer IDs корректно превращаются в страницы; fonts/glint работают; ограниченные allocations; новые layout generations |
 | **A02** | P0 | Жизненный цикл ресурсов: animated textures, dynamic patches, font-cache reset, reload/rollback/context recreation | A01, R03 | Реальный pack reload и смена языка/шрифта не оставляют старые UV/glyph caches; stale jobs отклонены; memory bounded |
@@ -258,14 +267,18 @@ frame-time p50/p95, memory peaks и upload pressure; затем утвердит
 - Существующий `.github/workflows/legacy-gl-branch.yml` привязан к текущей ветке. Он **не обеспечивает**
   CI будущих параллельных PR автоматически. Эту проблему закрывает **CI01 (P0)**: reusable/PR-triggered
   matrix для согласованных task PR и aggregate integration head; scope/ownership gate и проверки
-  точного кандидата. Пока CI01 не реализован, enforcement ручной; широкую волну не объявлять merge-ready.
+  точного кандидата. Scope/matrix теперь исполняются в CI01a/b/c; human dependency review и bootstrap/protection
+  остаются обязательными. CI01d будет подключён после реального Game bring-up.
 - App/asset preparation не публикует Mojang assets/jars/decompiled files; fixtures — собственные synthetic
   данные либо разрешённая локальная подготовка. Пользовательские строки — через существующую локализацию.
 
 Шаблон work item / PR:
 
 ```text
-ID / цель / рубеж:
+Task-ID: M01a
+Variant: A
+Contract-Version: 1
+Цель / рубеж:
 Depends-on:
 Owner + reviewer:
 Base / head / exact tested SHA / contract version:
@@ -290,3 +303,84 @@ Merge order / интеграционный patch:
 
 Никакие сроки B3 не обещаются до доступного Win7/X1650 стенда и результата O01. На старте лучше
 расставить владельцев шести дорожек и согласовать C01, чем открывать десятки пересекающихся PR в `game.rs`.
+
+
+### Продолжение U01a / CI cleanup (2026-11-05)
+
+R02g проверен restored Actions на `904e30d`/`0dbd7bd` (run IDs и границы доказательства —
+[C01 §6](legacy-gl-c01.md#6-r02g-проверка-и-открытые-gates-2026-11-05)). По запросу пользователя
+лишний CI архивирован; focused workflow сохраняет modern/full-client, native GL2 и x86 gates.
+
+Первый U01 этап: общий typed `MenuFrame`, явный static RGBA background, modern panorama по умолчанию,
+legacy capability rejection для panorama и семь loading/save/no-resource menu submissions. Readback fixture
+проверяет, что menu не уничтожает resident world и invalid input не стирает прошлый кадр.
+Это submission seam, **не закрытие U01/B1**: главный title/world path и owning Game пока modern;
+F01 profile negotiation, R03 resources, native factory/startup, screenshot completion и настоящий
+interactive menu/world остаются необходимы. Default modern path не переключается на legacy автоматически.
+
+
+### Продолжение U01b (2026-11-05)
+
+Native screenshot commands фасада теперь выполняются после успешного world/menu draw до present:
+SDR PNG native resolution и centre-cropped icons, одноразовые pending/result transfer, bounded CPU
+readback и явные I/O/budget errors. Современный screenshot path не изменён. Supersampling/upscaling
+не подменяются низким качеством: возвращается ошибка; F01 должен выбрать native-resolution F2 policy.
+Подробности/лимиты и проверка — [C01 §8](legacy-gl-c01.md#8-u01b-bounded-native-screenshot-completion-2026-11-05).
+Это закрывает initial native screenshot completion seam, но **не U01 целиком и не B1**:
+Game пока modern-owned, interactive native menu/startup и resource/profile integration ещё нужны.
+
+
+### Продолжение A01b/R03a (2026-11-05)
+
+Первый native factory принимает общий borrowed CPU `Resources`, сохраняет stable layer IDs,
+постранично загружает terrain без второй полной CPU-копии, создаёт HUD/glints и публикует generation
+только при успехе. Bounded preparation и lazy-upload cleanup проверяются CPU/GPU fixtures; подробности —
+[C01 §9](legacy-gl-c01.md#9-a01br03a-native-factory-из-cpu-resources-2026-11-05).
+Это заготовка для owning factory wiring, **не завершение A01/R03/G01**: transactional reload,
+animations, реальные pack producers и выбор native owner в Game ещё не подключены.
+
+
+### Продолжение A01c/R03b (2026-11-05)
+
+Snapshot adapter теперь принимает существующие RenderAssets/HudAtlas; strict bounded HUD decode и
+staged native construction не сбрасывают glyph cache до explicit commit. Drop/failure/stale font epoch
+не меняют active cache; commit очищает старые glyph UVs и pending patches, новый Unicode patch проверен
+OSMesa fixture. Details — [C01 §10](legacy-gl-c01.md#10-a01cr03b-snapshot-producers-и-glyph-cache-commit-2026-11-05).
+Game startup пока modern-owned; этот шаг не включает native factory автоматически и не закрывает
+animated pack/reload lifecycle, F01/G01 или B1–B4.
+
+
+### Продолжение A02a (2026-11-05)
+
+Native owner/facade теперь принимает explicit animation maintenance command с full-bundle generation
+и tick существующего SpriteAnimation. Terrain updates сохраняют placements/sections/VBOs и extrude
+padding; HUD updates используют bounded compressed backing и dirty-page invalidation. Shared source
+frames и combined update staging ограничены; partial upload failure блокирует draws до полного retry.
+CPU + OSMesa проверяют interpolation/frame sequence/wrap, stale generation, соседний static layer,
+HUD cache и восстановление после реального partial update failure. Details — [C01 §11](legacy-gl-c01.md#11-a02a-explicit-native-terrainhud-animation-maintenance-2026-11-05).
+Это maintenance seam, **не завершение A02/F01/G01**: authoritative Game clock/native startup пока не
+подключены, full transactional reload и целевая Win7/X1650 qualification остаются необходимы.
+
+
+### Продолжение A02b (2026-11-05)
+
+Native staged reload теперь готовит replacement на **том же Context/window** под exclusive borrow
+активного owner. GPU payload/object, retained animation source и compressed HUD staging ограничены
+остатком joint capacity; failed/drop/stale-font stage сохраняет прежние ресурсы/sections/framebuffer.
+Commit публикует новый bundle/tick, очищает старые UV-bearing sections и glyph caches, переносит
+screenshot request/result и восстанавливает normal budgets/cache capacity. Проверяются repeated cycles,
+context identity и Unicode glyph после reload. Details — [C01 §12](legacy-gl-c01.md#12-a02b-transactional-same-context-native-resource-replacement-2026-11-05).
+Это renderer-level transaction, **не полный A02/Game reload**: publication CPU pack/language,
+stamped streaming queues, native startup/platform/clock и context-loss recovery остаются открыты.
+
+
+### Продолжение W01a (2026-11-05)
+
+Native owner/facade теперь имеют bounded section ticket/queue control plane. Existing SectionStamp
+выдаётся до worker dispatch; late/duplicate/foreign/superseded completions отклоняются. Revocation и
+монотонный nonce защищают unload/revisit без растущей tombstone table. Input capacities и pending/
+interest counts ограничены, hard drain budgets явные; failed upload сохраняет прежний resident mesh.
+Resource/world transitions защищены, unstamped bypass после opt-in запрещён. CPU + OSMesa проверяют
+реальный producer, GPU budget failure, reload/world/unload и bounded travel. Details — [C01 §13](legacy-gl-c01.md#13-w01a-bounded-owner-issued-terrain-tickets-2026-11-05).
+Это **не завершение W01/G01**: настоящие Game worker dispatch, visibility/sort и native startup пока
+не переключены; simulation и default modern pending uploads не менялись.

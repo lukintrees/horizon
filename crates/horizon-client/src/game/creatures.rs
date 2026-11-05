@@ -6608,7 +6608,7 @@ impl Game<'_> {
     /// poses entities: a new frame of draws, the store restarted when the
     /// renderer's no longer matches. Once per frame, before any entity draws.
     pub(super) fn begin_skinning(&self) {
-        let renderer = self.renderer.as_ref().filter(|r| r.skins_entities());
+        let renderer = self.renderer.modern_ref().filter(|r| r.skins_entities());
         match renderer.and_then(|r| r.skinned_models()) {
             Some(stored) => {
                 let mut models = self.skin_models.borrow_mut();
@@ -6622,7 +6622,7 @@ impl Game<'_> {
     /// Whether this frame's models can be posed on the GPU (`begin_skinning`).
     pub(super) fn skinning(&self) -> bool {
         self.renderer
-            .as_ref()
+            .modern_ref()
             .is_some_and(|r| r.skins_entities() && r.skinned_models().is_some())
     }
 

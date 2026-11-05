@@ -384,8 +384,8 @@ impl<'a> Split<'a> {
     #[inline(never)]
     fn enable(&mut self) -> Result<()> {
         let window = self.host.window.clone().ok_or("no window")?;
-        let mut old = self.host.renderer.take().ok_or("no renderer")?;
-        old.release_surface();
+        let mut old = self.host.renderer.take_modern().ok_or("no renderer")?;
+        horizon_client::renderer_facade::RendererFacade::modern(&mut old).release_surface()?;
         let api = self.host.settings.horizon.api;
         let batching = self.host.settings.horizon.translucent_batching;
         let shader_pack = super::shader_packs::picked_pack_draws_flat(&self.host.settings);
@@ -403,8 +403,9 @@ impl<'a> Split<'a> {
         let renderer = match built {
             Ok(r) => r,
             Err(e) => {
-                old.recreate_surface()?;
-                self.host.renderer = Some(old);
+                horizon_client::renderer_facade::RendererFacade::modern(&mut old)
+                    .recreate_surface()?;
+                self.host.renderer.set_modern(old)?;
                 return Err(e);
             }
         };
@@ -413,12 +414,13 @@ impl<'a> Split<'a> {
             Ok(c) => c,
             Err(e) => {
                 drop(renderer);
-                old.recreate_surface()?;
-                self.host.renderer = Some(old);
+                horizon_client::renderer_facade::RendererFacade::modern(&mut old)
+                    .recreate_surface()?;
+                self.host.renderer.set_modern(old)?;
                 return Err(e);
             }
         };
-        self.host.renderer = Some(renderer);
+        self.host.renderer.set_modern(renderer)?;
         self.host.split_window = !self.host.options.offscreen;
         self.host.options.offscreen = true;
         self.host.options.paced_by_split = true;
@@ -461,7 +463,7 @@ impl<'a> Split<'a> {
         window.set_visible(true);
         self.window1_shown = true;
         self.host.window = Some(window.clone());
-        let old = self.host.renderer.take().ok_or("no renderer")?;
+        let old = self.host.renderer.take_modern().ok_or("no renderer")?;
         old.take_back(main.compositor);
         let api = self.host.settings.horizon.api;
         let batching = self.host.settings.horizon.translucent_batching;
@@ -483,12 +485,12 @@ impl<'a> Split<'a> {
                 // P1 stays offscreen, presented as before (alone now).
                 let compositor = old.compositor(window)?;
                 self.surfaces.push(Surface { compositor, ..main });
-                self.host.renderer = Some(old);
+                self.host.renderer.set_modern(old)?;
                 return Err(e);
             }
         };
         drop(old);
-        self.host.renderer = Some(renderer);
+        self.host.renderer.set_modern(renderer)?;
         self.host.options.offscreen = false;
         self.host.split_window = false;
         self.host.options.paced_by_split = false;
@@ -570,7 +572,7 @@ impl<'a> Split<'a> {
                 .iter()
                 .zip(&views)
                 .filter(|(_, v)| v.0 == k)
-                .filter_map(|(r, v)| Some((r.as_ref()?.offscreen_frame()?, v.1)))
+                .filter_map(|(r, v)| Some((r.modern_ref()?.offscreen_frame()?, v.1)))
                 .collect();
             surface.compositor.set_vsync(vsync && k == paced);
             surface.compositor.present(&frames);
@@ -579,7 +581,7 @@ impl<'a> Split<'a> {
         // One player's CPU work overlapped the GPU drawing another's.
         let renderers = std::iter::once(&mut self.host.renderer)
             .chain(self.guests.iter_mut().map(|g| &mut g.game.renderer));
-        for renderer in renderers.flatten() {
+        for renderer in renderers.filter_map(|r| r.modern_mut()) {
             renderer.paced_elsewhere = true;
             renderer.wait_in_flight();
         }

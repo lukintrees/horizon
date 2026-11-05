@@ -49,6 +49,9 @@ mod post {
 struct Native { shadow: Option<()> }
 struct Renderer { pack_post: Option<(i32, Option<post::PackPost>)>, native: Option<Native> }
 impl Renderer { __NATIVE__ __GETTER__ }
+// Modern-only storage stand-in; actual RendererOwner is tested in its crate.
+trait ModernRef<T> { fn modern_ref(&self) -> Option<&T>; }
+impl<T> ModernRef<T> for Option<T> { fn modern_ref(&self) -> Option<&T> { self.as_ref() } }
 #[derive(Clone, Copy, PartialEq)]
 enum Dim { Overworld, Nether, End }
 struct Settings { entity_shadows: bool }

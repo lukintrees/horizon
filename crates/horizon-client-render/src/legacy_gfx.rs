@@ -18,13 +18,36 @@ use horizon_render_api::{
     scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
 
+mod animation;
+mod asset_snapshot;
+#[cfg(test)]
+pub(crate) use asset_snapshot::tests::assets as test_assets;
+pub use asset_snapshot::{AssetSnapshot, StagePoint, StagedAssetRenderer};
 pub mod frame;
+mod reload;
+pub use reload::StagedAssetReload;
+mod resources;
+pub use resources::ResourceLimits;
 mod screen;
+mod screenshot;
+mod streaming;
+pub use streaming::Drain as StreamDrain;
 mod sky;
 mod weather;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
+    pub stream_slots: usize,
+    pub stream_pending: usize,
+    pub stream_bytes: usize,
+    pub animation_sprites: usize,
+    pub animation_frames: usize,
+    /// Conservatively charged shared RGBA source frames (not duplicated).
+    pub animation_source_bytes: usize,
+    /// Changed pixels plus one padded terrain sprite or decoded HUD pages.
+    pub animation_staging_bytes: usize,
+    /// Combined source + icon RGBA buffers, excluding PNG codec overhead.
+    pub screenshot_bytes: usize,
     pub gpu: Budget,
     pub sections: usize,
     pub section_vertices: usize,
@@ -46,6 +69,14 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            stream_slots: 4096,
+            stream_pending: 64,
+            stream_bytes: 8 << 20,
+            animation_sprites: 4096,
+            animation_frames: 65536,
+            animation_source_bytes: 32 << 20,
+            animation_staging_bytes: 8 << 20,
+            screenshot_bytes: 16 << 20,
             gpu: Budget::default(),
             sections: 1024,
             section_vertices: 262144,
@@ -110,7 +141,12 @@ pub struct TerrainHudRenderer {
     glint_textures: Option<GlintTextures>,
     retired_glint: Vec<TextureId>,
     limits: Limits,
+    game_layout: Option<crate::chunk::ColumnLayout>,
+    resource_generation: Option<horizon_render_api::render_contract::ResourceGeneration>,
+    animations: animation::Animations,
+    streaming: Option<streaming::State>,
     screen: screen::Resources,
+    pub(crate) screenshots: screenshot::State,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
     format!("legacy terrain/HUD: {error:?}")
@@ -126,8 +162,26 @@ impl TerrainHudRenderer {
         limits: Limits,
     ) -> Result<Self, String> {
         let backend = Renderer::owned(context, limits.gpu)?;
-        let mut world = WorldScene::new(backend, layout, terrain_pages, lightmap, limits.sections)
+        let world = WorldScene::new(backend, layout, terrain_pages, lightmap, limits.sections)
             .map_err(diagnostic)?;
+        Self::from_world(
+            world,
+            lightmap,
+            Image {
+                width: hud.width,
+                height: hud.height,
+                rgba: &hud.pixels(),
+            },
+            limits,
+        )
+    }
+
+    fn from_world(
+        mut world: WorldScene<Renderer<'static>>,
+        lightmap: &[u8],
+        hud: Image<'_>,
+        limits: Limits,
+    ) -> Result<Self, String> {
         let layout = Layout::new(
             [hud.width, hud.height],
             limits.hud_page_size,
@@ -145,7 +199,7 @@ impl TerrainHudRenderer {
             .min(remaining.textures)
             .min(remaining.texture_bytes / layout.page_bytes());
         let cache = Cache::new(layout, hud_capacity).map_err(diagnostic)?;
-        let backing = Backing::new(layout, &hud.pixels(), limits.hud_backing_bytes)?;
+        let backing = Backing::new(layout, hud.rgba, limits.hud_backing_bytes)?;
         Ok(Self {
             world,
             hud: backing,
@@ -157,7 +211,12 @@ impl TerrainHudRenderer {
             glint_textures: None,
             retired_glint: Vec::new(),
             limits,
+            game_layout: None,
+            resource_generation: None,
+            animations: animation::Animations::default(),
+            streaming: None,
             screen: screen::Resources::default(),
+            screenshots: screenshot::State::new(limits.screenshot_bytes),
         })
     }
 
@@ -214,10 +273,51 @@ impl TerrainHudRenderer {
     }
 
     pub fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
+        self.unstamped_sections()?;
         render_bridge::upload_section(&mut self.world, key, mesh, self.limits.section_vertices)
             .map_err(diagnostic)
     }
+    /// Game keys use section Y relative to the dimension minimum, unlike the
+    /// zero-origin low-level probes. Require the layout before accepting them.
+    pub fn upload_game_section(
+        &mut self,
+        key: SectionKey,
+        mesh: &SectionMesh,
+    ) -> Result<(), String> {
+        let layout = self
+            .game_layout
+            .ok_or("legacy terrain layout must be set before Game uploads")?;
+        if usize::try_from(key[1])
+            .ok()
+            .is_none_or(|y| y >= layout.sections())
+        {
+            return Err("section Y outside the configured dimension".into());
+        }
+        self.upload_section(key, mesh)
+    }
+    pub fn has_section(&self, key: SectionKey) -> bool {
+        self.world.has_section(key)
+    }
+    pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) -> Result<(), String> {
+        self.unstamped_sections()?;
+        self.world
+            .reset_sections(layout.min_y())
+            .map_err(diagnostic)?;
+        self.game_layout = Some(layout);
+        Ok(())
+    }
+    pub fn remove_columns(
+        &mut self,
+        columns: impl IntoIterator<Item = (i32, i32)>,
+    ) -> Result<(), String> {
+        self.unstamped_sections()?;
+        for (x, z) in columns {
+            self.world.unload_column([x, z]).map_err(diagnostic)?;
+        }
+        Ok(())
+    }
     pub fn unload_section(&mut self, key: SectionKey) -> Result<bool, String> {
+        self.unstamped_sections()?;
         self.world.unload_section(key).map_err(diagnostic)
     }
     pub fn update_lightmap(&mut self, rgba: &[u8]) -> Result<(), String> {
@@ -260,6 +360,25 @@ impl TerrainHudRenderer {
             },
         )
     }
+    /// Explicit menu-only submission: clears a selected background then draws
+    /// the real HUD/patches, without touching resident section membership.
+    pub fn render_menu(&mut self, hud: &HudBatch, clear: [f32; 4]) -> Result<(), String> {
+        crate::frame::MenuFrame::static_color(hud, clear)
+            .validate_target(self.size())
+            .map_err(str::to_owned)?;
+        self.render(
+            &SceneFrame {
+                view_projection: horizon_render_api::IDENTITY,
+                camera: [0.; 3],
+                clear,
+                fog: None,
+                solid: &[],
+                translucent: &[],
+            },
+            hud,
+        )
+    }
+
     /// Draw the supported classic subset of the actual game frame. Unimplemented
     /// requested passes are errors, never silently hidden. Startup/resource and
     /// visibility scheduling still belong to the caller, not this coordinator.
@@ -269,6 +388,8 @@ impl TerrainHudRenderer {
         visible: frame::VisibleSections<'_>,
         options: frame::Options,
     ) -> Result<(), String> {
+        self.animations.ready()?;
+        self.streaming_ready()?;
         let size = self.size();
         let prepared = frame::Prepared::new(source, size, visible, self.limits, options)
             .map_err(|error| error.to_string())?;
@@ -312,6 +433,8 @@ impl TerrainHudRenderer {
         precipitation: (&[crate::weather::Vertex], crate::weather::Time),
         sky_source: Option<&crate::gfx::Frame<'_>>,
     ) -> Result<(), String> {
+        self.animations.ready()?;
+        self.streaming_ready()?;
         let sky = sky_source
             .map(|source| sky::Prepared::new(source, self.size(), self.limits))
             .transpose()?;
@@ -704,8 +827,39 @@ impl TerrainHudRenderer {
     pub fn resize(&mut self, size: [u32; 2]) -> Result<(), String> {
         self.world.backend_mut().context().resize(size)
     }
+    pub fn is_windowed(&mut self) -> bool {
+        self.world.backend_mut().context().is_windowed()
+    }
     pub fn present(&mut self) -> Result<bool, String> {
         self.world.backend_mut().context().present()
+    }
+    pub(crate) fn request_screenshot(
+        &mut self,
+        request: horizon_render_api::render_contract::ScreenshotRequest,
+    ) -> Result<(), String> {
+        let size = self.size();
+        self.screenshots.request(request, size)
+    }
+    /// Only the facade's successful submissions complete commands. Rejected or
+    /// deferred frames leave the request pending. Read before the window swaps;
+    /// encoding/readback failures are reported separately from frame presentation.
+    pub(crate) fn finish_screenshot(&mut self) {
+        // Recovery may carry both an older completion and a pending request.
+        // Do not overwrite the carried result before its consumer has read it.
+        if self.screenshots.result.is_some() {
+            return;
+        }
+        let Some(request) = self.screenshots.pending.take() else {
+            return;
+        };
+        let size = self.size();
+        let result = (|| {
+            // Revalidate after resize and before GL allocates the readback Vec.
+            let plan = self.screenshots.plan(&request, size)?;
+            let pixels = self.read_rgba([0, 0, size[0], size[1]])?;
+            screenshot::write(&request, &plan, pixels)
+        })();
+        self.screenshots.result = Some(result);
     }
     pub fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, String> {
         self.world.read_rgba(rect).map_err(diagnostic)

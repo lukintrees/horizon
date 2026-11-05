@@ -6,6 +6,8 @@ use crate::{
 };
 use std::collections::HashMap;
 
+/// X/Z section coordinates, Y relative to the scene's configured minimum.
+/// The default minimum is zero (so existing absolute-section probes agree).
 pub type SectionKey = [i32; 3];
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -18,11 +20,13 @@ pub enum Phase {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SceneError<E> {
     InvalidAtlas,
+    Atlas(crate::atlas::AtlasError),
     InvalidLightmap,
     InvalidRuns,
     SectionLimit,
     MissingSection(SectionKey),
     InvalidOrigin,
+    InvalidLayout,
     Backend(E),
 }
 
@@ -60,6 +64,7 @@ pub struct WorldScene<B: RenderBackend> {
     sections: HashMap<SectionKey, Section>,
     retired: Vec<MeshId>,
     max_sections: usize,
+    min_y: i32,
 }
 impl<B: RenderBackend> WorldScene<B> {
     pub fn new(
@@ -76,6 +81,57 @@ impl<B: RenderBackend> WorldScene<B> {
         if pages.len() != atlas.page_count() || pages.iter().any(|p| Some(p.len()) != bytes) {
             return Err(SceneError::InvalidAtlas);
         }
+        Self::upload_pages(
+            backend,
+            atlas,
+            lightmap,
+            max_sections,
+            |index| Ok(pages[index]),
+            |_, _, _| Ok(()),
+        )
+    }
+
+    /// Prepare/upload exactly one page at a time. A failed preparation/upload
+    /// drops the partial owner, reclaiming all previously created textures.
+    pub fn new_paged(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        page: impl FnMut(usize) -> Result<Vec<u8>, crate::atlas::AtlasError>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::new_paged_checked(backend, atlas, lightmap, max_sections, page, |_, _, _| {
+            Ok(())
+        })
+    }
+
+    /// Owner-thread checkpoints before the first page and after each completed
+    /// page (including the last, before lightmap allocation). The callback may
+    /// pump events/draw another same-context owner, but must not publish this
+    /// incomplete scene. Any callback error drops all partial scene resources.
+    pub fn new_paged_checked(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        page: impl FnMut(usize) -> Result<Vec<u8>, crate::atlas::AtlasError>,
+        checkpoint: impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::upload_pages(backend, atlas, lightmap, max_sections, page, checkpoint)
+    }
+
+    fn upload_pages<P: AsRef<[u8]>>(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        mut page: impl FnMut(usize) -> Result<P, crate::atlas::AtlasError>,
+        mut checkpoint: impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        let side = atlas.page_size();
+        let bytes = (side as usize)
+            .checked_mul(side as usize)
+            .and_then(|n| n.checked_mul(4));
         if lightmap.len() != 16 * 16 * 4 {
             return Err(SceneError::InvalidLightmap);
         }
@@ -89,8 +145,16 @@ impl<B: RenderBackend> WorldScene<B> {
             sections: HashMap::new(),
             retired: Vec::new(),
             max_sections,
+            min_y: 0,
         };
-        for rgba in pages {
+        let total = scene.atlas.page_count();
+        checkpoint(&mut scene.backend, 0, total).map_err(SceneError::Backend)?;
+        for index in 0..total {
+            let rgba = page(index).map_err(SceneError::Atlas)?;
+            let rgba = rgba.as_ref();
+            if Some(rgba.len()) != bytes {
+                return Err(SceneError::InvalidAtlas);
+            }
             let id = scene
                 .backend
                 .create_texture(Image {
@@ -100,6 +164,7 @@ impl<B: RenderBackend> WorldScene<B> {
                 })
                 .map_err(SceneError::Backend)?;
             scene.pages.push(id);
+            checkpoint(&mut scene.backend, index + 1, total).map_err(SceneError::Backend)?;
         }
         scene.lightmap = Some(
             scene
@@ -114,6 +179,30 @@ impl<B: RenderBackend> WorldScene<B> {
         Ok(scene)
     }
 
+    /// Replace one stable layer's level-zero pixels and gutters in-place.
+    /// Membership/VBOs/layout are unchanged. A backend failure is not a rollback
+    /// guarantee: the owner must stop drawing until resources are recovered.
+    pub fn update_sprite(
+        &mut self,
+        index: usize,
+        rgba: &[u8],
+        max_bytes: usize,
+    ) -> Result<(), SceneError<B::Error>> {
+        let patch = crate::atlas::sprite_patch(&self.atlas, index, rgba, max_bytes)
+            .map_err(SceneError::Atlas)?;
+        self.backend
+            .update_texture(
+                self.pages[patch.page],
+                patch.at,
+                Image {
+                    width: patch.size[0],
+                    height: patch.size[1],
+                    rgba: &patch.rgba,
+                },
+            )
+            .map_err(SceneError::Backend)
+    }
+
     pub fn atlas(&self) -> &AtlasLayout {
         &self.atlas
     }
@@ -125,6 +214,55 @@ impl<B: RenderBackend> WorldScene<B> {
 
     pub fn section_count(&self) -> usize {
         self.sections.len()
+    }
+
+    pub fn has_section(&self, key: SectionKey) -> bool {
+        self.sections.contains_key(&key)
+    }
+
+    /// A dimension change commits a new Y origin only after validation and
+    /// previous garbage cleanup. Texture/atlas/lightmap resources survive.
+    /// Removed meshes are retained for retry until the next upload/draw/cleanup.
+    pub fn reset_sections(&mut self, min_y: i32) -> Result<(), SceneError<B::Error>> {
+        if min_y % 16 != 0 {
+            return Err(SceneError::InvalidLayout);
+        }
+        self.collect_garbage()?;
+        for (_, section) in std::mem::take(&mut self.sections) {
+            self.retire(section);
+        }
+        self.min_y = min_y;
+        Ok(())
+    }
+
+    /// Unload only this X/Z column, regardless of its vertical span. No second
+    /// resident index or unbounded temporary key list is allocated.
+    pub fn unload_column(&mut self, column: [i32; 2]) -> Result<usize, SceneError<B::Error>> {
+        self.collect_garbage()?;
+        let before = self.sections.len();
+        let retired = &mut self.retired;
+        self.sections.retain(|key, section| {
+            if [key[0], key[2]] != column {
+                return true;
+            }
+            retired.extend(
+                section
+                    .solid
+                    .drain(..)
+                    .chain(section.translucent.drain(..))
+                    .map(|run| run.mesh),
+            );
+            false
+        });
+        Ok(before - self.sections.len())
+    }
+
+    fn section_origin(&self, key: SectionKey) -> [f64; 3] {
+        [
+            f64::from(key[0]) * 16.,
+            f64::from(key[1]) * 16. + f64::from(self.min_y),
+            f64::from(key[2]) * 16.,
+        ]
     }
 
     pub fn collect_garbage(&mut self) -> Result<(), SceneError<B::Error>> {
@@ -229,7 +367,7 @@ impl<B: RenderBackend> WorldScene<B> {
             if !self.sections.contains_key(key) {
                 return Err(SceneError::MissingSection(*key));
             }
-            if crate::relative_origin(key.map(|v| f64::from(v) * 16.), frame.camera).is_none() {
+            if crate::relative_origin(self.section_origin(*key), frame.camera).is_none() {
                 return Err(SceneError::InvalidOrigin);
             }
         }
@@ -272,7 +410,7 @@ impl<B: RenderBackend> WorldScene<B> {
                         mesh: run.mesh,
                         texture: self.pages[run.page],
                         lightmap: self.lightmap.unwrap(),
-                        origin: key.map(|v| f64::from(v) * 16.),
+                        origin: self.section_origin(*key),
                         pass: run.pass,
                         scissor: None,
                     });
@@ -315,3 +453,6 @@ impl<B: RenderBackend> Drop for WorldScene<B> {
         // reclaim its remaining resources on drop (the GL backend does).
     }
 }
+
+#[cfg(test)]
+mod tests;

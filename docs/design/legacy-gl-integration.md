@@ -37,7 +37,8 @@ CODEOWNERS/безопасности применяются дополнител�
 | Планируемые `renderer_facade`, `render_contract`, `platform_contract` и их public exports | **Только главный интегратор** | Не создавать эти файлы независимо; имена/пути фиксирует C01 |
 | `crates/horizon-render-api/src/lib.rs`, общие `entity.rs`, `scene.rs`, `paged_gui.rs` contracts | **Только главный интегратор** | Запрос policy/API change + acceptance fixture, не самостоятельный contract patch |
 | `crates/horizon-client/src/game.rs`, `entry.rs`, общий `game/event_loop.rs`, startup/factory wiring | **Только главный интегратор** для этой инициативы | Отдельные согласованные adapter modules; shared wiring выполняет интегратор |
-| `crates/horizon-client-render/src/lib.rs`, `gfx.rs`, `legacy_gfx.rs`, `legacy_gfx/frame.rs` | **Только главный интегратор** для общих API/dispatch/wiring | Изолированные pass/preparation modules по согласованным hook/contract |
+| `crates/horizon-client-render/src/lib.rs`, `gfx.rs`, `frame/**`, `legacy_gfx.rs`, `legacy_gfx/frame.rs` | **Только главный интегратор** для общих API/dispatch/wiring | Изолированные pass/preparation modules по согласованным hook/contract |
+| `crates/horizon-client-render/src/native_loading.rs`, `legacy_gfx/{asset_snapshot,resources}.rs` | **Только главный интегратор** для startup checkpoints, resource limits и atomic publication | Согласованные producer/cancellation fixtures; API change через запрос интегратору |
 | `crates/horizon-legacy-render/src/renderer.rs`, общие `terrain.vert`/`terrain.frag`, native exports | **Только главный интегратор** для dispatcher/shader wiring | Изолированная platform/math/preparation работа по выделенному scope |
 | Root/workspace и затрагиваемые legacy-работами crate `Cargo.toml`, `Cargo.lock`, включая новые crates | **Только главный интегратор** | Dependency/feature request с обоснованием, целями сборки и MSRV/Win7 рисками |
 | CI workflows/policy scripts, этот регламент и интеграционные указания в AGENTS.md | **Только главный интегратор**, с действующим human/code-owner review | CI01 design/tests и предложения; не ослаблять gates своим PR |
@@ -63,6 +64,17 @@ C01 должен опубликовать точные пути новых facad
   изменения; большие work items из плана делятся на a/b/c.
 - Любой task PR начинается как draft с `Task-ID`, `Depends-on`, scope и тестами. Зависимость считается
   доступной после интеграции/объявленного baseline, а не только по наличию открытого PR.
+- Metadata читает `tools/ci/legacy_scope.py` построчно: `Поле: значение` **с начала строки**, без
+  `**выделения**`, маркеров списка и склейки нескольких полей в одной строке. Все пять полей обязательны,
+  `Contract-Version` сверяется с `legacy-gl-policy.json`:
+
+  ```text
+  Task-ID: M01a
+  Variant: A
+  Depends-on: C01
+  Scope: docs/design/legacy-gl-c01.md
+  Contract-Version: 1
+  ```
 - Не переписывать историю после интеграторских fixups: merge актуального base, без force-push/rebase,
   в соответствии с CONTRIBUTING.md. Не cherry-pick одну реализацию в несколько конкурирующих веток.
 
@@ -108,14 +120,35 @@ render-задачи. Main integration draft остаётся draft до отде
 
 ## 6. CI01 — PR/aggregate CI для параллельной разработки
 
-**ID: CI01, P0. Статус: запланирован, ещё не реализован.**
+**ID: CI01, P0. Статус: CI01a/b/c реализованы первым кодовым слоем; CI01d ещё не реализован.**
+C01 v1 operations/paths и ограничения зафиксированы в [legacy-gl-c01.md](legacy-gl-c01.md).
+
+Текущая реализация:
+- `.github/workflows/legacy-gl-branch.yml`: один workflow, поддерживающий push, scoped pull_request,
+  workflow_dispatch и workflow_call; policy tests, default-modern check и настоящие Game loop tests,
+  CPU/game GPU fixtures, independent GL2 и Windows-x86; общий `legacy/required` fail-closed.
+- `.github/legacy-gl-policy.json` + `tools/ci/legacy_scope.py`: protected paths из доверенного base,
+  role по точным repo/base/head, task metadata/version, обе стороны rename/delete/new manifest.
+- `.github/workflows/legacy-gl-scope.yml`: metadata-only pull_request_target control plane,
+  загружает **только base**, fetch PR objects без checkout/exec и публикует `legacy/scope` head status.
+  Это единственный новый job с `statuses: write`; PR/build jobs остаются read-only.
+- `tools/ci/legacy_required.py`: failures/skips/cancellations/missing jobs и актуальность PR base/head/merge
+  через API в конце прогона. После последующего движения base требуется новый кандидат/прогон;
+  автоматический запрет merge устаревшего PR требует отдельно настроенного strict branch protection.
+
+**Bootstrap:** trusted-target workflow должен уже находиться в base. Для task PR в integration branch
+он входит в текущую базу. У самого integration draft base=main пока не содержит нового gate; нельзя
+утверждать, что main-side trusted gate уже установлен или новый workflow сам себя защитил в этом PR.
+Его bootstrap проверяется человеком; repository rulesets/CODEOWNERS не изменены. Реальный контрольный
+прогон trusted-target на task PR подтверждается при появлении первого такого PR, без открытия
+конкурирующей рабочей ветки самим интегратором.
 Владелец политики и wiring: главный интегратор. Реализацию изолированных тестовых помощников
 можно делегировать по §2. CI01 **не** является C01: C01 фиксирует API/ownership, CI01 — как проверять
 PR и общий head. Его design можно вести сразу; основную кодовую волну не объявлять merge-ready до
 работающего CI01. Аудиты O01/M01/A01 и подготовку fixtures можно начинать раньше.
 
-Существующий `.github/workflows/legacy-gl-branch.yml` уже проверяет собственные push integration branch,
-но **не обеспечивает проверки всех будущих task PR**. Его зелёный старый head нельзя использовать
+Прежний `.github/workflows/legacy-gl-branch.yml` проверял только собственные push integration branch.
+Теперь entry points расширены, а jobs переиспользуются вместо копирования в каждый task workflow. Его зелёный старый head нельзя использовать
 вместо проверки новой комбинации base + task.
 
 ### 6.1. Пакеты реализации CI01
@@ -129,7 +162,9 @@ PR и общий head. Его design можно вести сразу; осно�
 
 ### 6.2. Предлагаемые стабильные имена checks
 
-Имена ниже — проект, **ещё не существующие required status checks**.
+Стабильные имена ниже используются/уточняются в новой матрице; **required branch protection ещё не настроен**.
+`legacy/candidate-scope` — read-only candidate check, `legacy/scope` — отдельный trusted head status.
+CPU и actual-game GPU fixtures сейчас объединены в `legacy/cpu-game`, policy fixtures — `legacy/policy-tests`.
 
 | Check | Когда / что проверяет |
 |---|---|
@@ -177,10 +212,26 @@ check объясняет выбранный набор. Path filtering не до
 scope-first draft PR; последовательная интеграция; запрет silent fallbacks и false qualification.
 AGENTS.md ссылается на этот регламент для остальных исполнителей.
 
-**Пока не реализовано:** CI01 workflow/gate, автоматический scope checker, PR-triggered reusable matrix,
-новые required status checks и branch protection. Существующий CODEOWNERS не заменён именем AI-agent;
-GitHub не превращён в эксклюзивный write ACL для интегратора. До CI01 scope контролируется вручную.
+**Пока не реализовано:** CI01d actual Game launch gates, repository required branch protection,
+main-side trusted workflow bootstrap и подтверждение trusted-target на первом task PR. CI01 не доказывает
+автоматически факт merge заявленных Depends-on: доступность зависимостей проверяет интегратор.
+Существующий CODEOWNERS не заменён именем AI-agent; GitHub не превращён в эксклюзивный write ACL.
+Нельзя считать manual review/OS qualification заменёнными новыми jobs.
 
 Шаблон task PR приведён в [плане](legacy-gl-launch-plan.md#8-как-не-превратить-параллельные-pr-в-merge-bottleneck).
 Заявка на shared change дополнительно содержит contract/manifest diff **в описании/предложении**,
 а не самостоятельное изменение защищённых файлов в task branch.
+
+
+### Обязательная metadata task PR после C01 v1
+
+```text
+Task-ID: M01a
+Variant: A
+Contract-Version: 1
+Depends-on: none (подготовительная подзадача)
+Scope: docs/design/legacy-material-audit.md; собственные audit fixtures/tests
+```
+
+Значения Scope/Depends-on — декларации для review, не право менять protected files.
+Любая чужая central правка блокирует task независимо от metadata/labels.

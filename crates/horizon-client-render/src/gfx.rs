@@ -3,11 +3,11 @@
 //! world coordinates keep full precision.
 use crate::{
     Result,
-    block_entity_render::{StaticCacheFrameStats, StaticSectionRevision, StaticSectionSnapshot},
+    block_entity_render::{StaticCacheFrameStats, StaticSectionRevision},
     environment::Sky,
     fast_hash::FxHashMap,
     graphics::GraphicsApi,
-    hud::{HudBatch, HudRenderer},
+    hud::HudRenderer,
     mesher::{Part as Quads, SectionMesh, Sides, TerrainVertex, Vertex, packed},
     section_mask::SectionMask,
     sprites::SpriteAnimation,
@@ -653,175 +653,7 @@ impl ShrinkGate {
         left == COMPACT_BUDGET && self.0.is_none_or(|at| now >= at)
     }
 }
-pub struct Frame<'a> {
-    pub camera: DVec3,
-    pub yaw: f32,
-    pub pitch: f32,
-    pub fov_degrees: f32,
-    /// The camera entity's eye and view rotation (yaw, pitch): the camera's own except in a
-    /// third-person view.
-    pub eye: DVec3,
-    pub eye_rotation: [f32; 2],
-    /// The camera is the entity's eye: no third-person view.
-    pub first_person: bool,
-    /// The `GameRenderer.bobHurt`/`bobView` pose multiplied into the
-    /// projection (`crate::camera::bob_matrix`).
-    pub bob: Mat4,
-    /// The spinning effect multiplied into the level's projection only
-    /// (`crate::camera::spinning_effect_matrix`), not the hand's.
-    pub spin: Mat4,
-    pub sky: Sky,
-    /// Block edits and chunk membership that can change the shader pack's shadow map.
-    pub shadow_scene_revision: (u64, u64),
-    /// Opt-in reuse of the shader pack's last shadow map when the key still matches
-    /// (`horizon-graphics.txt` `shadowCache`; off by default).
-    pub shadow_cache: bool,
-    /// Render distance in blocks (fog end).
-    pub distance: f32,
-    /// Full-detail terrain distance in blocks; distant LODs bypass the cave graph.
-    pub detail_distance: f32,
-    /// `Camera.depthFar`: the far plane (`crate::camera::depth_far`).
-    pub depth_far: f32,
-    pub underwater: bool,
-    /// The y of the horizontal water plane around the camera, in world blocks, while one
-    /// of Horizon's own packs reads the water mirror (`Game::water_plane`,
-    /// `Renderer::wants_water_plane`).
-    pub water_plane: Option<f32>,
-    /// Skip sections the camera cannot see through open faces (vanilla's
-    /// occlusion graph; off in spectator-like views inside blocks).
-    pub cave_culling: bool,
-    /// Title screen: only the dedicated panorama cube map and the HUD.
-    pub title: bool,
-    /// Lava, powder snow, blindness or darkness blocks the sky pass.
-    pub sky_blocked: bool,
-    /// Dimensions without a skybox (the Nether) clear to the fog colour.
-    pub skybox: bool,
-    /// The End: clear to black and draw the resident sky box behind the world.
-    pub end_sky: bool,
-    /// End sky atlas bounds (u0, v0, u1, v1); absent when the sprite is missing.
-    pub end_sky_sprite: Option<[f32; 4]>,
-    /// Environmental fog start/end (Nether 10..96), if any.
-    pub environment_fog: Option<(f32, f32)>,
-    pub water_fog: [f32; 3],
-    /// `FogRenderer.setupFog` result; replaces the underwater/environment fields when set.
-    pub fog: Option<crate::fog::FogData>,
-    /// Camera eye below the horizon height and not under water (`shouldRenderDarkDisc`).
-    pub dark_disc: bool,
-    /// The hit block outline as line segments (from, to) in world space.
-    pub outline: Vec<[f64; 6]>,
-    /// `BlockOutlineRenderState.isTranslucent`: draw after translucent terrain.
-    pub outline_after_terrain: bool,
-    /// `BlockOutlineRenderState.highContrast`: a thick black outline under a bright one.
-    pub outline_high_contrast: bool,
-    /// `lines` with a colour and pixel width (`gizmos::camera_relative`):
-    /// the fishing line and debug gizmos, depth tested, then gizmos drawn
-    /// over everything.
-    pub debug_lines: &'a [[f32; 8]],
-    pub debug_lines_on_top: &'a [[f32; 8]],
-    /// `DebugCrosshairRenderer`'s axes, camera relative like `debug_lines`:
-    /// drawn after the hand at its projection, without the bob or fog.
-    pub debug_crosshair: &'a [[f32; 8]],
-    pub hud: &'a HudBatch,
-    /// `GlintAlpha` (accessibility Glint Strength); the entity shader uses it
-    /// for held/world items, independent of what the HUD batch last drew.
-    pub glint_alpha: f32,
-    /// The glint scroll clock (`Glint::scroll_ticks`): entity.wgsl's
-    /// `ARMOR_ENTITY_GLINT_TEXTURING` phase.
-    pub glint_ticks: f32,
-    /// CardinalLighting.Type.NETHER, otherwise DEFAULT.
-    pub nether_lighting: bool,
-    /// Camera-relative entity geometry textured from the shared atlas.
-    pub entities: &'a [Vertex],
-    /// Per-section cacheable block-entity models. Positions are section-local.
-    pub static_block_entities: &'a [StaticSectionSnapshot],
-    /// Sections currently intersecting the coarse camera frustum.
-    pub visible_static_block_entity_sections: &'a [[i32; 3]],
-    /// Cache work for this frame, reported in bench summaries.
-    pub static_block_entity_stats: StaticCacheFrameStats,
-    /// Which entity `entities`' vertices belong to: (first vertex, entity id), each run up
-    /// to the next; id 0 for none. Frame generation follows these entities' own motion.
-    pub entity_motion: &'a [(u32, u64)],
-    /// The glowing entities' silhouettes in their team colours (`OutlineBufferSource`),
-    /// outlined through walls after the hand.
-    pub glowing: &'a [Vertex],
-    /// Runs of `entities` by entity, while a shader pack draws them (`pack_draw::EntitySpan`).
-    pub entity_spans: &'a [pack_draw::EntitySpan],
-    /// Ordinary entity models posed on the GPU (`entity_skin`), drawn before `entities`'
-    /// ordinary ones; only when `Renderer::skins_entities` said so.
-    pub skin: Option<&'a entity_skin::SkinFrame>,
-    pub weather: &'a [crate::weather::Vertex],
-    pub weather_time: crate::weather::Time,
-    /// Horizon Extras' dynamic lights, nearest first (`dynamic_light::select`); empty when off.
-    pub dynamic_lights: &'a [[f32; 4]],
-    pub colored_lights: &'a [crate::dynamic_light::Colored],
-    pub emissive_layers: &'a [[u32; 4]],
-    /// Cloud mesh inputs; geometry and GPU storage are retained by the renderer.
-    pub clouds: Option<crate::clouds::Input<'a>>,
-    /// Retained lightning bolts, drawn before the other additive entities.
-    pub lightning: lightning::Input<'a>,
-    /// Additive translucent geometry after lightning (dragon rays).
-    pub additive: &'a [Vertex],
-    /// Name tags over everything, without depth (`TEXT_SEE_THROUGH`).
-    pub see_through: &'a [Vertex],
-    /// Opaque entity quads only a native pack's shadow pass draws (the local player in first
-    /// person).
-    pub shadow_only: &'a [Vertex],
-    /// Camera-relative sun and moon, or the animated End flash (additive,
-    /// behind everything and after the resident End sky box).
-    pub celestial: &'a [Vertex],
-    /// The stars, drawn from their static buffer after the sun and moon:
-    /// the sky's rotation (camera-relative world from star space) and the
-    /// star brightness.
-    pub stars: Option<(Mat4, f32)>,
-    /// First-person hand and held item, drawn after clearing depth.
-    pub hand: &'a [Vertex],
-    /// `CameraRenderState.hudFov`: the hand's own field of view
-    /// (`GameRenderer.render3dHud`).
-    pub hand_fov_degrees: f32,
-    /// Full-screen camera effects drawn over the world and hand, under the HUD.
-    pub screen: &'a [crate::screen_effects::ScreenQuad],
-    /// What a shader pack's uniforms need from the game.
-    pub pack: pack_uniforms::PackInputs,
-    /// The world border wall, when near enough to be drawn.
-    pub border: Option<BorderDraw>,
-    pub game_time: f32,
-    /// `GlobalSettingsUniform` GameTime: (game time % 24000 + partial tick) / 24000.
-    pub shader_game_time: f32,
-    /// Atlas rects (u0, v0, width, height) of end_sky.png and end_portal.png
-    /// (`rendertype_end_portal`'s Sampler0 and Sampler1).
-    pub end_portal_sprites: [[f32; 4]; 2],
-    /// A destroy-stage sprite: projected UVs repeat inside a rect of this size, from the
-    /// origin each crack vertex carries (`breaking::stage_light`).
-    pub crumbling_sprite: [f32; 4],
-    pub ticks: u64,
-    /// The darkness effect on the lightmap: the brightness it takes off the
-    /// gamma option and the pulsing scale subtracted from the light.
-    pub darkness: (f32, f32),
-    /// Night vision (or conduit water vision) intensity on the lightmap.
-    pub night_vision: f32,
-    /// Torch flicker added to the block light factor of 1.4.
-    pub block_flicker: f32,
-    /// `lightmap.fsh` BossOverlayWorldDarkeningFactor (a wither's bar).
-    pub boss_darken: f32,
-    /// `Screen.extractBlurredBackground`: blur the frame by this radius
-    /// (`menuBackgroundBlurriness`) before the screen is drawn over it.
-    pub menu_blur: Option<f32>,
-    /// `Options.chunkSectionFadeInTime`, in seconds: how long a section takes to fade in once
-    /// uploaded (0 draws it whole at once).
-    pub chunk_fade: f32,
-    /// `GameRenderer.requestedPostEffects`: the chains that run over the world.
-    pub post_effects: crate::post_chain::Request<'a>,
-}
-/// One frame of the world border wall (`WorldBorderRenderer.render`).
-#[derive(Clone, Debug)]
-pub struct BorderDraw {
-    /// The cached wall buffer; uploaded only when `rebuilt`.
-    pub vertices: [crate::border_render::BorderVertex; 16],
-    pub rebuilt: bool,
-    pub transforms: crate::border_render::BorderTransforms,
-    /// Walls to draw (indices of four-vertex quads), nearest first.
-    pub sides: Vec<usize>,
-}
+pub use crate::frame::{BorderDraw, Frame};
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct BorderUniform {
@@ -830,15 +662,8 @@ struct BorderUniform {
 }
 /// A frame to save as a PNG: F2's screenshot, an agent's `game_screenshot`,
 /// or the icon the Select World list shows.
-pub struct ScreenshotRequest {
-    pub path: PathBuf,
-    /// `GameRenderer.takeAutoScreenshot`: centre-crop the frame to a square
-    /// and average it down to this size. `None` saves the frame as drawn.
-    pub size: Option<[u32; 2]>,
-    /// F2's: drawn at the game's resolution (Resolution Scale above 100%) times
-    /// `Renderer::screenshot_quality`, not the window's.
-    pub scaled: bool,
-}
+pub use horizon_render_api::render_contract::ScreenshotRequest;
+
 pub struct Renderer {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -6319,20 +6144,43 @@ impl Renderer {
             );
         }
     }
+    /// Adapter query; does not expose a surface/device to the common facade.
+    pub(crate) fn is_offscreen(&self) -> bool {
+        self.offscreen.is_some()
+    }
     pub fn render(&mut self, frame: &Frame) -> Result<bool> {
+        self.render_with_menu(frame, None)
+    }
+    /// Explicit static menu; retain the title-only draw path without drawing
+    /// panorama or resident world sections. No persistent renderer override.
+    pub(crate) fn render_static_menu(&mut self, frame: &Frame, clear: [f32; 4]) -> Result<bool> {
+        if !frame.title
+            || !horizon_render_api::render_contract::MenuBackground::Static(clear).valid()
+        {
+            return Err("invalid static menu frame".into());
+        }
+        self.render_with_menu(frame, Some(clear))
+    }
+    fn render_with_menu(&mut self, frame: &Frame, menu_clear: Option<[f32; 4]>) -> Result<bool> {
         // A lost device cannot accept uploads either. Leave recovery to the
         // owner instead of submitting atlas patches to the invalid device.
         if self.device_lost() {
             return Err("the graphics device was lost".into());
         }
         if let Some(request) = self.capture.take() {
-            let result = self.write_capture(&request, frame);
-            self.capture_result = Some(result.map_err(|e| e.to_string()));
+            // The scene-capture format has no static-menu background field yet;
+            // never serialize a static image as a replayable panorama capture.
+            self.capture_result = Some(if menu_clear.is_some() {
+                Err("static menu scene capture is not supported".into())
+            } else {
+                self.write_capture(&request, frame)
+                    .map_err(|e| e.to_string())
+            });
         }
         let scaled = self.screenshot_size();
         let rendered = match scaled {
-            Some(size) => self.draw_scaled_frame(frame, size),
-            None => self.draw_frame(frame, None),
+            Some(size) => self.draw_scaled_frame(frame, size, menu_clear),
+            None => self.draw_frame(frame, None, menu_clear),
         };
         // A frame that was not drawn still submits the section copies and
         // atlas patches (glyphs, skins, maps), which the caller already took.
@@ -6391,7 +6239,12 @@ impl Renderer {
     /// every pass sizes itself by `config`, which says `size` for this frame, the HUD
     /// keeps its layout at a larger scale, and the world is drawn at `size` (a Resolution
     /// Scale below 100% stays as low). The window keeps its last frame.
-    fn draw_scaled_frame(&mut self, frame: &Frame, size: [u32; 2]) -> Result<bool> {
+    fn draw_scaled_frame(
+        &mut self,
+        frame: &Frame,
+        size: [u32; 2],
+        menu_clear: Option<[f32; 4]>,
+    ) -> Result<bool> {
         let window = [self.config.width, self.config.height];
         let mut config = self.config.clone();
         [config.width, config.height] = size;
@@ -6420,7 +6273,7 @@ impl Renderer {
         let offscreen = self.offscreen.replace(target);
         let window_depth = std::mem::replace(&mut self.depth, depth);
         // The frame's own targets at `size` can run out of memory too.
-        let drawn = self.draw_frame(frame, Some(GpuChecks::push(&self.device)));
+        let drawn = self.draw_frame(frame, Some(GpuChecks::push(&self.device)), menu_clear);
         self.depth = window_depth;
         self.offscreen = offscreen;
         self.hdr = hdr;
@@ -6431,7 +6284,12 @@ impl Renderer {
         drawn
     }
     /// `checks`: the error scopes of a scaled screenshot's frame, checked before its PNG is written.
-    fn draw_frame(&mut self, frame: &Frame, checks: Option<GpuChecks>) -> Result<bool> {
+    fn draw_frame(
+        &mut self,
+        frame: &Frame,
+        checks: Option<GpuChecks>,
+        menu_clear: Option<[f32; 4]>,
+    ) -> Result<bool> {
         // Its steps as spans (HORIZON_SPIKES): each lap names the step that just ended.
         let mut laps = crate::spans::laps();
         let landing = Instant::now();
@@ -6633,7 +6491,7 @@ impl Renderer {
             frame.camera,
         );
         let jittered = jitter * view_proj;
-        if frame.title {
+        if frame.title && menu_clear.is_none() {
             self.panorama.prepare(
                 &self.device,
                 &self.queue,
@@ -8248,7 +8106,7 @@ impl Renderer {
             .then(|| self.pack_post.as_ref().and_then(|p| p.1.as_ref()))
             .flatten()
             .and_then(|p| p.sky_clear());
-        let clear = if let Some([r, g, b, a]) = pack_sky_clear {
+        let clear = if let Some([r, g, b, a]) = menu_clear.or(pack_sky_clear) {
             wgpu::Color {
                 r: f64::from(r),
                 g: f64::from(g),
@@ -8654,8 +8512,10 @@ impl Renderer {
                     }
                 }
                 if frame.title {
-                    self.panorama.draw(&mut pass);
-                    pass.set_bind_group(0, &self.group, &[]);
+                    if menu_clear.is_none() {
+                        self.panorama.draw(&mut pass);
+                        pass.set_bind_group(0, &self.group, &[]);
+                    }
                 } else if celestial_vertices > 0 || frame.end_sky {
                     pass.set_pipeline(&self.celestial_pipeline);
                     pass.set_bind_group(0, &self.entity_group, &[]);

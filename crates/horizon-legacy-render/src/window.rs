@@ -1,5 +1,6 @@
-//! Backend-neutral events from the small native WGL window. No windowing crate.
-//! Virtual/scan codes are Win32 codes, not gameplay bindings. Text is Unicode.
+//! Events from the native WGL/GLX windows. No windowing crate.
+//! Key is raw Win32 metadata; X11Key is raw X11 metadata, neither is a gameplay binding.
+//! Text is Unicode (GLX initial adapter has no XIM/preedit/compose support).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
@@ -20,6 +21,13 @@ pub enum WindowEvent {
         pressed: bool,
         repeat: bool,
         repeat_count: u16,
+    },
+    /// X11 keycode is NOT a Win32 scancode or a portable physical binding.
+    X11Key {
+        keysym: u32,
+        keycode: u8,
+        pressed: bool,
+        repeat: bool,
     },
     Text {
         character: char,
@@ -54,7 +62,7 @@ pub struct WindowEvents {
     pub pending_messages: bool,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", test))]
 mod state {
     use super::*;
     use std::{
@@ -70,6 +78,7 @@ mod state {
         queue: RefCell<VecDeque<WindowEvent>>,
         lost: Cell<u64>,
         closed: Cell<bool>,
+        #[cfg(any(windows, test))]
         surrogate: Cell<Option<(u16, u16)>>,
     }
     impl State {
@@ -82,10 +91,11 @@ mod state {
                 queue: RefCell::new(VecDeque::with_capacity(CAPACITY)),
                 lost: Cell::new(0),
                 closed: Cell::new(false),
+                #[cfg(any(windows, test))]
                 surrogate: Cell::new(None),
             }
         }
-        fn push(&self, event: WindowEvent) {
+        pub(crate) fn push(&self, event: WindowEvent) {
             if event == WindowEvent::CloseRequested {
                 self.closed.set(true);
             }
@@ -110,6 +120,7 @@ mod state {
             self.size.set(size);
             self.push(WindowEvent::Resized(size));
         }
+        #[cfg(any(windows, test))]
         fn text(&self, unit: u16, repeat_count: u16) {
             if let Some((high, count)) = self.surrogate.take() {
                 if (0xdc00..=0xdfff).contains(&unit) {
@@ -138,6 +149,7 @@ mod state {
         }
         /// None delegates to DefWindowProc (in particular Alt+F4/system keys).
         /// No native calls occur with the queue borrowed, including reentrancy.
+        #[cfg(any(windows, test))]
         pub fn message(&self, message: u32, wparam: usize, lparam: isize) -> Option<isize> {
             let (x, y) = (
                 i32::from(lparam as u16 as i16),
@@ -244,7 +256,7 @@ mod state {
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) use state::State;
 
 #[cfg(test)]
