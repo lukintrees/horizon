@@ -2388,7 +2388,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_hooks.rs",
-      "sha256": "04cb11bc55e223c4a5fce8bcf9fc032127bc323c0eca216e4818b4dd0f7c842d",
+      "sha256": "31ecba7bac17f667b556c9b6ce571612c948a508757071f08983740b9e6ebc14",
       "references": [
         {
           "line": 992,
@@ -2445,6 +2445,13 @@
             "candidate-member-access"
           ],
           "code": "let batch = HudBatch::new([r.config.width, r.config.height]);"
+        },
+        {
+          "line": 10120,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "crate::game::render_startup::Renderer::Modern,"
         }
       ]
     },
@@ -3005,6 +3012,19 @@
             "candidate-member-access"
           ],
           "code": ".map(|r| HudBatch::new([r.config.width, r.config.height]))"
+        }
+      ]
+    },
+    {
+      "path": "crates/horizon-client/src/game/persist.rs",
+      "sha256": "7344a0293d84a35bcb3856d44e6e37662f71e1250ba051b45c9a6359f3e7ff35",
+      "references": [
+        {
+          "line": 1942,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "crate::game::render_startup::Renderer::Modern,"
         }
       ]
     },
