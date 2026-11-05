@@ -1034,6 +1034,114 @@ const _: () = {
 #[cfg(test)]
 mod reserve_tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires Mesa OSMesa; explicitly run by the GL2 CI job"]
+    fn boot_reserve_cancellation_deletes_actual_partial_texture_names() {
+        use horizon_render_api::{
+            atlas::{SpriteSize, pack_atlas},
+            scene::{SceneError, WorldScene},
+        };
+        let mut boot =
+            Renderer::owned(Context::new("osmesa", [32; 2]).unwrap(), Budget::default()).unwrap();
+        let white = boot
+            .create_texture(Image {
+                width: 1,
+                height: 1,
+                rgba: &[255; 4],
+            })
+            .unwrap();
+        let vertex = Vertex {
+            pos: [0.; 3],
+            uv: [0.; 2],
+            light_uv: [0.; 2],
+            color: [1.; 4],
+        };
+        let mesh = boot.create_mesh(&[vertex; 3], &[0, 1, 2]).unwrap();
+        let baseline = boot.stats();
+        let texture_name = boot.textures[&white].name;
+        let buffers = boot.meshes[&mesh].buffers;
+        // SAFETY: fixed GL1/GL1.5 signatures, addresses retained only within
+        // the live/current context below. No pointers or client memory involved.
+        let (is_texture, is_buffer) = unsafe {
+            (
+                std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32) -> u8>(
+                    boot.context().address(c"glIsTexture").unwrap(),
+                ),
+                std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32) -> u8>(
+                    boot.context().address(c"glIsBuffer").unwrap(),
+                ),
+            )
+        };
+        let atlas = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }; 3],
+            4,
+            1,
+            3,
+        )
+        .unwrap();
+        for stop in 0..=3 {
+            let candidate = boot
+                .staging_replacement_reserving(Stats {
+                    mesh_bytes: 256,
+                    meshes: 1,
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(candidate.remaining().meshes, 65534);
+            let mut names = Vec::new();
+            let result = WorldScene::new_paged_checked(
+                candidate,
+                atlas.clone(),
+                &[255; 1024],
+                1,
+                |_| Ok(vec![255; 64]),
+                |backend, completed, _| {
+                    // One temporary boot mesh fits the reserved bytes/slot
+                    // while candidate textures are live on the SAME context.
+                    let temporary = boot.create_mesh(&[vertex; 3], &[0, 1, 2])?;
+                    assert!(
+                        boot.stats().mesh_bytes + backend.stats().mesh_bytes
+                            <= Budget::default().mesh_bytes
+                    );
+                    assert!(
+                        boot.stats().texture_bytes + backend.stats().texture_bytes
+                            <= Budget::default().texture_bytes
+                    );
+                    boot.remove_mesh(temporary)?;
+                    names = backend.textures.values().map(|t| t.name).collect();
+                    if completed == stop {
+                        Err("cancel-real-pages".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(matches!(result, Err(SceneError::Backend(ref e)) if e == "cancel-real-pages"));
+            assert_eq!(names.len(), stop);
+            boot.context().make_current().unwrap();
+            // SAFETY: same live/current context and fixed signatures above.
+            unsafe {
+                assert!(
+                    names.iter().all(|&name| is_texture(name) == 0),
+                    "cancelled page remained a GL object"
+                );
+                assert_ne!(
+                    is_texture(texture_name),
+                    0,
+                    "candidate deleted boot texture"
+                );
+                assert!(
+                    buffers.iter().all(|&name| is_buffer(name) != 0),
+                    "candidate deleted boot buffers"
+                );
+            }
+            assert_eq!(boot.stats(), baseline);
+        }
+    }
     #[test]
     fn reserve_charges_bytes_and_object_slots_without_saturating_or_wrapping() {
         let free = Stats {

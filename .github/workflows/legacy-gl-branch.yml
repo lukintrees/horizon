@@ -291,6 +291,7 @@ jobs:
         run: |
           cargo fmt --manifest-path crates/horizon-legacy-render/Cargo.toml --all -- --check
           cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml --workspace
+          MESA_GL_VERSION_OVERRIDE=2.0 MESA_GLSL_VERSION_OVERRIDE=120 cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml renderer::reserve_tests::boot_ -- --ignored
           cargo clippy --offline --manifest-path tools/legacy-gl-probe/Cargo.toml --all-targets -- -D warnings
           python3 tools/legacy_gl_smoke.py --context osmesa
           python3 -m unittest discover -s tests -p 'test_legacy_gl_smoke.py'

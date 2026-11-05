@@ -144,12 +144,11 @@ pump error тоже отменяет и join-ит worker через Drop; так
 текущую CPU phase, без гарантии hard wall-clock deadline на зависшем файловом вводе.
 Не допускается продолжать global/cache writes от забытой generation после выхода.
 
-После join boot GPU allocations удаляются **до** передачи того же owning Context в
-`RendererOwner::legacy_menu_with_context`. Не создаётся второе окно/device; reference на
-boot context не утечёт. `Resources` остаются local owned Arc, без Box::leak нового route.
-GUI font/UI-theme cache сбрасываются на publication; loading focus переносится в Game.
-GPU asset staging после worker всё ещё синхронен: latency этой фазы логируется, она пока
-не разбита на bounded pump-aware uploads. Не утверждается непрерывная отзывчивость внутри неё.
+В первом срезе MVP 2b (`904da91`) boot GPU allocations удалялись после join, перед
+синхронным `RendererOwner::legacy_menu_with_context`. Текущий MVP 2c ниже сохраняет drawable
+boot owner до завершения GPU staging на том же Context. `Resources` остаются local owned
+Arc, без Box::leak нового route. GUI font/UI-theme cache сбрасываются на publication;
+loading focus переносится в Game. Ни один вариант не создаёт второе окно/device.
 
 `--native-bootstrap-only` остаётся отдельной sync диагностикой. В normal menu report добавлены
 `loading_presentations`, `loading_context_transferred` и `loading_worker_joined`.
@@ -173,7 +172,7 @@ Runner сам создаёт fresh scratch home/game/player/XDG dirs, удаля
 fixture/control/session switches, сохраняет display/ICD environment и не скачивает assets.
 Стартует **сам client** `--renderer native-gl2 --frames 180`, ждёт normal exit и строго
 проверяет actual Game report: menu-only scenario, native backend, loading presentations,
-same-context handoff, Game constructed и Presented menu frames. 180 frames дают время
+same-context handoff, GPU checkpoints/elapsed time, Game constructed и Presented menu frames. 180 frames дают время
 первоначальной onboarding fade; проверка не доказывает ручную навигацию/ввод.
 Timeout/nonzero exit/missing or offscreen/bootstrap/cancelled report не принимаются за успех.
 В итоговом JSON сохраняются binary hash, report и log tails, но не game assets/сохранения.
@@ -183,3 +182,49 @@ Timeout/nonzero exit/missing or offscreen/bootstrap/cancelled report не при
 Unit mocks runner-а — только проверки isolation/report validation. OSMesa boot/HUD и GLX
 same-context asset handoff fixtures — renderer/window evidence, **не normal-assets Game**.
 Здесь resources folder отсутствует, полный запуск этой команды по-прежнему не выполнен.
+
+
+## MVP 2c: event-aware GPU staging и atomic final publication
+
+`LoadingScreen::owned` хранит существующий Rc-owned Context; `finish_assets` потребляет
+boot owner. Candidate backend разделяет **тот же** Context/window, но имеет отдельные
+tracked texture/mesh names. До его создания — checkpoint `Backend`; затем `Snapshot`,
+`Layout`, `Terrain { completed: 0..N, total: N }`, `Hud`, `Glint`, `Animations`, `Ready`.
+`WorldScene::new_paged_checked` вызывает callback после каждой успешной page upload,
+включая последнюю перед lightmap. Старые factories продолжают использовать no-op callbacks.
+
+На каждой границе normal route помпит события, переносит последний focus state, проверяет
+stop/close/limited-run timeout и рисует тот же boot HUD. Кандидат ещё не доступен Game loop.
+Boot glyph updates используют существующие textures; временные meshes ограничены 32768
+GuiVertex values + u16 indices (compile-time size bound), 2 MiB и mesh object reserve.
+`staging_replacement_reserving` вычитает этот запас из свободных bytes **и** object slots;
+у boot owner ограничен payload budget. Перерисовка не может потратить candidate capacity.
+Этот учёт — textures/meshes, **не** весь physical VRAM или driver/shader overhead.
+
+Ошибка/отмена на любой границе удаляет partial scene/candidate/boot, не сбрасывает Game font
+и не публикует renderer. После `Ready`: удалить boot allocations → восстановить полный
+budget/cache capacity candidate → проверить font epoch → commit font → move полного owner
+в пустой `Game.renderer`. Font epoch change во время staging отвергается. Никаких fallible
+GPU uploads после font commit. Совместный budget недостаточен — явная ошибка, не скрытое
+повышение лимита и не разрушение boot ради продолжения загрузки.
+
+В normal menu report добавлены `loading_gpu_checkpoints`, `loading_gpu_presentations`,
+`loading_gpu_elapsed_ms`; `loading_presentations` суммирует CPU/GPU boot presentations.
+Smoke требует минимум 9 checkpoints (7 coarse phases + минимум 2 terrain boundaries),
+типизированные неотрицательные GPU counters/time и согласованность frame counts. При
+минимизации GPU presentations могут быть нулевыми: их не выдумывают ради PASS. GPU cancel
+пишет `native-game-loading-cancelled`, `cancel_phase=gpu`, `game_constructed=true`,
+`worker_joined=true`; CPU cancel — `cancel_phase=cpu`, `game_constructed=false`. Ни один
+cancel report не принимается за menu evidence.
+
+Checkpoints cooperative: отдельная shader compilation, file/decode/layout/backing operation,
+texture upload или driver call не прерывается насильно. Нет доказательства hard frame-time
+bound; длительность GPU phase измеряется отдельно. Это не streaming world/reload pipeline.
+
+Регрессии: CPU scene cleanup на каждой terrain boundary; OSMesa redraw/resize/epoch commit;
+отмена на всех 10 fixture checkpoints; shared budget и stale-font rejection; GLX тот же
+visible window между boot draws и final menu submission. Дополнительный independent
+OSMesa test через **glIsTexture/glIsBuffer** проверяет удаление настоящих partial texture
+names после cancel при всё ещё живом boot context, сохраняя boot texture/buffers и transient
+mesh reserve. Это renderer/window fixtures, не actual normal-assets Game acceptance.
+Публичный normal-resource smoke выше всё ещё не выполнен в этом sandbox; gates 1/2 открыты.

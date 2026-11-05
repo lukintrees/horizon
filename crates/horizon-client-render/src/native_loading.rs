@@ -8,6 +8,11 @@ pub use horizon_legacy_render::Context;
 use horizon_legacy_render::{Budget, Renderer, Stats};
 const BOOT_VERTICES: usize = 32768;
 const BOOT_MESH_BYTES: usize = 2 << 20;
+const _: () = assert!(
+    BOOT_VERTICES
+        * (std::mem::size_of::<horizon_render_api::gui::GuiVertex>() + std::mem::size_of::<u16>())
+        <= BOOT_MESH_BYTES
+);
 use horizon_render_api::{
     Clear, Frame, IDENTITY, Image, RenderBackend, TextureId, gui, render_contract::FrameOutcome,
 };
@@ -117,7 +122,7 @@ impl LoadingScreen<'static> {
         }
         checkpoint(&mut self, crate::legacy_gfx::StagePoint::Backend)?;
         // gui::render temporarily uploads at most one mesh per triangle, with
-        // 44-byte vertices + u16 indices, then deletes every mesh. Atlas glyph
+        // 52-byte GuiVertex values + u16 indices, then deletes every mesh. Atlas glyph
         // patches update the two existing textures; no texture headroom needed.
         let reserve = Stats {
             mesh_bytes: BOOT_MESH_BYTES,

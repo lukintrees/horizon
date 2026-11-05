@@ -12,7 +12,8 @@ def report():
     return {"scenario": "native-game-menu-only", "backend": "native-gl2",
             "game_constructed": True, "loading_context_transferred": True,
             "loading_worker_joined": True,
-            "loading_presentations": 2, "menu_submissions": 3, "resource_generation": 1,
+            "loading_presentations": 2, "loading_gpu_checkpoints": 10,
+            "loading_gpu_presentations": 1, "loading_gpu_elapsed_ms": 8, "menu_submissions": 3, "resource_generation": 1,
             "outcome": "Presented", "presented": True, "playable": False, "world_opened": False}
 
 
@@ -22,7 +23,10 @@ class SmokeTests(unittest.TestCase):
         for key, value in (("scenario", "native-game-bootstrap-only"), ("outcome", "Offscreen"),
                            ("backend", "modern"), ("game_constructed", False),
                            ("loading_context_transferred", False), ("loading_worker_joined", False),
-                           ("loading_presentations", 0),
+                           ("loading_presentations", 0), ("loading_gpu_checkpoints", 8),
+                           ("loading_gpu_checkpoints", True), ("loading_gpu_presentations", -1),
+                           ("loading_gpu_presentations", 3), ("loading_gpu_elapsed_ms", -1),
+                           ("loading_gpu_elapsed_ms", 1.5),
                            ("menu_submissions", 0), ("menu_submissions", True),
                            ("resource_generation", None), ("presented", 1),
                            ("playable", True), ("world_opened", True)):
@@ -35,6 +39,14 @@ class SmokeTests(unittest.TestCase):
             del data[key]
             with self.subTest(missing=key), self.assertRaises(ValueError):
                 smoke.validate_report(data, 3)
+
+    def test_minimized_gpu_frames_are_not_fabricated_or_required(self):
+        data = report()
+        data.update(loading_gpu_presentations=0, loading_gpu_elapsed_ms=0)
+        smoke.validate_report(data, 3)
+        data.update(loading_presentations=100, loading_gpu_presentations=11)
+        with self.assertRaises(ValueError):
+            smoke.validate_report(data, 3)
 
     def test_missing_prerequisites_block_without_starting_a_process(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(smoke, "LocalProcess") as process:

@@ -81,9 +81,18 @@ Window-level Xvfb/llvmpipe evidence не заменяет actual Game runtime с
 resource worker. Один worker готовит existing resources + GameCpuResources, не создавая
 modern PreparedTextures и detached rest loader. Main thread продолжает native pump/draw;
 close/stop отменяют работу на CPU phase boundaries и ждут join с продолжающимся pump.
-Boot GPU resources освобождаются, тот же Context передаётся actual Game native factory.
-GPU staging/handoff остаётся синхронным и отдельно логируется — не обещана нулевая задержка
-в этой фазе. Offscreen/однокадровый bootstrap сохраняет диагностический sync route.
+В первом срезе MVP 2b (`904da91`) GPU staging/handoff ещё был синхронным.
+
+Продолжение MVP 2c: boot owner остаётся drawable во время staging candidate renderer на
+**том же** Rc-owned Context/window. Checkpoints перед shader/backend creation, snapshot/layout,
+перед первой и после каждой terrain page, на HUD/glint/animations/Ready помпят native events,
+close/stop/timeout и перерисовывают existing boot HUD. Кандидат ограничен свободным tracked
+GPU budget, дополнительно зарезервированы 2 MiB и mesh slots для временных boot HUD uploads.
+Callback error удаляет partial candidate и boot без font publication; успех сначала удаляет
+boot, затем возвращает общий budget/cache capacity, проверяет font epoch и одним move
+публикует owner в Game. Это не global VRAM ledger и не preemptible GL: одна driver/CPU phase
+остаётся синхронной, hard latency deadline не обещается. Offscreen/однокадровый bootstrap
+сохраняет диагностический sync route.
 Full assets runtime здесь всё ещё не наблюдался; окно/owner fixtures и compile не закрывают gate.
 Reproducer: `tools/native_game_menu_smoke.py` с собственными normal prepared resources,
 без control socket или synthetic Game. Это menu-only smoke, не world E2E/ручная навигация.

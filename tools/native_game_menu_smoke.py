@@ -29,9 +29,12 @@ def validate_report(report: dict, frames: int) -> None:
         if type(report.get(key)) is not type(value) or report[key] != value:
             raise ValueError(f"not an observed native Game loading/menu: {key}={report.get(key)!r}")
     for key, minimum in (("loading_presentations", 1), ("menu_submissions", frames),
-                         ("resource_generation", 1)):
+                         ("resource_generation", 1), ("loading_gpu_checkpoints", 9),
+                         ("loading_gpu_presentations", 0), ("loading_gpu_elapsed_ms", 0)):
         if type(report.get(key)) is not int or report[key] < minimum:
             raise ValueError(f"invalid {key}: {report.get(key)!r}")
+    if report["loading_gpu_presentations"] > min(report["loading_presentations"], report["loading_gpu_checkpoints"]):
+        raise ValueError("GPU loading presentations exceed total frames/checkpoints")
 
 
 def command(game: Path, resources: Path, home: TestHome, frames: int, timeout: int) -> list[str]:

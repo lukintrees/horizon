@@ -49,6 +49,8 @@
     "docs/design/legacy-gl-c01.md",
     "docs/design/legacy-renderer-inventory.json",
     "crates/horizon-client/src/game/native_loading.rs",
-    "crates/horizon-client-render/src/native_loading.rs"
+    "crates/horizon-client-render/src/native_loading.rs",
+    "crates/horizon-client-render/src/legacy_gfx/asset_snapshot.rs",
+    "crates/horizon-client-render/src/legacy_gfx/resources.rs"
   ]
 }

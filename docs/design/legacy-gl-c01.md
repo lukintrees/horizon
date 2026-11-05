@@ -452,7 +452,7 @@ producers показывают Title::failed до world entry. Native startup б
 
 ## 17. MVP 2b: responsive native loading и same-context handoff
 
-Native normal startup: main-thread Context/borrowed LoadingScreen → actual boot HUD before
+Первый срез MVP 2b (`904da91`): main-thread Context/borrowed LoadingScreen → actual boot HUD before
 worker dispatch → one bounded CPU completion → joined worker → drop boot GPU resources →
 move **same** Context into existing native asset factory → Game/Title menu loop.
 No native GPU handles/Context reach worker; no second window/modern renderer/PreparedTextures,
@@ -461,8 +461,26 @@ no terrain placeholder, no leaked Resources lifetime. Bootstrap-only diagnostic 
 Cancellation belongs to loader generation (shared Progress flag); CPU checkpoints + joined
 ownership prevent late publication/worker accumulation. Normal cancel continues pumping until
 join; error-path Drop may wait for an uninterruptible phase. Full CPU load currently precedes
-Title; GPU handoff remains synchronous and measured, not a bounded streaming-upload claim.
+Title; на этом срезе GPU handoff был synchronous and measured. Текущий MVP 2c — ниже.
 Boot and main-menu fonts/UI-theme cache publish at renderer commit; focus survives handoff.
 `tools/native_game_menu_smoke.py` consumes real Game reports in fresh scratch dirs and cannot
 accept bootstrap/offscreen/cancelled as observed native menu. No actual-resource runtime or
 world/input/save/reopen/Win7 gate is closed by its unit mocks or the GLX/OSMesa fixtures.
+
+
+## 18. MVP 2c: same-context cancellable GPU handoff
+
+`WorldScene::new_paged_checked` adds owner-thread callbacks before/after page uploads;
+callback errors use the existing backend error channel and Drop rollback. `StagePoint`
+exposes coarse native startup boundaries, not a second engine/worker or async GL interface.
+Owned LoadingScreen remains drawable while `staging_replacement_reserving` builds the
+candidate within remaining tracked bytes/object slots minus bounded boot mesh headroom.
+The existing zero-reserve reload method still requires a frozen old owner.
+
+Final publication is boot retirement → budget/cache restoration → font epoch check/commit →
+move complete renderer into empty Game owner. Game never draws an incomplete candidate.
+Cancellation preserves the Game font epoch, reclaims both GPU owners and keeps worker join
+proven separately from any presentation count. Shader/CPU/driver operations remain coarse,
+non-preemptive; normal-assets runtime, hard frame-time guarantees, playable world/save and
+Win7/X1650 acceptance are not inferred from fixture/CI results. See
+[checkpoint/report semantics and test boundaries](legacy-gl-native-bootstrap.md#mvp-2c-event-aware-gpu-staging-и-atomic-final-publication).
