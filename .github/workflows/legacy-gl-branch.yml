@@ -142,7 +142,7 @@ jobs:
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
-          for filter in legacy_gfx::reload::tests:: legacy_gfx::animation::tests:: hud::tests::checked_pixels_ font::tests::renderer_commit_ legacy_gfx::asset_snapshot::tests:: legacy_gfx::resources::tests:: legacy_gfx::screenshot::tests:: frame::menu:: legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: renderer_facade::tests:: lightmap::tests::; do
+          for filter in legacy_gfx::streaming::tests:: legacy_gfx::reload::tests:: legacy_gfx::animation::tests:: hud::tests::checked_pixels_ font::tests::renderer_commit_ legacy_gfx::asset_snapshot::tests:: legacy_gfx::resources::tests:: legacy_gfx::screenshot::tests:: frame::menu:: legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: renderer_facade::tests:: lightmap::tests::; do
             if [ "$status" -eq 0 ]; then
               cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
               status=$?
@@ -194,7 +194,7 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          for filter in gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: renderer_facade::tests::; do
+          for filter in gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
             else

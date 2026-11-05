@@ -30,11 +30,16 @@ mod resources;
 pub use resources::ResourceLimits;
 mod screen;
 mod screenshot;
+mod streaming;
+pub use streaming::Drain as StreamDrain;
 mod sky;
 mod weather;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
+    pub stream_slots: usize,
+    pub stream_pending: usize,
+    pub stream_bytes: usize,
     pub animation_sprites: usize,
     pub animation_frames: usize,
     /// Conservatively charged shared RGBA source frames (not duplicated).
@@ -64,6 +69,9 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            stream_slots: 4096,
+            stream_pending: 64,
+            stream_bytes: 8 << 20,
             animation_sprites: 4096,
             animation_frames: 65536,
             animation_source_bytes: 32 << 20,
@@ -136,6 +144,7 @@ pub struct TerrainHudRenderer {
     game_layout: Option<crate::chunk::ColumnLayout>,
     resource_generation: Option<horizon_render_api::render_contract::ResourceGeneration>,
     animations: animation::Animations,
+    streaming: Option<streaming::State>,
     screen: screen::Resources,
     pub(crate) screenshots: screenshot::State,
 }
@@ -205,6 +214,7 @@ impl TerrainHudRenderer {
             game_layout: None,
             resource_generation: None,
             animations: animation::Animations::default(),
+            streaming: None,
             screen: screen::Resources::default(),
             screenshots: screenshot::State::new(limits.screenshot_bytes),
         })
@@ -263,6 +273,7 @@ impl TerrainHudRenderer {
     }
 
     pub fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
+        self.unstamped_sections()?;
         render_bridge::upload_section(&mut self.world, key, mesh, self.limits.section_vertices)
             .map_err(diagnostic)
     }
@@ -288,6 +299,7 @@ impl TerrainHudRenderer {
         self.world.has_section(key)
     }
     pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) -> Result<(), String> {
+        self.unstamped_sections()?;
         self.world
             .reset_sections(layout.min_y())
             .map_err(diagnostic)?;
@@ -298,12 +310,14 @@ impl TerrainHudRenderer {
         &mut self,
         columns: impl IntoIterator<Item = (i32, i32)>,
     ) -> Result<(), String> {
+        self.unstamped_sections()?;
         for (x, z) in columns {
             self.world.unload_column([x, z]).map_err(diagnostic)?;
         }
         Ok(())
     }
     pub fn unload_section(&mut self, key: SectionKey) -> Result<bool, String> {
+        self.unstamped_sections()?;
         self.world.unload_section(key).map_err(diagnostic)
     }
     pub fn update_lightmap(&mut self, rgba: &[u8]) -> Result<(), String> {
@@ -375,6 +389,7 @@ impl TerrainHudRenderer {
         options: frame::Options,
     ) -> Result<(), String> {
         self.animations.ready()?;
+        self.streaming_ready()?;
         let size = self.size();
         let prepared = frame::Prepared::new(source, size, visible, self.limits, options)
             .map_err(|error| error.to_string())?;
@@ -419,6 +434,7 @@ impl TerrainHudRenderer {
         sky_source: Option<&crate::gfx::Frame<'_>>,
     ) -> Result<(), String> {
         self.animations.ready()?;
+        self.streaming_ready()?;
         let sky = sky_source
             .map(|source| sky::Prepared::new(source, self.size(), self.limits))
             .transpose()?;

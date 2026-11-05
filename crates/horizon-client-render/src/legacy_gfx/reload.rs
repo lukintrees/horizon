@@ -128,6 +128,9 @@ impl TerrainHudRenderer {
         if let Some(layout) = self.game_layout {
             replacement.clear_sections(layout)?;
         }
+        if let Some(stream) = &self.streaming {
+            replacement.streaming = Some(stream.rebased(next).map_err(diagnostic)?);
+        }
         Ok(StagedAssetReload {
             active: self,
             replacement,

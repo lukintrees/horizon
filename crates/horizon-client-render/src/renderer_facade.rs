@@ -119,6 +119,80 @@ impl<'a> RendererFacade<'a> {
                 .map_err(Into::into),
         }
     }
+    /// Opt-in stamped native streaming. The modern Game keeps its existing
+    /// scheduler; it must not pretend to accept native ticket/queue commands.
+    #[cfg(feature = "legacy-gl")]
+    pub fn begin_streaming(
+        &mut self,
+        world: horizon_render_api::render_contract::WorldGeneration,
+        layout: crate::chunk::ColumnLayout,
+    ) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern streaming belongs to its Game owner".into()),
+            Adapter::Legacy { renderer, .. } => {
+                renderer.begin_streaming(world, layout).map_err(Into::into)
+            }
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    pub fn request_stream_section(
+        &mut self,
+        key: SectionKey,
+    ) -> Result<Option<horizon_render_api::render_contract::SectionStamp>> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern streaming belongs to its Game owner".into()),
+            Adapter::Legacy { renderer, .. } => {
+                renderer.request_stream_section(key).map_err(Into::into)
+            }
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    pub fn queue_stream_section(
+        &mut self,
+        key: SectionKey,
+        stamp: horizon_render_api::render_contract::SectionStamp,
+        mesh: &std::sync::Arc<SectionMesh>,
+    ) -> Result<horizon_render_api::streaming::Queued> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern streaming belongs to its Game owner".into()),
+            Adapter::Legacy { renderer, .. } => renderer
+                .queue_stream_section(key, stamp, mesh)
+                .map_err(Into::into),
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    pub fn drain_streaming(
+        &mut self,
+        max_jobs: usize,
+        max_bytes: usize,
+    ) -> Result<crate::legacy_gfx::StreamDrain> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern streaming belongs to its Game owner".into()),
+            Adapter::Legacy { renderer, .. } => renderer
+                .drain_streaming(max_jobs, max_bytes)
+                .map_err(Into::into),
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    pub fn unload_stream_section(
+        &mut self,
+        key: SectionKey,
+        stamp: horizon_render_api::render_contract::SectionStamp,
+    ) -> Result<bool> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern streaming belongs to its Game owner".into()),
+            Adapter::Legacy { renderer, .. } => renderer
+                .unload_stream_section(key, stamp)
+                .map_err(Into::into),
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    pub fn stream_usage(&self) -> Option<horizon_render_api::streaming::Usage> {
+        match &self.inner {
+            Adapter::Modern(_) => None,
+            Adapter::Legacy { renderer, .. } => renderer.stream_usage(),
+        }
+    }
     /// Modern render already presents internally. Legacy submits then presents
     /// once; offscreen success is distinct from a displayed window frame.
     pub fn render(&mut self, frame: &Frame<'_>) -> Result<FrameOutcome> {
