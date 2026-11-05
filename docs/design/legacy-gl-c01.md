@@ -134,10 +134,40 @@ adapter-волной требуется следующий интеграцио�
 rustfmt, inventory и public-tree checks. Новый facade GPU fixture также добавлен, но локально не запускался:
 full client требует другой toolchain/dependency environment.
 
-**CI нового head заблокирован:** GitHub workflow dispatch вернул HTTP 422
-`Actions has been disabled for this repository`. Последние зелёные PR/aggregate runs
-41897663762 / 41897652353 относятся к **b00954c**, а не к R02g. Их нельзя переиспользовать
-как доказательство новых Game call sites или нового facade fixture. Required checks/repository settings
-не менялись; draft остаётся draft. После включения Actions нужны full modern + legacy client checks,
-17 game GPU fixtures, hosted x86 и aggregate gate на актуальном head. Win7/X1650 runtime по-прежнему
-не квалифицирован. До этого новый full-client baseline не объявляется проверенным.
+Пользователь включил Actions; прежняя блокировка HTTP 422 снята. Собственные focused runs
+[41964269960](https://github.com/lukintrees/horizon/actions/runs/41964269960) (`904e30d`, dispatch),
+[41964590531](https://github.com/lukintrees/horizon/actions/runs/41964590531) и
+[41964596387](https://github.com/lukintrees/horizon/actions/runs/41964596387) (`0dbd7bd`, push/PR)
+прошли успешно: modern + legacy full-client compile, 17 game GPU fixtures, hosted x86 и aggregate.
+Это подтверждённый R02g full-client baseline, но не Win7/X1650 runtime qualification.
+Required-check protection не устанавливалась; draft остаётся draft.
+
+По запросу пользователя в `0dbd7bd` 21 неиспользуемый workflow (parity, launcher, labels, release и т.д.)
+перенесён в `.github/workflow-archive/`, зарегистрированные ненужные workflows отключены.
+В активной директории оставлены focused branch validation и trusted scope gate; modern проверки
+сохранены внутри focused validation. Тест allowlist не допускает случайного возврата лишнего CI.
+Trusted-target bootstrap/default-branch protection по-прежнему отдельный незакрытый gate.
+
+## 7. U01a: явный menu request, не legacy startup (2026-11-05)
+
+- `frame::MenuFrame` содержит только HUD, background и panorama view: никакой world frame не
+  обрезается адаптером. `MenuBackground::Static([f32; 4])` — явный gamma-encoded SDR clear
+  в non-sRGB framebuffer; диапазон/finite values и размеры HUD проверяются до clear.
+- Facade `render_menu` поддерживает modern panorama/static и native static. Legacy panorama
+  возвращает capability error, не подменяется фоном молча. Native empty visibility не удаляет
+  resident terrain/atlas/lightmap. GUI conversion/validation выполняется до framebuffer mutation.
+- Шесть loading/no-resources submissions используют menu helper; canonical `Frame::menu` перенесён
+  из loading constructor без изменения default panorama. Основной world/title submission пока остаётся
+  полным Frame. Game всё ещё владеет modern renderer; F01/G01 обязаны выбрать static profile явно.
+- Modern static background прокинут per-call через обычный и scaled-screenshot draw; persistent
+  override отсутствует. Scene-capture format пока не представляет static background: запрос получает
+  явную ошибку, а не неверный panorama replay. Native screenshot command completion остаётся U01.
+- CPU tests покрывают canonical empty menu, invalid view/color/layout и stale HUD после resize.
+  Новый real-GL facade fixture проверяет clear/HUD pixels, отказы до clear, resize и возвращение к
+  resident world после menu. Теперь в focused workflow **18** ignored game GPU fixtures;
+  статус конкретного нового head следует проверять по его собственным Actions runs, не по R02g.
+
+Локальная проверка native workspace: **44 Rust tests**, host Clippy и legacy Python checks.
+Full-client compile/GPU и hosted i686 выполняются focused Actions; локальный Rust target i686
+в текущем окружении недоступен. Ни B1–B4, ни owning Game/native factory, ни hardware qualification
+этот этап не закрывает.

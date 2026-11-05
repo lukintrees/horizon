@@ -300,3 +300,17 @@ Merge order / интеграционный patch:
 
 Никакие сроки B3 не обещаются до доступного Win7/X1650 стенда и результата O01. На старте лучше
 расставить владельцев шести дорожек и согласовать C01, чем открывать десятки пересекающихся PR в `game.rs`.
+
+
+### Продолжение U01a / CI cleanup (2026-11-05)
+
+R02g проверен restored Actions на `904e30d`/`0dbd7bd` (run IDs и границы доказательства —
+[C01 §6](legacy-gl-c01.md#6-r02g-проверка-и-открытые-gates-2026-11-05)). По запросу пользователя
+лишний CI архивирован; focused workflow сохраняет modern/full-client, native GL2 и x86 gates.
+
+Первый U01 этап: общий typed `MenuFrame`, явный static RGBA background, modern panorama по умолчанию,
+legacy capability rejection для panorama и шесть loading/no-resource menu submissions. Readback fixture
+проверяет, что menu не уничтожает resident world и invalid input не стирает прошлый кадр.
+Это submission seam, **не закрытие U01/B1**: главный title/world path и owning Game пока modern;
+F01 profile negotiation, R03 resources, native factory/startup, screenshot completion и настоящий
+interactive menu/world остаются необходимы. Default modern path не переключается на legacy автоматически.
