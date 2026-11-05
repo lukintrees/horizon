@@ -785,6 +785,11 @@ impl TerrainHudRenderer {
     /// deferred frames leave the request pending. Read before the window swaps;
     /// encoding/readback failures are reported separately from frame presentation.
     pub(crate) fn finish_screenshot(&mut self) {
+        // Recovery may carry both an older completion and a pending request.
+        // Do not overwrite the carried result before its consumer has read it.
+        if self.screenshots.result.is_some() {
+            return;
+        }
         let Some(request) = self.screenshots.pending.take() else {
             return;
         };

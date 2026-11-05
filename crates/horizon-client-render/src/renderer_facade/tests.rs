@@ -457,6 +457,12 @@ fn native_screenshot_completes_once_before_present_and_survives_rejection_resize
         assert!(!facade.screenshot_pending());
         assert!(facade.take_screenshot_request().is_none());
         facade.request_screenshot(moved).unwrap();
+        // Recovery may carry an older completion alongside the waiting request.
+        facade.restore_screenshot_result(Ok([1, 1]));
+        facade.render(&frame::tests::source(&hud)).unwrap();
+        assert_eq!(facade.take_screenshot_result(), Some(Ok([1, 1])));
+        assert!(facade.screenshot_pending());
+        assert!(!path("icon.png").exists());
         // Full world submission completes the same command, not only menu frames.
         facade.render(&frame::tests::source(&hud)).unwrap();
         assert_eq!(facade.take_screenshot_result(), Some(Ok([8, 8])));
