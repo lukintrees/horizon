@@ -161,14 +161,14 @@ impl Game<'_> {
                     self.debug_system_lines(d, framebuffer);
                     // Horizon's own: the shader pack's GPU time per pass (an
                     // empty group would move others).
-                    let pass_lines = self.renderer.as_ref().map_or_else(Vec::new, |r| {
+                    let pass_lines = self.renderer.modern_ref().map_or_else(Vec::new, |r| {
                         overlay::shader_pass_lines(&r.shader_pass_times())
                     });
                     if self.debug && !pass_lines.is_empty() {
                         d.group("shader pack", pass_lines);
                     }
                     // Horizon's own passes, in a group of their own.
-                    let own_lines = self.renderer.as_ref().map_or_else(Vec::new, |r| {
+                    let own_lines = self.renderer.modern_ref().map_or_else(Vec::new, |r| {
                         overlay::labelled_pass_lines("Horizon GPU", &r.own_pass_times())
                     });
                     if self.debug && !own_lines.is_empty() {
@@ -250,7 +250,7 @@ impl Game<'_> {
     /// `SectionRenderDispatcher.getStats` (the meshes queued; Horizon has
     /// no buffer pool, so no buffer is ever free).
     fn debug_chunk_render_line(&self, d: &mut Displayer) {
-        let Some(r) = self.renderer.as_ref() else {
+        let Some(r) = self.renderer.modern_ref() else {
             return;
         };
         let distance = self.settings.render_distance;

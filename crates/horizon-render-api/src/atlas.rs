@@ -177,3 +177,67 @@ pub fn build_page(
     }
     Ok(output)
 }
+
+/// A bounded sprite sub-update, including extruded padding. Does not touch
+/// neighbours or change placement/layer IDs; only level zero is represented.
+pub struct SpritePatch {
+    pub page: usize,
+    pub at: [u32; 2],
+    pub size: [u32; 2],
+    pub rgba: Vec<u8>,
+}
+pub fn sprite_patch(
+    layout: &AtlasLayout,
+    index: usize,
+    rgba: &[u8],
+    max_bytes: usize,
+) -> Result<SpritePatch, AtlasError> {
+    let place = layout
+        .sprites
+        .get(index)
+        .ok_or(AtlasError::InvalidSpriteIndex)?;
+    let expected = (place.width as usize)
+        .checked_mul(place.height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(AtlasError::SizeOverflow)?;
+    if rgba.len() != expected {
+        return Err(AtlasError::InvalidPixels { index });
+    }
+    let border = layout
+        .padding
+        .checked_mul(2)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let width = place
+        .width
+        .checked_add(border)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let height = place
+        .height
+        .checked_add(border)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .filter(|n| *n <= max_bytes)
+        .ok_or(AtlasError::SizeOverflow)?;
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact(bytes)
+        .map_err(|_| AtlasError::OutOfMemory)?;
+    pixels.resize(bytes, 0);
+    for y in 0..height {
+        for x in 0..width {
+            let sx = x.saturating_sub(layout.padding).min(place.width - 1);
+            let sy = y.saturating_sub(layout.padding).min(place.height - 1);
+            let from = (sy as usize * place.width as usize + sx as usize) * 4;
+            let to = (y as usize * width as usize + x as usize) * 4;
+            pixels[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+        }
+    }
+    Ok(SpritePatch {
+        page: place.page,
+        at: [place.x - layout.padding, place.y - layout.padding],
+        size: [width, height],
+        rgba: pixels,
+    })
+}

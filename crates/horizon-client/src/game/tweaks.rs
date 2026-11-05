@@ -425,7 +425,7 @@ impl Game<'_> {
     }
     /// A left press on a sort button sorts its slots (true).
     pub(super) fn sort_press(&mut self) -> bool {
-        let Some(r) = self.renderer.as_ref() else {
+        let Some(r) = self.renderer.modern_ref() else {
             return false;
         };
         let batch = HudBatch::new([r.config.width, r.config.height]);

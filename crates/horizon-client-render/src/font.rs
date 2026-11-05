@@ -689,6 +689,13 @@ impl Font {
         cache.region.full = false;
         self.generation.set(next_generation());
     }
+    /// Commit a new renderer's base atlas. Cached glyph UVs and pending patches
+    /// belong to the old texture; callers must rebuild text batches afterwards.
+    /// Do not call during staging or while the previous renderer remains active.
+    pub fn reset_renderer_cache(&self) {
+        self.reset_cache();
+        self.cache.borrow_mut().region.pending.clear();
+    }
     /// Call once per frame before any text is laid out. When the dynamic
     /// region ran out of room (vanilla's glyph textures grow instead), the
     /// glyphs are forgotten so they are rasterized again from the start; it
@@ -1485,6 +1492,25 @@ mod tests {
         // Nothing is left over: drawing the character again places its pixels.
         assert!(font.take_patches().is_empty());
         assert_eq!(font.glyph('a').advance, first.advance);
+        assert_eq!(font.take_patches().len(), 1);
+    }
+
+    #[test]
+    fn renderer_commit_discards_old_pending_glyphs_and_rasterizes_again() {
+        let sheet = png(8, 8, |x, _| x < 4);
+        let root = root("renderer-commit", &[
+            ("assets/minecraft/font/default.json", br#"{"providers":[{"type":"bitmap","file":"minecraft:font/a.png","ascent":7,"chars":["a"]}]}"#),
+            ("assets/minecraft/textures/font/a.png", &sheet),
+        ]);
+        let font = load(&root);
+        let _ = std::fs::remove_dir_all(root);
+        let glyph = font.glyph('a');
+        let epoch = font.epoch();
+        assert_eq!(font.cache.borrow().region.pending.len(), 1);
+        font.reset_renderer_cache();
+        assert_ne!(font.epoch(), epoch);
+        assert!(font.take_patches().is_empty());
+        assert_eq!(font.glyph('a').advance, glyph.advance);
         assert_eq!(font.take_patches().len(), 1);
     }
 

@@ -3,6 +3,8 @@ mod driver;
 #[cfg(target_os = "linux")]
 mod egl;
 #[cfg(target_os = "linux")]
+mod glx;
+#[cfg(target_os = "linux")]
 mod osmesa;
 mod raw;
 mod renderer;
@@ -52,6 +54,8 @@ impl Context {
         let inner: Box<dyn ContextImpl> = match kind {
             #[cfg(target_os = "linux")]
             "egl" => Box::new(egl::Context::new(size)?),
+            #[cfg(target_os = "linux")]
+            "glx" => Box::new(glx::Context::new(size)?),
             #[cfg(target_os = "linux")]
             "osmesa" => Box::new(osmesa::Context::new(size)?),
             #[cfg(windows)]

@@ -110,7 +110,8 @@ if __name__ == "__main__":
     unittest.main()
 
 
-WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+# Keep testing archived workflow security; nothing here activates the old CI.
+WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflow-archive"
 
 
 class UntrustedBuildTests(unittest.TestCase):

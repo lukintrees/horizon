@@ -9,6 +9,8 @@ pub mod render_contract;
 pub mod resource_contract;
 pub mod scene;
 pub mod screen;
+pub mod screenshot;
+pub mod streaming;
 pub mod terrain;
 
 /// Expanded, camera-relative-at-draw-time vertex. Terrain RGB already includes

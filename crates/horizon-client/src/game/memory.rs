@@ -123,7 +123,7 @@ impl Game<'_> {
             let (sections, bytes) = shared(self.all_worlds(), at);
             json!({ "sections": sections, "mb": mb(bytes) })
         });
-        let renderer = self.renderer.as_ref().map(|r| {
+        let renderer = self.renderer.modern_ref().map(|r| {
             let [arenas, vertices] = r.section_vertex_bytes();
             let cpu: serde_json::Map<String, Value> = r
                 .cpu_census()

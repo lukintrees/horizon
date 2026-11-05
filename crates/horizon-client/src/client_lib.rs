@@ -18,11 +18,11 @@ pub use horizon_client_render::{
     model_library, models, multiline_edit, native_emissive, options_file, options_fixes,
     options_ui, overlay, pack_browser, pack_screen, packs, par, particles, platform_contract,
     poi_sections, post_chain, potent_sulfur, preedit, providers, render_contract, renderer_facade,
-    resource_contract, screen_draw, screen_effects, sculk, section_mask, server_terrain, settings,
-    shader_options, shader_pack_list, signs, skins, sound_engine, sound_events, sound_preview,
-    spans, split_layout, split_map, split_profiles, sprites, streaming, structure_block, tab_list,
-    telemetry, test_block, test_instance_block, testgen, title_edition, trims, ui, vault, weather,
-    widgets, world, worldborder, zip,
+    renderer_owner, resource_contract, screen_draw, screen_effects, sculk, section_mask,
+    server_terrain, settings, shader_options, shader_pack_list, signs, skins, sound_engine,
+    sound_events, sound_preview, spans, split_layout, split_map, split_profiles, sprites,
+    streaming, structure_block, tab_list, telemetry, test_block, test_instance_block, testgen,
+    title_edition, trims, ui, vault, weather, widgets, world, worldborder, zip,
 };
 pub mod attack_strength;
 pub mod attribute_updates;

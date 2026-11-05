@@ -379,7 +379,7 @@ fn snapshot_cell(value: f64) -> Option<i32> {
 impl Game<'_> {
     pub(super) fn prepare_entity_culling(&mut self, camera: glam::DVec3) {
         // Spans tell the pack's passes which entities are hidden; without them, nothing changes.
-        self.pack_shadow_casters = match (&self.renderer, &self.pack_ids) {
+        self.pack_shadow_casters = match (self.renderer.modern_ref(), &self.pack_ids) {
             (Some(r), Some(_)) => r.pack_shadow_casters(),
             // A native pack's shadow pass has no spans to hide entities with: it only needs
             // the first-person model.
@@ -478,10 +478,9 @@ impl Game<'_> {
             }
         }
         proof.sections.iter().all(|&section| {
-            self.renderer
-                .as_ref()
-                .is_some_and(|r| r.has_section(section))
-                && !self.world.dirty_sections.contains(&section)
+            self.renderer.modern_ref().is_some_and(|r| {
+                horizon_client::renderer_facade::has_section(r, [section.0, section.1, section.2])
+            }) && !self.world.dirty_sections.contains(&section)
                 && !self.streaming.is_meshing(section)
                 && !self.pending_uploads.iter().any(|(key, _)| *key == section)
         })
@@ -496,10 +495,9 @@ impl Game<'_> {
             return false;
         };
         let section = (pos[0] >> 4, y.div_euclid(16), pos[2] >> 4);
-        self.renderer
-            .as_ref()
-            .is_some_and(|r| r.has_section(section))
-            && !self.world.dirty_sections.contains(&section)
+        self.renderer.modern_ref().is_some_and(|r| {
+            horizon_client::renderer_facade::has_section(r, [section.0, section.1, section.2])
+        }) && !self.world.dirty_sections.contains(&section)
             && !self.streaming.is_meshing(section)
             && !self.pending_uploads.iter().any(|(key, _)| *key == section)
     }

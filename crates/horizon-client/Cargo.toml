@@ -108,6 +108,8 @@ winresource = "0.1"
 
 [features]
 default = ["audio", "controllers"]
+# Experimental native Game bootstrap. Not a Win7-qualified dependency closure.
+legacy-gl = ["horizon-client-render/legacy-gl"]
 # Sound output. Without it (and `controllers`) the program links neither libasound nor libudev on
 # Linux: the server build (`--no-default-features`, released as horizon-engine; docs/server.md).
 audio = ["horizon-client-render/audio", "horizon-client-lib/audio"]

@@ -375,7 +375,7 @@ impl Game<'_> {
         if !self.mount_active() || self.remote.is_some() {
             return false;
         }
-        let Some(r) = self.renderer.as_ref() else {
+        let Some(r) = self.renderer.modern_ref() else {
             return true;
         };
         let batch = HudBatch::new([r.config.width, r.config.height]);

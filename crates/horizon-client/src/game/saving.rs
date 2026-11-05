@@ -258,7 +258,7 @@ impl Game<'_> {
             )
             .without_navigation()
         });
-        let Some(renderer) = &mut self.renderer else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return Ok(());
         };
         let mut hud = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
@@ -274,7 +274,7 @@ impl Game<'_> {
             "Saving world...",
             progress,
         );
-        renderer.render(&loading_frame(&hud))?;
+        horizon_client::renderer_facade::render_menu_modern(renderer, &loading_frame(&hud))?;
         Ok(())
     }
 }

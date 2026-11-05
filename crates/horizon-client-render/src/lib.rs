@@ -74,6 +74,8 @@ pub mod model_library;
 pub mod models;
 pub mod multiline_edit;
 pub mod native_emissive;
+#[cfg(feature = "legacy-gl")]
+pub mod native_loading;
 pub mod options_file;
 pub mod options_fixes;
 pub mod options_ui;
@@ -93,6 +95,7 @@ pub mod preedit;
 pub mod providers;
 pub mod render_bridge;
 pub mod renderer_facade;
+pub mod renderer_owner;
 pub use horizon_render_api::{platform_contract, render_contract, resource_contract};
 pub mod screen_draw;
 pub mod screen_effects;

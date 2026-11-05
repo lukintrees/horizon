@@ -1939,6 +1939,7 @@ mod tests {
             std::time::Instant::now(),
             false,
             true,
+            crate::game::render_startup::Renderer::Modern,
             &Progress::new(),
             &mut |_, _| unreachable!("no menu handoff"),
         )

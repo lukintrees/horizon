@@ -406,18 +406,18 @@ impl Split<'_> {
                 None,
             )
         })?;
-        guest.renderer = Some(build_renderer(
+        guest.renderer.set_modern(build_renderer(
             window.clone(),
             true,
             &guest.pack,
             &guest.gui,
-            host.renderer.as_ref(),
+            host.renderer.modern_ref(),
             None,
             host.settings.horizon.api,
             host.settings.horizon.translucent_batching,
             // The pack its own game loads, from its profile.
             crate::game::shader_packs::picked_pack_draws_flat(&guest.settings),
-        )?);
+        )?)?;
         guest.window = Some(window);
         guest.world_renderer_ready = true;
         guest.keyboard_mouse = false;

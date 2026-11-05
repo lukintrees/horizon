@@ -33,7 +33,7 @@ impl Game<'_> {
         // (no renderer, no arrays: every layer counts as array 0's)
         let split = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or(u32::MAX, |r| r.sprite_split());
         Lookup::new(&self.pack.context, split)
     }
