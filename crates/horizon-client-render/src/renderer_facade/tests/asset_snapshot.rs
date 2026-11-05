@@ -60,6 +60,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
             Context::new("osmesa", [64; 2]).unwrap(),
             &assets,
             &atlas,
+            ResourceGeneration(77),
             &[255; 1024],
             Limits::default(),
             ResourceLimits {

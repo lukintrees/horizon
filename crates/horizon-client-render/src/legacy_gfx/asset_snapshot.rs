@@ -204,6 +204,13 @@ pub(crate) mod tests {
         assert_eq!(snapshot.resources().validate(bytes), Ok(bytes));
         assert_eq!(hud.font.epoch(), epoch);
         drop(snapshot);
+        let replacement_hud = HudAtlas::boot();
+        let replacement =
+            AssetSnapshot::new(&assets, &replacement_hud, ResourceGeneration(78), bytes).unwrap();
+        assert_eq!(replacement.asset_generation(), 23);
+        assert_eq!(replacement.resources().generation, ResourceGeneration(78));
+        assert_ne!(replacement.hud_revision(), hud.revision);
+        drop(replacement);
         let mut bad_assets = assets;
         bad_assets.pixels.pop();
         assert!(AssetSnapshot::new(&bad_assets, &hud, ResourceGeneration(78), usize::MAX).is_err());
