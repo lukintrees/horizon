@@ -468,7 +468,13 @@ fn native_screenshot_completes_once_before_present_and_survives_rejection_resize
     }
     let (size, icon) = decode("icon.png");
     assert_eq!(size, [8, 8]);
-    assert!(icon.chunks_exact(4).take(8 * 4).all(|p| p == [255; 4]));
+    assert!(
+        icon.as_chunks::<4>()
+            .0
+            .iter()
+            .take(8 * 4)
+            .all(|p| *p == [255; 4])
+    );
     // Encoding failures do not convert a successfully rendered frame into failure.
     {
         let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
