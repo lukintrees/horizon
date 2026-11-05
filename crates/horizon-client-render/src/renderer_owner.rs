@@ -39,6 +39,17 @@ impl RendererOwner {
         generation: horizon_render_api::render_contract::ResourceGeneration,
     ) -> crate::Result<Self> {
         let context = horizon_legacy_render::Context::new(kind, size)?;
+        Self::legacy_menu_with_context(context, assets, hud, generation)
+    }
+    /// Transfer the existing loading window/context. Boot GPU resources must
+    /// already have been dropped; never create a second native window/device.
+    #[cfg(feature = "legacy-gl")]
+    pub fn legacy_menu_with_context(
+        context: horizon_legacy_render::Context,
+        assets: &crate::assets::RenderAssets,
+        hud: &crate::hud::HudAtlas,
+        generation: horizon_render_api::render_contract::ResourceGeneration,
+    ) -> crate::Result<Self> {
         log::info!("native GL2 Game menu factory: {}", context.description());
         let renderer = crate::legacy_gfx::TerrainHudRenderer::stage_assets(
             context,

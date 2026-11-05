@@ -195,7 +195,7 @@ fn ui_key(event: &Event) -> Option<(KeyCode, bool)> {
 pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
     let ctl = LoopCtl::default();
     let mut input = Input {
-        focused: true,
+        focused: game.focused,
         ..Default::default()
     };
     let started = Instant::now();

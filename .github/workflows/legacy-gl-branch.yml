@@ -132,7 +132,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native build headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6 libgl1-mesa-dri libglx-mesa0 libxkbcommon0 xvfb xauth
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-gl-branch
@@ -154,7 +154,7 @@ jobs:
             status=$?
           fi
           if [ "$status" -eq 0 ]; then
-            cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::native_menu::tests:: --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
+            cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::native_ --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
             status=$?
           fi
           if [ "$status" -eq 0 ]; then
@@ -203,7 +203,7 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          for filter in gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests::; do
+          for filter in native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
             else
@@ -217,6 +217,24 @@ jobs:
               exit 1
             fi
           done
+      - name: Exercise visible boot HUD and same-context Game asset handoff
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+          MESA_GL_VERSION_OVERRIDE: '2.0'
+          MESA_GLSL_VERSION_OVERRIDE: '120'
+        run: |
+          if xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --locked -p horizon-client-render --features legacy-gl --lib native_loading::tests::visible_boot_ -- --ignored > target/legacy-branch/visible-boot.log 2>&1; then
+            cat target/legacy-branch/visible-boot.log
+          else
+            cat target/legacy-branch/visible-boot.log
+            python3 - <<'PYBOOT'
+          from pathlib import Path
+          text = '\n'.join(Path('target/legacy-branch/visible-boot.log').read_text().splitlines()[-85:])
+          print('::error title=Visible native loading handoff::' + text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+          PYBOOT
+            exit 1
+          fi
       - name: Lint the game bridges and GL2 coordinator
         shell: bash
         run: |

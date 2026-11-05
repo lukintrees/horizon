@@ -47,6 +47,8 @@
     "rust-toolchain",
     "rust-toolchain.toml",
     "docs/design/legacy-gl-c01.md",
-    "docs/design/legacy-renderer-inventory.json"
+    "docs/design/legacy-renderer-inventory.json",
+    "crates/horizon-client/src/game/native_loading.rs",
+    "crates/horizon-client-render/src/native_loading.rs"
   ]
 }

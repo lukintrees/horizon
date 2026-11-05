@@ -1,5 +1,5 @@
 //! Actual Game native menu ownership/submission. The visible menu pump is a
-//! platform adapter only, not Game simulation. World/loading remain explicit
+//! platform adapter only, not Game simulation. World/reload remain explicit
 //! unsupported actions; offscreen startup stays bounded bootstrap validation.
 use super::*;
 use horizon_client::render_contract::{
@@ -12,12 +12,23 @@ pub(super) fn initialize(game: &mut Game<'_>) -> Result<()> {
     if game.renderer.backend().is_some() {
         return Err("native bootstrap requires an empty Game renderer owner".into());
     }
-    let kind = render_startup::Renderer::context_kind(game.options.offscreen)?;
-    // First full CPU bundle issued by this Game owner. No streaming jobs or
-    // reloads exist in bootstrap-only; resource epochs are NOT asset hashes.
-    game.renderer = RendererOwner::legacy_menu_bootstrap(
-        kind,
+    let context = horizon_client_render::native_loading::Context::new(
+        render_startup::Renderer::context_kind(game.options.offscreen)?,
         game.options.window_size,
+    )?;
+    initialize_with_context(game, context)
+}
+
+pub(super) fn initialize_with_context(
+    game: &mut Game<'_>,
+    context: horizon_client_render::native_loading::Context,
+) -> Result<()> {
+    game.options.renderer.validate(&game.options)?;
+    if game.renderer.backend().is_some() {
+        return Err("native startup requires an empty Game renderer owner".into());
+    }
+    game.renderer = RendererOwner::legacy_menu_with_context(
+        context,
         &game.pack.render,
         &game.gui.atlas,
         ResourceGeneration(1),
@@ -55,7 +66,10 @@ pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
         .render_menu(&menu)
 }
 
-pub(super) fn run(mut game: Game<'_>) -> Result<()> {
+pub(super) fn run(game: Game<'_>) -> Result<()> {
+    run_with_loading(game, 0)
+}
+pub(super) fn run_with_loading(mut game: Game<'_>, loading_presentations: u64) -> Result<()> {
     game.options.renderer.validate(&game.options)?;
     let bootstrap = game.options.native_bootstrap_only;
     let outcome = if bootstrap {
@@ -88,6 +102,8 @@ pub(super) fn run(mut game: Game<'_>) -> Result<()> {
         let report = serde_json::json!({
             "scenario": if bootstrap {"native-game-bootstrap-only"} else {"native-game-menu-only"},
             "game_constructed": true,
+            "loading_presentations": loading_presentations,
+            "loading_context_transferred": loading_presentations > 0,
             "backend": "native-gl2",
             "resource_generation": generation.map(|g|g.0),
             "menu_submissions": game.frames,

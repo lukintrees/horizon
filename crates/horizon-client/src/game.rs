@@ -222,6 +222,8 @@ mod native_level_refs;
 mod native_lifecycle;
 mod native_living_refs;
 #[cfg(feature = "legacy-gl")]
+mod native_loading;
+#[cfg(feature = "legacy-gl")]
 mod native_menu;
 mod native_menus;
 mod native_mob_draw;
@@ -19790,6 +19792,7 @@ const STAGE_LINES: [&str; 10] = [
 #[derive(Clone)]
 struct Progress {
     value: Arc<AtomicU32>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
     lines: &'static [&'static str],
 }
 impl Progress {
@@ -19799,7 +19802,19 @@ impl Progress {
     fn with(lines: &'static [&'static str]) -> Self {
         Self {
             value: Arc::new(AtomicU32::new(0)),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             lines,
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+    fn check_cancelled(&self) -> Result<()> {
+        if self.cancelled.load(Ordering::Acquire) {
+            Err("resource loading cancelled".into())
+        } else {
+            Ok(())
         }
     }
     fn set(&self, stage: u32) {
@@ -19898,10 +19913,12 @@ fn load_core(
     progress: &Progress,
     launch_world: Option<&str>,
 ) -> std::result::Result<std::result::Result<CoreTables, String>, String> {
+    progress.check_cancelled().map_err(|e| e.to_string())?;
     let assets = match startup::time("core.assets", || Assets::load(root)) {
         Ok(assets) => assets,
         Err(e) => return Ok(Err(e.to_string())),
     };
+    progress.check_cancelled().map_err(|e| e.to_string())?;
     progress.set(1);
     let registry = assets.registry;
     let (render, gameplay, visibility, biomes, environment, collision) =
@@ -20056,6 +20073,7 @@ fn load_resources(
     progress: &Progress,
     publish: &mut dyn FnMut(UiResources, &std::path::Path),
 ) -> Result<Loaded> {
+    progress.check_cancelled()?;
     let threads = settings.horizon.worker_threads();
     // One pool of workers for every level's streaming, the client's and the
     // server thread's (horizon_threads::jobs), sized before any world opens.
@@ -20098,6 +20116,7 @@ fn load_resources(
         }
     };
     let (core, loaded_gui) = loop {
+        progress.check_cancelled()?;
         let (ui, core) = std::thread::scope(|scope| {
             let core = Step::spawn(scope, parallel, || {
                 // A failed pack starts core again from the game's own
@@ -20131,6 +20150,7 @@ fn load_resources(
         pack_error = Some(failure);
         root = vanilla_root.to_path_buf();
     };
+    progress.check_cancelled()?;
     log::info!("load core tables: {:.2}s", started.elapsed().as_secs_f32());
     let CoreTables {
         assets,
@@ -20154,6 +20174,7 @@ fn load_resources(
     if let Some(folder) = launch_world {
         world_loading::preload_launch_world(folder, &root, assets.registry, biomes.clone());
     }
+    progress.check_cancelled()?;
     let tables = Arc::new(startup::time("pack.mesh_tables", || {
         MeshTables::new(&assets, &render, &facts, visibility)
     })?);
@@ -20200,6 +20221,7 @@ fn load_resources(
     // The block entity renderer's face visibility: the meshes' own, whose
     // shapes already hold their faces, not a second load of the same tables.
     let visibility = pack.context.tables.visibility.clone();
+    progress.check_cancelled()?;
     let rest_loader = if menu {
         let resources = resources.clone();
         let root = root.clone();
@@ -20260,6 +20282,7 @@ fn load_resources(
     // The world tables load (above) while the handoff's CPU work is done: the
     // world renderer's textures beside the game's own tables. A failure here
     // waits for the tail, so no tail worker outlives its pack-loader generation.
+    progress.check_cancelled()?;
     let prepared_at = Instant::now();
     let (game_cpu, renderer_cpu) = if menu {
         let (game_cpu, renderer_cpu) = std::thread::scope(|scope| {
@@ -20346,6 +20369,7 @@ fn load_world_rest(
     // renderer or animate tables (client-side display ticks).
     draws: bool,
 ) -> Result<WorldRest> {
+    progress.check_cancelled()?;
     let facts = resources.facts();
     let biomes = resources.biomes();
     let threads = resources.threads();
@@ -20355,6 +20379,7 @@ fn load_world_rest(
     // Independent tables load together, within the worker budget the settings
     // allow. Only the recipes and the stations read another table: the items.
     let load_items = || -> Result<_> {
+        progress.check_cancelled()?;
         let items = startup::time("rest.items", || Items::load(root, registry, facts, overlay))?;
         log::info!("load items: {:.2}s", started.elapsed().as_secs_f32());
         progress.set(7);
@@ -20373,6 +20398,7 @@ fn load_world_rest(
         })
     };
     let load_block_entity_render = || -> Result<_> {
+        progress.check_cancelled()?;
         let _step = startup::step("rest.block_entity_render");
         if !draws {
             return Ok(Default::default());
@@ -20382,6 +20408,7 @@ fn load_world_rest(
         Ok(renderer)
     };
     let load_animate = || -> Result<_> {
+        progress.check_cancelled()?;
         let _step = startup::step("rest.animate_fog");
         let animate = if draws {
             horizon_client::animate_tick::AnimateTables::load(root, registry, biomes)?
@@ -20391,6 +20418,7 @@ fn load_world_rest(
         Ok((animate, horizon_client::fog::FogTables::load(root, biomes)))
     };
     let load_mobs = || -> Result<_> {
+        progress.check_cancelled()?;
         let _step = startup::step("rest.mobs");
         let mob_types: HashMap<_, _> = if draws {
             MobTypes::load(root)?
@@ -20411,6 +20439,7 @@ fn load_world_rest(
         Ok((mob_types, mob_data))
     };
     let load_transformers = || -> Result<_> {
+        progress.check_cancelled()?;
         let _step = startup::step("rest.transformers_models");
         let transformers = horizon_client::block_transform::Transformers::load(root, registry)?;
         let models = (
@@ -20720,7 +20749,8 @@ fn start_game<'a>(
     if game.options.renderer.is_native() {
         #[cfg(feature = "legacy-gl")]
         {
-            native_startup::initialize(&mut game)?;
+            // Native caller installs either a new diagnostic context or the
+            // exact context transferred from its responsive loading window.
             game.title = Some(game.initial_title()?);
             return Ok(Some(game));
         }
@@ -21488,6 +21518,10 @@ pub fn run_with() -> Result<()> {
     // Snapshots of derived tables live in the game folder, never beside the
     // shared resources.
     Behaviours::set_cache_dir(std::env::current_dir()?.join(".horizon-cache"));
+    #[cfg(feature = "legacy-gl")]
+    if options.renderer.is_native() && !options.native_bootstrap_only {
+        return native_loading::run(options, early_settings, vanilla_root, started);
+    }
     if !synchronous_startup(&options) {
         return run_loading(options, early_settings, vanilla_root, None, started);
     }
@@ -21553,7 +21587,10 @@ pub fn run_with() -> Result<()> {
     if let Some(mut game) = game {
         if game.options.renderer.is_native() {
             #[cfg(feature = "legacy-gl")]
-            return native_startup::run(game);
+            {
+                native_startup::initialize(&mut game)?;
+                return native_startup::run(game);
+            }
             #[cfg(not(feature = "legacy-gl"))]
             return Err("native Game bootstrap was not built in".into());
         }

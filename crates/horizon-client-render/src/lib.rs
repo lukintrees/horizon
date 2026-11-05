@@ -74,6 +74,8 @@ pub mod model_library;
 pub mod models;
 pub mod multiline_edit;
 pub mod native_emissive;
+#[cfg(feature = "legacy-gl")]
+pub mod native_loading;
 pub mod options_file;
 pub mod options_fixes;
 pub mod options_ui;
