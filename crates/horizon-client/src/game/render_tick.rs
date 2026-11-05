@@ -90,7 +90,7 @@ impl Game<'_> {
     pub(super) fn near_plane(&self) -> NearPlane {
         let [width, height] = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1, 1], |r| [r.config.width, r.config.height]);
         self.view.near_plane(
             self.settings.fov as i32 as f32,
@@ -559,7 +559,7 @@ impl Game<'_> {
                 }
             }
         }
-        if let Some(r) = &self.renderer {
+        if let Some(r) = self.renderer.modern_ref() {
             campfire_particles(
                 self.res.animate(),
                 &mut self.particles,

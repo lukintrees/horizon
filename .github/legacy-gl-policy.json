@@ -30,6 +30,7 @@
     "crates/horizon-client-render/src/legacy_gfx.rs",
     "crates/horizon-client-render/src/legacy_gfx/frame.rs",
     "crates/horizon-client-render/src/renderer_facade.rs",
+    "crates/horizon-client-render/src/renderer_owner.rs",
     "crates/horizon-client-render/src/renderer_facade/**",
     "crates/horizon-client-render/src/*contract.rs",
     "crates/horizon-client-render/src/*contract/**",

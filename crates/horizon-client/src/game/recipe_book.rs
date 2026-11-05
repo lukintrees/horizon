@@ -601,7 +601,7 @@ impl Game<'_> {
         (self.recipe_ui.time / SWAP_TICKS).floor() as usize
     }
     fn batch_for_size(&self) -> Option<HudBatch> {
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         Some(HudBatch::new([r.config.width, r.config.height]))
     }
 

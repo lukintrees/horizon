@@ -108,7 +108,7 @@ impl Game<'_> {
     pub(super) fn gui_size(&self) -> (f32, f32) {
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1280, 720], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size);
         (b.width, b.height)
@@ -185,7 +185,7 @@ impl Game<'_> {
         let picture = (self.screen == Screen::Options)
             .then(|| self.ui.options.calibration_picture(h))
             .flatten();
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.set_hdr_calibration(picture.map(|(step, nits, band)| {
                 horizon_client::gfx::HdrCalibration {
                     step: step.number(),
@@ -227,7 +227,7 @@ impl Game<'_> {
             self.dragging = true;
         }
         let size = self.gui_size();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         let mut ui = std::mem::take(&mut self.ui.options);
@@ -247,7 +247,7 @@ impl Game<'_> {
     }
     pub(super) fn options_drag(&mut self) -> Result<()> {
         let size = self.gui_size();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         let mut ui = std::mem::take(&mut self.ui.options);
@@ -267,7 +267,7 @@ impl Game<'_> {
     pub(super) fn options_key(&mut self, key: KeyCode, text: Option<&str>) -> Result<()> {
         let size = self.gui_size();
         let shift = self.has_shift_down();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         self.ui.options.size = size;
@@ -287,7 +287,7 @@ impl Game<'_> {
             .shortcut(&self.gui.atlas, shortcut, &mut self.clipboard)
     }
     pub(super) fn options_scroll(&mut self, amount: f32) -> Result<()> {
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         if self.ui.options.page() == Page::Video && self.has_control_down() {
@@ -479,7 +479,7 @@ impl Game<'_> {
         }
         self.apply_fullscreen();
         let s = &self.settings;
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.gamma = s.gamma;
             r.fullbright = s.extras.fullbright;
             r.improved_transparency = s.improved_transparency;

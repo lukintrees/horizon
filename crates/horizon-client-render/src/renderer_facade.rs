@@ -1,5 +1,6 @@
 //! C01 common submission boundary. Intentionally borrowed during R02 migration:
-//! Game still owns its modern renderer; no Deref or public GPU fields here.
+//! Game uses RendererOwner storage; native Game startup is not yet connected.
+//! No Deref or public GPU fields here.
 //! Submissions use the CPU Frame contract; gfx::Frame remains a compatibility export.
 pub use crate::frame::{MenuBackground, MenuFrame};
 use crate::{Result, frame::Frame, gfx, mesher::SectionMesh};

@@ -67,7 +67,7 @@ impl Game<'_> {
     pub(super) fn gui_origin(&self) -> Result<(f32, f32)> {
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
             .ok_or("no renderer yet")?;
         Ok(self.inventory_origin(&horizon_client::hud::HudBatch::new(size)))

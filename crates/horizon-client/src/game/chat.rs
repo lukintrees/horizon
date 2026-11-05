@@ -687,7 +687,7 @@ impl Game<'_> {
         self.refresh_dynamic_registries();
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1280, 720], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size);
         let m = Measure(&self.gui.atlas.font);
@@ -1001,7 +1001,7 @@ impl Game<'_> {
     }
     pub(super) fn chat_scroll(&mut self, amount: f32) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
+        let height = self.renderer.modern_ref().map_or(720.0, |r| {
             HudBatch::new([r.config.width, r.config.height]).height
         });
         let _ = height;
@@ -1018,7 +1018,7 @@ impl Game<'_> {
     }
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
+        let height = self.renderer.modern_ref().map_or(720.0, |r| {
             HudBatch::new([r.config.width, r.config.height]).height
         });
         let m = Measure(&self.gui.atlas.font);
@@ -1027,7 +1027,7 @@ impl Game<'_> {
             registries: &self.ui.registries,
         };
         if self.ui.in_bed_chat && self.sleeping.is_some() {
-            let width = self.renderer.as_ref().map_or(1280.0, |r| {
+            let width = self.renderer.modern_ref().map_or(1280.0, |r| {
                 HudBatch::new([r.config.width, r.config.height]).width
             });
             let (x, y, w, h) = Self::leave_bed_button(width, height);
@@ -1492,7 +1492,7 @@ impl Game<'_> {
             return;
         }
         let name = screenshot_name(&dir);
-        let Some(renderer) = self.renderer.as_mut() else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return;
         };
         let path = dir.join(name);

@@ -52,7 +52,7 @@ impl Game<'_> {
         }
         let reload = state.stamp.is_some();
         state.stamp = stamp;
-        let Some(renderer) = &mut self.renderer else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return;
         };
         let result = Pack::read(path).map_err(|e| vec![e]).and_then(|pack| {

@@ -81,6 +81,9 @@ struct HudBatch { scale: f32 }
 impl HudBatch { fn new(_size: [u32; 2]) -> Self { Self { scale: 2.0 } } }
 struct Config { width: u32, height: u32 }
 struct Renderer { config: Config }
+// Storage API stand-in: these extracted methods only exercise the modern path.
+trait ModernRef<T> { fn modern_ref(&self) -> Option<&T>; }
+impl<T> ModernRef<T> for Option<T> { fn modern_ref(&self) -> Option<&T> { self.as_ref() } }
 #[derive(Default)]
 struct Window { grabs: Cell<u32>, visible: Cell<bool>, fail: bool, warps: Cell<u32>, at: Cell<(f64, f64)> }
 impl Window {

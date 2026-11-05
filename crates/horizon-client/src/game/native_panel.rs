@@ -162,7 +162,7 @@ pub(super) fn inside(p: (f32, f32), [x, y, w, h]: [f32; 4]) -> bool {
 
 impl Game<'_> {
     fn browser_batch(&self) -> Option<HudBatch> {
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         Some(HudBatch::new([r.config.width, r.config.height]))
     }
     /// The mod showing a panel, with its items made into stacks once per

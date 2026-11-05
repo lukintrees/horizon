@@ -989,7 +989,7 @@ impl Game<'_> {
         let Some(id) = overlay else {
             return self.screen_view_now();
         };
-        let renderer = self.renderer.as_ref()?;
+        let renderer = self.renderer.modern_ref()?;
         let batch = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
         Some(NativeScreenView {
             id,
@@ -3476,7 +3476,7 @@ impl Game<'_> {
     /// dialog or a prompt drawn over gameplay), and no connect or world load
     /// is in progress. The one gate they all ask before they fire.
     pub(super) fn screen_hooks_open(&self) -> bool {
-        self.renderer.is_some()
+        self.renderer.has_modern()
             && !self.screen_over_playing()
             && !self.remote_loading()
             && (self.screen != Screen::Playing || self.title.is_some())
@@ -3491,7 +3491,7 @@ impl Game<'_> {
         if !self.screen_hooks_open() {
             return None;
         }
-        let renderer = self.renderer.as_ref()?;
+        let renderer = self.renderer.modern_ref()?;
         let batch = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
         if self.screen != Screen::Playing {
             return Some(self.screen_view(&batch, self.screen));
@@ -8675,7 +8675,7 @@ impl Game<'_> {
         // What `screen_hooks_open` would refuse over the world: the mod's
         // screen would be up with no hook to draw or click it.
         let blocked = self.title.is_some()
-            || self.renderer.is_none()
+            || self.renderer.modern_ref().is_none()
             || self.lan_acting.is_some()
             || self.player.is_none()
             || self.screen_over_playing()
@@ -9678,7 +9678,7 @@ impl Game<'_> {
     /// data, for its press and tooltip hooks.
     fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
         let s = self.shown_native_screen()?;
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         let batch = HudBatch::new([r.config.width, r.config.height]);
         let (ox, oy) = self.inventory_origin(&batch);
         let at = [self.cursor.0 - ox, self.cursor.1 - oy];

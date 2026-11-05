@@ -384,3 +384,20 @@ Window identity проверена shared-context ownership/readback, но inter
 frustum/cave visibility, camera sorting и simulation не меняются. W01b/G01 должны выдавать tickets
 до dispatch настоящим workers, публиковать matching CPU world/resources и выбирать native owner.
 Native startup/input/clock, context recovery, Win7/X1650 qualification и B1–B4 остаются открыты.
+
+
+## 14. MVP 1a: owning storage в настоящем Game (2026-11-05)
+
+Порядок дальнейшей работы — [последовательный MVP-план](legacy-gl-mvp-path.md).
+`Game.renderer` теперь `renderer_owner::RendererOwner`: Empty / boxed Modern / feature-gated
+boxed Native. Storage не создаёт device/context, не имеет Deref/GPU-полей в public API и
+заимствует прежний `RendererFacade` с caller-supplied visibility/options. Modern leaf paths
+явно используют `modern_ref/modern_mut/has_modern/take_modern`. Их `None` **не** означает,
+что native frame успешно нарисован. Native-to-modern publication/initialization запрещена;
+`take_modern` не извлекает и не теряет native owner. Native submission в `Game::render` пока
+явно возвращает ошибку, modern winit resume/factory не принимает native owner.
+
+Это первый ownership patch этапа 1, **не его закрытие**. Startup loading owner остаётся
+modern-only; флаг выбора, native Game bootstrap/profile и runtime dispatch ещё не подключены.
+Настоящий Game worker dispatch/visibility/input/save путь ещё modern. Новая offscreen owner
+fixture проверяет ownership/facade, а не menu/playable runtime. Default feature graph не менялся.
