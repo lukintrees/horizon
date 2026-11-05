@@ -32,7 +32,7 @@ fn retained(mesh: &SectionMesh) -> Result<usize, String> {
         std::mem::size_of::<SectionMesh>() + 2 * std::mem::size_of::<usize>(),
         |sum, n| sum.checked_add(n?),
     )
-    .ok_or("stream mesh retained-byte overflow".into())
+    .ok_or_else(|| "stream mesh retained-byte overflow".into())
 }
 impl TerrainHudRenderer {
     pub(super) fn streaming_ready(&self) -> Result<(), String> {
@@ -121,6 +121,14 @@ impl TerrainHudRenderer {
         mesh: &Arc<SectionMesh>,
     ) -> Result<Queued, String> {
         self.stream_key(key)?;
+        if !self
+            .streaming
+            .as_ref()
+            .ok_or("stamped streaming not started")?
+            .accepts_completion(key, stamp)
+        {
+            return Ok(Queued::Stale);
+        }
         if mesh.keep {
             return Err("native streamed sections do not support far-mesh keep/fade".into());
         }
@@ -180,13 +188,19 @@ impl TerrainHudRenderer {
                 break;
             }
             let mesh = Arc::clone(mesh);
-            render_bridge::upload_section(
-                &mut self.world,
-                key,
-                &mesh,
-                self.limits.section_vertices,
-            )
-            .map_err(diagnostic)?;
+            if mesh.solid.is_empty() && mesh.translucent.is_empty() {
+                // Air/last-block edits release GPU membership, not the active
+                // interest ticket. Do not fill the resident section cap with air.
+                self.world.unload_section(key).map_err(diagnostic)?;
+            } else {
+                render_bridge::upload_section(
+                    &mut self.world,
+                    key,
+                    &mesh,
+                    self.limits.section_vertices,
+                )
+                .map_err(diagnostic)?;
+            }
             self.streaming.as_mut().unwrap().uploaded(key, stamp);
             result.uploads += 1;
             result.bytes += bytes;
@@ -569,5 +583,45 @@ mod gpu_tests {
                 .unwrap();
             assert_eq!(renderer.stream_usage().unwrap().slots, 0);
         }
+        let key = [0; 3];
+        let solid = facade(&mut renderer)
+            .request_stream_section(key)
+            .unwrap()
+            .unwrap();
+        facade(&mut renderer)
+            .queue_stream_section(key, solid, &green)
+            .unwrap();
+        facade(&mut renderer).drain_streaming(1, charge).unwrap();
+        let empty = facade(&mut renderer)
+            .request_stream_section(key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            facade(&mut renderer)
+                .queue_stream_section(key, empty, &Arc::new(SectionMesh::default()))
+                .unwrap(),
+            Queued::Accepted
+        );
+        assert_eq!(
+            facade(&mut renderer)
+                .drain_streaming(1, charge)
+                .unwrap()
+                .uploads,
+            1
+        );
+        assert!(!facade(&mut renderer).has_section(key));
+        assert_eq!(renderer.resident_sections(), 0);
+        assert_eq!(renderer.stream_usage().unwrap().slots, 1);
+        assert_eq!(
+            facade(&mut renderer)
+                .queue_stream_section(key, empty, &green)
+                .unwrap(),
+            Queued::Stale
+        );
+        facade(&mut renderer)
+            .unload_stream_section(key, empty)
+            .unwrap();
+        assert_eq!(renderer.world.backend_mut().stats().meshes, 0);
+        assert_eq!(renderer.stream_usage().unwrap().slots, 0);
     }
 }

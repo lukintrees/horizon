@@ -369,3 +369,15 @@ screenshot request/result и восстанавливает normal budgets/cache
 context identity и Unicode glyph после reload. Details — [C01 §12](legacy-gl-c01.md#12-a02b-transactional-same-context-native-resource-replacement-2026-11-05).
 Это renderer-level transaction, **не полный A02/Game reload**: publication CPU pack/language,
 stamped streaming queues, native startup/platform/clock и context-loss recovery остаются открыты.
+
+
+### Продолжение W01a (2026-11-05)
+
+Native owner/facade теперь имеют bounded section ticket/queue control plane. Existing SectionStamp
+выдаётся до worker dispatch; late/duplicate/foreign/superseded completions отклоняются. Revocation и
+монотонный nonce защищают unload/revisit без растущей tombstone table. Input capacities и pending/
+interest counts ограничены, hard drain budgets явные; failed upload сохраняет прежний resident mesh.
+Resource/world transitions защищены, unstamped bypass после opt-in запрещён. CPU + OSMesa проверяют
+реальный producer, GPU budget failure, reload/world/unload и bounded travel. Details — [C01 §13](legacy-gl-c01.md#13-w01a-bounded-owner-issued-terrain-tickets-2026-11-05).
+Это **не завершение W01/G01**: настоящие Game worker dispatch, visibility/sort и native startup пока
+не переключены; simulation и default modern pending uploads не менялись.

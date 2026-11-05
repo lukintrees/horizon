@@ -336,3 +336,51 @@ streaming queues, native Game startup/platform input/clock wiring ещё тре�
 Context loss/recreation — отдельный lifecycle, не «recover» через текущий possibly-lost context.
 Window identity проверена shared-context ownership/readback, но interactive Win32/Win7/X1650 и Alt-Tab
 этим OSMesa fixture не квалифицируются. B1–B4 и release не объявляются завершёнными.
+
+
+## 13. W01a: bounded owner-issued terrain tickets (2026-11-05)
+
+- CPU-only `horizon_render_api::streaming::Stream<T>` выдаёт существующий `SectionStamp` **до dispatch**
+  mesher job. Completion принимается только с точным текущим ticket; foreign world/resource, unissued,
+  superseded и duplicate work возвращают `Stale`. Revision — owner-issued nonce, строго возрастающий
+  в пределах world/resource epoch, не stamp, присвоенный задним числом готовому mesh.
+- Интерес к section, очередь и payload bytes ограничены независимо. Native defaults: **4096 active
+  tickets**, **64 pending completions**, **8 MiB retained mesh input**. Queue count/byte pressure и
+  exhaustion interest slots видны caller; rejected Arc остаётся у producer. Complete на full queue
+  можно повторить после drain без нового ticket. Новая request отменяет старый queued completion,
+  но не прежний resident GPU mesh. FIFO не сортирует геометрию/visibility вместо Game.
+- Tombstone не требует бесконечной таблицы всех посещённых координат: unload сначала отзывает lease,
+  а metadata освобождается только после acknowledgement GPU membership removal. Readmission того же
+  key выдаёт новый глобальный nonce, поэтому поздний прежний job не может воскресить section даже
+  после удаления записи. Pending removal запрещает draw до retry/drain/reload; stale unload ticket
+  не удаляет более новый lease. Empty completion освобождает GPU membership, сохраняя interest lease.
+- Native owner/facade имеют opt-in begin/request/queue/drain/unload/usage commands. Begin требует
+  tracked resources и более новый world/teleport epoch при повторном вызове. С этого момента старые
+  unstamped upload/clear/remove APIs явно отклоняются — обойти ledger через старый facade нельзя.
+  До opt-in прежние probes/adapters совместимы. Modern scheduler/path не переключаются.
+- Native очередь разделяет `Arc<SectionMesh>` настоящего producer, не копирует vertices и не вводит
+  второй mesher. Учитываются **capacity**, а не только len, всех seven Vec buffers: solid/translucent,
+  packed/tints, block entities/lights и sprite layers, плюс payload/header. Shared buffers могут
+  conservatively считаться несколько раз; allocator/external worker overhead не является process
+  budget. Far-mesh keep/fade отклоняется. Packed-only data не заменяет full terrain vertices.
+- Drain имеет hard job-count и charged-input-byte limits, без «хотя бы один oversized upload».
+  Нулевой count ничего не делает; нулевые bytes допускают только removals. Oversized FIFO head ждёт
+  большего explicit budget/new request. Это не elapsed-time/driver/converted-scratch budget: conversion
+  отдельно ограничена section_vertices, garbage cleanup/object counts — native scene/backend limits.
+  Upload failure сохраняет старый GPU mesh и queued completion для retry/replace/revoke.
+- Failed/discarded resource reload сохраняет очередь. Commit A02b публикует пустой armed stream с тем
+  же world, новой resource generation и без старых jobs/leases. World reset отменяет pending work;
+  заново использовать world/resource пару после owner recreation нельзя без переноса ticket namespace
+  или смены generation. Полный context recovery остаётся отдельной задачей.
+- Standalone CPU tests покрывают stamps, capacity/byte backpressure, FIFO/coalescing, ack/retry,
+  revocation/readmission (1000 cycles), epoch rebase и nonce exhaustion без wrap. Native CPU test
+  проверяет все retained capacities. Новый OSMesa fixture использует настоящий SectionMesh через
+  facade: dimension origin, queue/interest pressure, hard drain limits, **реальный backend replacement
+  budget отказ** с сохранением старых pixels, revoked draw guard, unload/revisit, failed/drop/commit
+  reload, world change, 32 travel/unload cycles и last-block/air completion. Focused CI выбирает
+  **24** ignored Game GL2 GPU fixtures.
+
+Это native streaming control plane, **не wiring существующих Game workers**: modern pending_uploads,
+frustum/cave visibility, camera sorting и simulation не меняются. W01b/G01 должны выдавать tickets
+до dispatch настоящим workers, публиковать matching CPU world/resources и выбирать native owner.
+Native startup/input/clock, context recovery, Win7/X1650 qualification и B1–B4 остаются открыты.

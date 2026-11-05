@@ -145,6 +145,11 @@ impl<T> Stream<T> {
         }
         self.order.retain(|k| *k != key);
     }
+    pub fn accepts_completion(&self, key: SectionKey, stamp: SectionStamp) -> bool {
+        self.entries
+            .get(&key)
+            .is_some_and(|e| e.stamp == stamp && matches!(e.phase, Phase::Waiting))
+    }
     /// `bytes` must conservatively include ALL retained payload storage, not
     /// merely logical vertex length. Rejected payloads are dropped, never held.
     pub fn complete(
@@ -154,10 +159,7 @@ impl<T> Stream<T> {
         payload: T,
         bytes: usize,
     ) -> Result<Queued, Error> {
-        let Some(entry) = self.entries.get(&key) else {
-            return Ok(Queued::Stale);
-        };
-        if entry.stamp != stamp || !matches!(entry.phase, Phase::Waiting) {
+        if !self.accepts_completion(key, stamp) {
             return Ok(Queued::Stale);
         }
         let total = self.bytes.checked_add(bytes);
@@ -286,6 +288,34 @@ mod tests {
         assert_eq!(state.complete([0; 3], c, 3, 4), Ok(Queued::Accepted));
     }
     #[test]
+    fn fifo_acknowledges_only_the_head_and_superseding_does_not_starve_other_keys() {
+        let mut state = Stream::new(
+            WorldGeneration(1),
+            ResourceGeneration(7),
+            Limits {
+                slots: 3,
+                pending: 3,
+                bytes: 12,
+            },
+        )
+        .unwrap();
+        let a = state.request([0; 3]).unwrap().unwrap();
+        let b = state.request([1; 3]).unwrap().unwrap();
+        let c = state.request([2; 3]).unwrap().unwrap();
+        state.complete([1; 3], b, 2, 4).unwrap();
+        state.complete([0; 3], a, 1, 4).unwrap();
+        assert!(!state.uploaded([0; 3], a));
+        assert_eq!(state.front().unwrap().0, [1; 3]);
+        assert!(state.uploaded([1; 3], b));
+        state.complete([2; 3], c, 3, 4).unwrap();
+        let newer = state.request([0; 3]).unwrap().unwrap();
+        state.complete([0; 3], newer, 4, 4).unwrap();
+        assert_eq!(state.front().unwrap().0, [2; 3]);
+        assert!(state.uploaded([2; 3], c));
+        assert_eq!(state.front().unwrap().2, &4);
+        assert_eq!(state.usage().bytes, 4);
+    }
+    #[test]
     fn revocation_survives_failed_cleanup_without_unbounded_tombstones() {
         let mut state = stream();
         for _ in 0..1000 {
@@ -323,8 +353,11 @@ mod tests {
         let current = next.request([0; 3]).unwrap().unwrap();
         assert_eq!(next.complete([0; 3], ticket, 1, 4), Ok(Queued::Stale));
         assert_eq!(next.complete([0; 3], current, 1, 4), Ok(Queued::Accepted));
+        assert!(state.rebased(ResourceGeneration(7)).is_err());
+        assert!(state.rebased(ResourceGeneration(6)).is_err());
         state.nonce = u64::MAX;
         assert_eq!(state.request([1; 3]), Err(Error::Exhausted));
+        assert_eq!(state.request([0; 3]), Err(Error::Exhausted));
         assert_eq!(state.usage().bytes, 4);
         for limits in [
             Limits {
