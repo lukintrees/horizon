@@ -109,6 +109,9 @@ jobs:
           shared-key: legacy-modern
       - name: Check unchanged default modern feature graph
         run: cargo check --locked -p horizon-client
+      - name: Test Game idle and menu routing with isolated platform and storage
+        # Compiles the real routing methods; not normal-resource Game launch evidence.
+        run: python3 -m unittest discover -s tests -p 'test_game_loop_routing.py'
       - name: Test neutral scheduling and headless loop through actual Game
         run: |
           cargo test --locked -p horizon-client --no-default-features --lib game::event_loop::tests::

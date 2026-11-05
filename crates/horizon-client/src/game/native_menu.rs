@@ -1,4 +1,4 @@
-//! Native menu adapter into existing Game/Title producers, not a simulation.
+//! Native pump drives Game::idle/frame_tick, not a second simulation or clock.
 //! World entry and options remain explicit error screens until their native
 //! producers/lifecycle are connected. No synthetic winit DeviceId/WindowId.
 use super::*;
@@ -29,6 +29,22 @@ impl EventLoopCtl for LoopCtl {
         self.flow.set(flow);
     }
 }
+impl LoopCtl {
+    fn next_step(&self, began: Instant, focused: bool, size: [u32; 2]) -> Instant {
+        let frame = began
+            + Duration::from_millis(if focused && !size.contains(&0) {
+                16
+            } else {
+                32
+            });
+        match self.flow.get() {
+            // A closing save asks for a shorter poll. Even an expired deadline
+            // must yield; Poll is not permission for a zero-delay native loop.
+            ControlFlow::WaitUntil(at) => at.min(frame).max(began + Duration::from_millis(4)),
+            ControlFlow::Poll | ControlFlow::Wait => frame,
+        }
+    }
+}
 #[derive(Default)]
 struct Input {
     left: bool,
@@ -38,6 +54,9 @@ struct Input {
 impl Input {
     fn reset(&mut self, game: &mut Game<'_>) {
         self.left = false;
+        game.keys.clear();
+        game.left = false;
+        game.right = false;
         game.physical_keys.clear();
         game.modifiers = ModifiersState::empty();
         if let Some(title) = game.title.as_mut() {
@@ -47,6 +66,7 @@ impl Input {
     }
     fn pointer(&mut self, game: &mut Game<'_>, size: [u32; 2], x: i32, y: i32) {
         self.pointer = Some([x, y]);
+        game.last_input = Instant::now();
         let batch = HudBatch::new(size);
         game.cursor = (x as f32 / batch.scale, y as f32 / batch.scale);
         if self.left
@@ -57,17 +77,6 @@ impl Input {
         }
     }
 }
-fn action(game: &mut Game<'_>, ctl: &LoopCtl, action: Action) -> Result<()> {
-    if matches!(action, Action::None | Action::Quit) {
-        return game.title_action(ctl, action);
-    }
-    // Do not open an existing save, create a world, connect a server or mutate
-    // modern-only settings and then discover native world rendering is absent.
-    if let Some(title) = game.title.as_mut() {
-        title.failed("Native GL2 menu-only: world entry, options, packs and external actions are not connected yet. No world was opened.");
-    }
-    Ok(())
-}
 fn key(
     game: &mut Game<'_>,
     ctl: &LoopCtl,
@@ -75,6 +84,7 @@ fn key(
     code: KeyCode,
     pressed: bool,
 ) -> Result<()> {
+    game.last_input = Instant::now();
     game.press_modifier_key(code, pressed);
     if !pressed {
         return Ok(());
@@ -93,7 +103,7 @@ fn key(
             if code != KeyCode::Space || title.list_focused() || title.focused_button.is_some() =>
         {
             let (next, _) = title.confirm_key_size(viewport);
-            action(game, ctl, next)?;
+            game.title_action(ctl, next)?;
         }
         code @ (KeyCode::Backspace
         | KeyCode::Delete
@@ -198,10 +208,11 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
         focused: game.focused,
         ..Default::default()
     };
-    let started = Instant::now();
+    game.previous = Instant::now();
     let mut last = FrameOutcome::Deferred;
-    while !ctl.exit.get() && horizon_threads::stop_requests() == 0 {
+    while !ctl.exit.get() {
         let began = Instant::now();
+        ctl.flow.set(ControlFlow::Wait);
         let mut facade = game
             .renderer
             .facade(VisibleSections::default(), FrameOptions::default())
@@ -209,146 +220,176 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
         let events = facade.poll_native_window_events()?;
         let size = facade.size();
         if events.close_requested {
-            break;
+            game.begin_closing_save(true)?;
+            input.reset(game);
         }
         if events.lost_events > 0 {
             input.reset(game);
-        } else {
-            for event in events.events {
-                if let Event::Focused(focused) = event {
-                    input.focused = focused;
-                    game.focused = focused;
-                    if !focused {
-                        input.reset(game);
-                    }
-                    continue;
-                }
-                if event == Event::PointerCaptureLost {
+        }
+        for event in events.events {
+            if let Event::Focused(focused) = event {
+                input.focused = focused;
+                game.focused = focused;
+                game.focus_lost = (!focused).then(Instant::now);
+                if !focused {
                     input.reset(game);
-                    continue;
                 }
-                if matches!(event, Event::Resized(_)) {
-                    if !size.contains(&0)
-                        && let Some([x, y]) = input.pointer
-                    {
-                        input.pointer(game, size, x, y);
-                    }
-                    continue;
+                continue;
+            }
+            if event == Event::PointerCaptureLost {
+                input.reset(game);
+                continue;
+            }
+            if matches!(event, Event::Resized(_)) {
+                if size.contains(&0) {
+                    input.reset(game);
+                } else if let Some([x, y]) = input.pointer {
+                    input.pointer(game, size, x, y);
                 }
-                if !input.focused || size.contains(&0) {
-                    continue;
-                }
-                if let Some((code, pressed)) = ui_key(&event) {
-                    key(game, &ctl, size, code, pressed)?;
-                    continue;
-                }
-                match event {
-                    Event::PointerMoved { x, y } => input.pointer(game, size, x, y),
-                    Event::MouseButton {
-                        button,
-                        pressed,
-                        x,
-                        y,
-                    } => {
-                        input.pointer(game, size, x, y);
-                        let b = HudBatch::new(size);
-                        if button == horizon_client::renderer_facade::NativeMouseButton::Left {
-                            input.left = pressed;
-                            if !pressed {
-                                if let Some(t) = game.title.as_mut() {
-                                    t.release();
-                                    t.release_field();
-                                }
-                            } else {
-                                let shift = game.has_shift_down();
-                                if let Some(t) = game.title.as_mut() {
-                                    let (next, _) =
-                                        t.click(game.cursor.0, game.cursor.1, (b.width, b.height));
-                                    t.press_field(
-                                        &game.gui.atlas,
-                                        game.cursor,
-                                        (b.width, b.height),
-                                        shift,
-                                    );
-                                    t.press_rules(
-                                        &game.gui.atlas,
-                                        game.cursor,
-                                        (b.width, b.height),
-                                    );
-                                    action(game, &ctl, next)?;
-                                }
+                continue;
+            }
+            if events.lost_events > 0
+                || game.pending_save.is_some()
+                || horizon_threads::stop_requests() > 0
+                || !input.focused
+                || size.contains(&0)
+            {
+                continue;
+            }
+            if let Some((code, pressed)) = ui_key(&event) {
+                key(game, &ctl, size, code, pressed)?;
+                continue;
+            }
+            match event {
+                Event::PointerMoved { x, y } => input.pointer(game, size, x, y),
+                Event::MouseButton {
+                    button,
+                    pressed,
+                    x,
+                    y,
+                } => {
+                    input.pointer(game, size, x, y);
+                    let b = HudBatch::new(size);
+                    if button == horizon_client::renderer_facade::NativeMouseButton::Left {
+                        input.left = pressed;
+                        if !pressed {
+                            if let Some(t) = game.title.as_mut() {
+                                t.release();
+                                t.release_field();
+                            }
+                        } else {
+                            let shift = game.has_shift_down();
+                            if let Some(t) = game.title.as_mut() {
+                                let (next, _) =
+                                    t.click(game.cursor.0, game.cursor.1, (b.width, b.height));
+                                t.press_field(
+                                    &game.gui.atlas,
+                                    game.cursor,
+                                    (b.width, b.height),
+                                    shift,
+                                );
+                                t.press_rules(&game.gui.atlas, game.cursor, (b.width, b.height));
+                                game.title_action(&ctl, next)?;
                             }
                         }
                     }
-                    Event::Wheel {
-                        horizontal: false,
-                        delta,
-                    } => {
-                        let b = HudBatch::new(size);
-                        if let Some(t) = game.title.as_mut() {
-                            t.scroll_worlds(delta as f32 / 120., game.cursor, (b.width, b.height));
-                        }
-                    }
-                    Event::Text {
-                        character,
-                        repeat_count,
-                    } if !game.modifiers.control_key() && !game.modifiers.alt_key() => {
-                        if repeat_count > 32 {
-                            return Err("native menu text repeat batch exceeds budget".into());
-                        }
-                        let mut buffer = [0; 4];
-                        let text = character.encode_utf8(&mut buffer);
-                        for _ in 0..repeat_count {
-                            game.title_edit(Some(text), false);
-                        }
-                    }
-                    _ => {}
                 }
+                Event::Wheel {
+                    horizontal: false,
+                    delta,
+                } => {
+                    let b = HudBatch::new(size);
+                    if let Some(t) = game.title.as_mut() {
+                        t.scroll_worlds(delta as f32 / 120., game.cursor, (b.width, b.height));
+                    }
+                }
+                Event::Text {
+                    character,
+                    repeat_count,
+                } if !game.modifiers.control_key() && !game.modifiers.alt_key() => {
+                    game.last_input = Instant::now();
+                    if repeat_count > 32 {
+                        return Err("native menu text repeat batch exceeds budget".into());
+                    }
+                    let mut buffer = [0; 4];
+                    let text = character.encode_utf8(&mut buffer);
+                    for _ in 0..repeat_count {
+                        game.title_edit(Some(text), false);
+                    }
+                }
+                _ => {}
             }
         }
         if ctl.exit.get() {
             break;
         }
-        if !size.contains(&0) {
-            horizon_client::widgets::end_frame(game.frames);
-            last = super::native_startup::render_menu(game)?;
-            if last == FrameOutcome::Offscreen {
-                return Err("native window loop received offscreen completion".into());
-            }
-            if last.was_presented() {
-                game.frames += 1;
-            }
+        let frames = game.frames;
+        let saving = game.pending_save.is_some() || horizon_threads::stop_requests() > 0;
+        game.idle(&ctl);
+        if !saving && !size.contains(&0) {
+            last = if game.frames > frames {
+                FrameOutcome::Presented
+            } else {
+                FrameOutcome::Deferred
+            };
         }
-        if game.options.frames.is_some_and(|n| game.frames >= n) {
+        if ctl.exit.get() {
             break;
         }
-        if game.options.frames.is_some() && started.elapsed() > game.options.timeout {
-            return Err("native menu frame limit timed out".into());
-        }
-        // Bounded pumping and a capped menu cadence, including focus/minimize.
-        // This is not Game::idle or a replacement for the simulation scheduler.
-        let cadence = Duration::from_millis(if !input.focused || size.contains(&0) {
-            32
-        } else {
-            16
-        });
-        let period = match ctl.flow.get() {
-            ControlFlow::Poll => Duration::ZERO,
-            ControlFlow::Wait => cadence,
-            ControlFlow::WaitUntil(at) => cadence.min(at.saturating_duration_since(began)),
-        };
-        if !events.pending_messages
-            && let Some(left) = period.checked_sub(began.elapsed())
+        // Pending OS messages are drained on the next bounded turn too: a
+        // flooded native queue must not uncap Game's frame/idle cadence.
+        if let Some(left) = ctl
+            .next_step(began, input.focused, size)
+            .checked_duration_since(Instant::now())
         {
             std::thread::sleep(left);
         }
     }
     input.reset(game);
-    Ok(last)
+    game.error.take().map_or(Ok(last), Err)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_poll_and_wait_still_bound_focus_and_minimize_cadence() {
+        let ctl = LoopCtl::default();
+        let now = Instant::now();
+        for flow in [ControlFlow::Poll, ControlFlow::Wait] {
+            ctl.set_control_flow(flow);
+            assert_eq!(
+                ctl.next_step(now, true, [640, 480]),
+                now + Duration::from_millis(16)
+            );
+            for (focused, size) in [(false, [640, 480]), (true, [0, 480]), (true, [640, 0])] {
+                assert_eq!(
+                    ctl.next_step(now, focused, size),
+                    now + Duration::from_millis(32)
+                );
+            }
+        }
+    }
+    #[test]
+    fn save_poll_deadlines_can_shorten_cadence_but_never_spin() {
+        let ctl = LoopCtl::default();
+        let now = Instant::now();
+        for deadline in [
+            now - Duration::from_secs(1),
+            now,
+            now + Duration::from_millis(4),
+        ] {
+            ctl.set_control_flow(ControlFlow::WaitUntil(deadline));
+            assert_eq!(
+                ctl.next_step(now, false, [0; 2]),
+                now + Duration::from_millis(4)
+            );
+        }
+        ctl.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_secs(1)));
+        assert_eq!(
+            ctl.next_step(now, true, [640, 480]),
+            now + Duration::from_millis(16)
+        );
+    }
     #[test]
     fn ui_mapping_preserves_the_native_key_namespaces_and_release_edges() {
         assert_eq!(

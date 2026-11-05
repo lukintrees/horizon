@@ -106,10 +106,7 @@ impl Game<'_> {
         Self::game_dir().join(horizon_client::shader_pack_list::DIR)
     }
     pub(super) fn gui_size(&self) -> (f32, f32) {
-        let size = self
-            .renderer
-            .modern_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+        let size = self.renderer.size().unwrap_or([1280, 720]);
         let b = HudBatch::new(size);
         (b.width, b.height)
     }
@@ -590,10 +587,13 @@ impl Game<'_> {
             } else {
                 InactivityFpsLimit::Afk
             },
-            iconified: self
-                .window
-                .as_ref()
-                .is_some_and(|w| w.is_minimized().unwrap_or(false)),
+            iconified: self.window.as_ref().map_or_else(
+                || {
+                    self.options.renderer.is_native()
+                        && self.renderer.size().is_some_and(|size| size.contains(&0))
+                },
+                |w| w.is_minimized().unwrap_or(false),
+            ),
             focused: self.focused,
             // Window.isExclusiveFullscreen.
             exclusive_fullscreen: self

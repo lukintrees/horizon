@@ -328,8 +328,8 @@ impl TerrainHudRenderer {
     pub fn resident_sections(&self) -> usize {
         self.world.section_count()
     }
-    pub fn size(&mut self) -> [u32; 2] {
-        self.world.backend_mut().context().size()
+    pub fn size(&self) -> [u32; 2] {
+        self.world.backend().context().size()
     }
 
     /// Convert all CPU GUI data first, so missing glint assets/unsupported portal materials do

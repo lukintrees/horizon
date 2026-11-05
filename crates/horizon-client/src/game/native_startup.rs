@@ -39,6 +39,14 @@ pub(super) fn initialize_with_context(
 }
 
 pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
+    game.gui.atlas.font.begin_frame();
+    game.glint_frame = game.capture_glint_frame();
+    game.observe_screen();
+    draw_menu(game)
+}
+
+/// Game::render has already prepared the frame and handled progress screens.
+pub(super) fn draw_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
     if game.renderer.backend() != Some(Backend::LegacyGl)
         || !game.options.renderer.is_native()
         || game.title.is_none()
@@ -48,24 +56,16 @@ pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
         || game.pending_entry.is_some()
         || game.pack_reload.is_some()
     {
-        return Err("native Game currently supports static menus only; world/loading/reload submission is not connected".into());
+        return Err("native Game world submission is not connected; only menu/progress screens are supported".into());
     }
-    game.gui.atlas.font.begin_frame();
-    game.glint_frame = game.capture_glint_frame();
-    game.observe_screen();
-    let size = game
-        .renderer
-        .facade(VisibleSections::default(), FrameOptions::default())
-        .ok_or("missing native Game renderer")?
-        .size();
+    let size = game.renderer.size().ok_or("missing native Game renderer")?;
+    if size.contains(&0) {
+        return Ok(FrameOutcome::Deferred);
+    }
     // The actual Game producer: includes the real Title, onboarding, widgets,
     // font, toasts and any supported GUI geometry. No synthetic preview UI.
     let hud = game.hud(size);
-    let menu = game.options.renderer.menu(&hud);
-    game.renderer
-        .facade(VisibleSections::default(), FrameOptions::default())
-        .ok_or("missing native Game renderer")?
-        .render_menu(&menu)
+    game.submit_menu_frame(&hud)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -91,7 +91,9 @@ fn run_inner(mut game: Game<'_>, loading_presentations: Option<LoadingEvidence>)
     let outcome = if bootstrap {
         render_menu(&mut game)?
     } else {
-        super::native_menu::run(&mut game)?
+        let result = super::native_menu::run(&mut game);
+        game.shut_down();
+        result?
     };
     if bootstrap {
         match (game.options.offscreen, outcome) {
@@ -134,7 +136,7 @@ fn run_inner(mut game: Game<'_>, loading_presentations: Option<LoadingEvidence>)
         });
         std::fs::write(path, serde_json::to_vec_pretty(&report)?)?;
     }
-    // No simulation/save/shut_down path was entered. Drop releases the native
-    // owner; do NOT persist a temporary renderer profile into player settings.
+    // World entry is still refused. Shutdown never persists the temporary
+    // renderer selection/profile into modern player settings.
     Ok(())
 }

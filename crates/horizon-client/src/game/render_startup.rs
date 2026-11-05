@@ -1,7 +1,6 @@
 //! Experimental startup selection. Native GL2 is NOT wgpu GraphicsApi::OpenGl.
 //! Bootstrap-only is deliberately a bounded diagnostic, not a playable mode.
 use super::{Options, Result};
-#[cfg(any(feature = "legacy-gl", test))]
 use horizon_client::renderer_facade::{MenuBackground, MenuFrame};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -21,14 +20,12 @@ impl Renderer {
     pub fn is_native(self) -> bool {
         self == Self::NativeGl2
     }
-    #[cfg(any(feature = "legacy-gl", test))]
     pub fn menu_background(self) -> MenuBackground {
         match self {
             Self::Modern => MenuBackground::Panorama,
             Self::NativeGl2 => MenuBackground::Static([0.025, 0.025, 0.025, 1.]),
         }
     }
-    #[cfg(any(feature = "legacy-gl", test))]
     pub fn menu<'a>(self, hud: &'a horizon_client::hud::HudBatch) -> MenuFrame<'a> {
         match self.menu_background() {
             MenuBackground::Panorama => super::loading_frame(hud),

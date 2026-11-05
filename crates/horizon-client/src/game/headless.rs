@@ -3,8 +3,8 @@
 //! winit's event loop needs a display server even when no window is shown, so a headless game
 //! runs this loop instead. Each step is what winit's `about_to_wait` does (`Game::idle`: stop
 //! requests, the closing save, world entry, the control socket), and `idle` runs the frame
-//! (the client tick, nothing drawn) through the same `RedrawRequested` path a window's game
-//! takes. Input comes only from the control socket (`horizon-ctl`), as synthetic window events.
+//! (the client tick, nothing drawn) directly through the same `frame_tick` a window's
+//! redraw takes. Input comes only from the control socket (`horizon-ctl`), as synthetic window events.
 
 use super::Game;
 use super::event_loop::EventLoopCtl;

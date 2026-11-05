@@ -92,8 +92,9 @@ Linux выбирает GLX + собственное X11 окно, Windows — WG
 `--offscreen` по-прежнему только с `--native-bootstrap-only`.
 
 `Game::hud` рисует тот же Title. Native adapter вызывает существующие Title hit tests,
-navigation/edit/scroll methods; focus loss/overflow сбрасывают held UI input. Minimize
-откладывает draw, restore не пересоздаёт context. Это menu pump, **не второй Game::idle**.
+navigation/edit/scroll methods; focus loss/minimize/overflow сбрасывают held UI input.
+Minimize откладывает draw, restore не пересоздаёт context. Pump вызывает общий
+`Game::idle`/`frame_tick`, **не вторую симуляцию или clock**.
 Поддержаны pointer/drag/scroll, базовые navigation keys, direct Unicode keysym text. Нет
 XIM/preedit/compose, clipboard shortcuts, gameplay bindings/relative mouse и полноценного
 options UI. World entry/подключение/options/external actions показывают существующий
@@ -156,7 +157,8 @@ Context-transfer/join flags независимы от числа показан�
 минимизированном окне оно может быть нулевым); smoke требует и flags, и положительный счётчик. Закрытие до Game construction пишет
 `scenario=native-game-loading-cancelled`, `game_constructed=false`, `worker_joined=true`;
 его нельзя выдавать за menu smoke. `--frames` считает только Game menu frames, не boot frames;
-loading timeout для limited run применяется до handoff, menu loop имеет собственный budget.
+loading timeout для limited run применяется до handoff; затем timeout проверяет
+общий `Game::idle` от `Game.started`, включая staging после Game construction.
 
 ### Воспроизводимый normal-resource smoke (не выполнен здесь)
 
@@ -228,3 +230,24 @@ OSMesa test через **glIsTexture/glIsBuffer** проверяет удале�
 names после cancel при всё ещё живом boot context, сохраняя boot texture/buffers и transient
 mesh reserve. Это renderer/window fixtures, не actual normal-assets Game acceptance.
 Публичный normal-resource smoke выше всё ещё не выполнен в этом sandbox; gates 1/2 открыты.
+
+## Общий frame/idle/save routing (MVP 3b, промежуточный seam)
+
+Winit redraw и direct headless/native кадры используют один `Game::frame_tick`:
+существующие clock/tick, frame counters/limits и facade screenshot completion.
+Native Close/Quit/stop идут через `begin_closing_save`/`poll_closing_save`;
+pending save замораживает direct frames, а windowless progress HUD использует
+owner facade. Save/pump/frame errors не превращаются в успешное завершение;
+после visible pump `Game::shut_down` вызывается также при ошибке.
+
+Обычный native интервал — 16 ms, без focus/при minimize — 32 ms. Pending OS messages
+не снимают cap; save deadlines могут сократить его, но не ниже 4 ms. Размер берётся
+из живого owner через read-only accessor, а zero-sized native progress откладывается
+до restore. Modern размер, panorama и offscreen outcome сохраняют прежнюю policy.
+
+Меню-only restriction находится в Game, включая deferred Title callbacks,
+pending entry/reload и reconnect. Controller polling native пока отключён до
+адаптера без fabricated winit IDs. World `Frame`, resident visibility, streaming
+и gameplay input ещё не соединены. Routing fixtures проверяют реальные методы
+с изолированными platform/storage dependencies; это **не Game world E2E** и
+не qualification Windows 7/X1650.

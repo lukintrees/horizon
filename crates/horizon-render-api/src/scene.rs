@@ -206,6 +206,10 @@ impl<B: RenderBackend> WorldScene<B> {
     pub fn atlas(&self) -> &AtlasLayout {
         &self.atlas
     }
+    /// Observe backend state (for example drawable size) without a mutable borrow.
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
     /// Compose GUI/hand views on the same backend after the world view. Resource
     /// IDs remain backend-validated, including those not owned by this scene.
     pub fn backend_mut(&mut self) -> &mut B {

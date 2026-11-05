@@ -73,8 +73,8 @@ impl RendererOwner {
     }
     /// The frame size the world producer needs before it can cull or lay out a
     /// frame. `None` while no device exists yet, as before the native route.
-    pub fn size(&mut self) -> Option<[u32; 2]> {
-        match &mut self.inner {
+    pub fn size(&self) -> Option<[u32; 2]> {
+        match &self.inner {
             Owner::Empty => None,
             Owner::Modern(renderer) => Some([renderer.config.width, renderer.config.height]),
             #[cfg(feature = "legacy-gl")]

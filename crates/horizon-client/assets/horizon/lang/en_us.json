@@ -1,4 +1,5 @@
 {
+  "horizon.renderer.native_menu_only": "Native GL2 is currently menu-only. World entry, options, packs and external actions are not connected; no world was opened.",
   "horizon.options.controller": "Controller",
   "horizon.options.three_d_skin_layers": "3D Skin Layers",
   "horizon.options.vibration": "Vibration",

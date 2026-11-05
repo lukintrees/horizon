@@ -788,6 +788,9 @@ impl Game<'_> {
         cookies: Option<horizon_client::net::Cookies>,
         lan: bool,
     ) -> Result<()> {
+        if self.options.renderer.is_native() {
+            return self.native_menu_only();
+        }
         super::world_loading::preload_server_loot(&self.options.resources);
         if self.defer_world_entry(super::PendingWorldEntry::Server {
             address: address.to_owned(),

@@ -484,3 +484,42 @@ proven separately from any presentation count. Shader/CPU/driver operations rema
 non-preemptive; normal-assets runtime, hard frame-time guarantees, playable world/save and
 Win7/X1650 acceptance are not inferred from fixture/CI results. See
 [checkpoint/report semantics and test boundaries](legacy-gl-native-bootstrap.md#mvp-2c-event-aware-gpu-staging-и-atomic-final-publication).
+## 19. MVP 3b: общий Game frame/idle/save routing
+
+`Game::frame_tick` теперь содержит прежнее тело winit redraw. Native/headless
+loop вызывают его через существующий `Game::idle`, без synthetic redraw IDs и
+второго clock/frame-limit implementation. Native pump сохраняет bounded cadence
+(16/32 ms; save deadline минимум 4 ms даже при pending messages) и сбрасывает
+held UI input при focus/minimize/lost-event. Native pads пока не опрашиваются:
+их menu input ещё зависит от winit events.
+
+Loading/file-fixer/reload/save HUDs отправляются через owning facade с explicit
+menu policy. Modern panorama и `Offscreen` completion сохраняются; native
+minimize возвращает `Deferred`, не ошибку zero-sized HUD. Read-only chain
+`WorldScene::backend` → `TerrainHudRenderer::size` → `RendererOwner::size` не
+кэширует размер и не создаёт новое окно/backend; это compatible v1 addition.
+
+Native Close/Quit/stop используют существующую durable save machine. Ошибка
+остается ошибкой, save ownership не выбрасывается, visible pump termination
+вызывает `Game::shut_down` и при ошибке. Native world/options/reconnect/deferred
+entry/reload policy централизована в Game до неподключённых side effects.
+
+`tests/test_game_loop_routing.py` компилирует реальные idle/title/resume/menu
+методы с изолированными platform/storage/frame-boundary dependencies; focused
+CI запускает его отдельно от actual Game library tests. Он проверяет routing,
+refusal и error/completion outcomes, **не** реальные world writes/rendering.
+Normal-resource Game не запускался; world submission/visibility/streaming/input,
+runtime gates 1/2/3 и Win7/X1650 qualification остаются открытыми.
+
+Локальная проверка этого increment (изолированные Python-created homes, исходники
+стабильны): default/native `cargo check` и оба client Clippy `-D warnings` прошли;
+2 event-loop + 2 headless + 7 startup tests в каждом профиле, filtered
+`game::native_` — 124 passed/2 ignored, standalone render-api — 46 passed.
+`pr_ready.py --quick --base 91488af43` прошёл public tree/fmt/Clippy/doc checks,
+но **не green**: 2382 Rust tests passed, неизменённый
+`lan::io_pool::tests::a_close_ends_a_disconnect_the_client_does_not_take` failed
+(`still writing`, также 3/3 isolated reruns); Python — 689 run, один
+`WinError 1314` при создании symlink в неизменённом vendor-security test.
+Защитные тесты не ослаблены. Исходный WSL checkout дал 15 failures/1 error из-за
+CRLF shell scripts/hooks и shebang `python3\r`; это не Game runtime evidence.
+Новый commit требует собственного aggregate CI, а не результатов `91488af43`.

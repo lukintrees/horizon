@@ -114,15 +114,32 @@ Reproducer: `tools/native_game_menu_smoke.py` с собственными normal
 чтобы спросить frustum, а без него не построить CPU visibility ни для entities,
 ни для sections. Поведение modern owner не изменилось.
 
+Продолжение 3b: существующее тело winit `RedrawRequested` вынесено в общий
+`Game::frame_tick`. Native pump теперь вызывает `Game::idle`, как headless loop;
+он больше не ведёт отдельные frame counters/timeout и не обходит closing-save.
+Close/Quit/stop запускают существующий save state machine, progress HUD идёт через
+owner facade, а видимый native выход вызывает `Game::shut_down` и при ошибке pump.
+Loading/file-fixer/reload HUDs используют тот же menu submission; modern сохраняет
+panorama и offscreen completion, native явно выбирает static background.
+Размер drawable теперь читается через `&self`, без отдельного кэша размеров/окна.
+
+Native cadence ограничена 16 ms при activity и 32 ms без focus/при minimize,
+включая очередь pending OS messages; короткий save deadline может снизить интервал
+до 4 ms, но не разрешает busy-spin. Focus/minimize/lost-event сбрасывают held UI
+input. Native controller polling пока отключён: его menu adapter ещё генерирует
+winit events с synthetic IDs. World entry/options/reconnect/deferred requests
+по-прежнему отказывают в общем Game до неподключённых side effects. Это **seam,
+не runtime acceptance**: normal-resource Game и мир здесь ещё не запускались.
+
 Следующие seam'ы по порядку:
 1. Resident section keys у legacy owner → `VisibleSections` (frustum по AABB
-   секции 16³ и distance; cave graph современного renderer'а пока не
-   переносится — это оптимизация, не корректность) и submission кадра в
-   facade. Без этого native frame рисует небо/entities без terrain.
-2. Native loop: `idle`-эквивалент (world entry, save-on-close, control) и
-   frame tick вместо menu-only pump; loading/progress screens через facade.
+    секции 16³ и distance; cave graph современного renderer'а пока не
+    переносится — это оптимизация, не корректность), с caller-owned order.
+2. Existing world `Frame` → facade, live camera/lightmap/animations и CPU poses;
+   снять world-entry guard только вместе с working native world submission.
+   Без resident visibility такой кадр нарисовал бы небо/entities без terrain.
 3. Streaming: upload/unload в `update_world` через facade для legacy owner
-   (сейчас весь блок под `modern_mut()`); tickets W01a уже в ветке.
+    (сейчас весь блок под `modern_mut()`); tickets W01a уже в ветке.
 4. Gameplay input (WASD/jump/capture/Escape) на native pump.
 
 **Выход:** игрок ходит по настоящему миру; chunks появляются и выгружаются в движении.

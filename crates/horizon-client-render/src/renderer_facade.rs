@@ -62,8 +62,8 @@ impl<'a> RendererFacade<'a> {
             Adapter::Legacy { renderer, .. } => renderer.poll_events().map_err(Into::into),
         }
     }
-    pub fn size(&mut self) -> [u32; 2] {
-        match &mut self.inner {
+    pub fn size(&self) -> [u32; 2] {
+        match &self.inner {
             Adapter::Modern(renderer) => [renderer.config.width, renderer.config.height],
             #[cfg(feature = "legacy-gl")]
             Adapter::Legacy { renderer, .. } => renderer.size(),

@@ -1,6 +1,6 @@
 //! The save screen freezes simulation, but keeps pumping window events while
 //! snapshots are prepared in small batches and the region workers drain.
-use super::{Game, loading_frame};
+use super::Game;
 use horizon_client::{Result, hud::HudBatch};
 use std::{
     collections::{HashSet, VecDeque},
@@ -258,10 +258,11 @@ impl Game<'_> {
             )
             .without_navigation()
         });
-        let Some(renderer) = self.renderer.modern_mut() else {
+        let Some(size) = self.renderer.size() else {
             return Ok(());
         };
-        let mut hud = HudBatch::new(horizon_client::renderer_facade::drawable_size(renderer));
+        self.gui.atlas.font.begin_frame();
+        let mut hud = HudBatch::new(size);
         let progress = match self.pending_save.as_ref().map(|save| &save.stage) {
             Some(Stage::Chunks(_)) => 0.25,
             Some(Stage::Entities(_)) => 0.5,
@@ -271,10 +272,10 @@ impl Game<'_> {
         horizon_client::level_loading::draw_progress(
             &mut hud,
             &self.gui.atlas,
-            "Saving world...",
+            &horizon_client::lang::get("menu.savingLevel"),
             progress,
         );
-        horizon_client::renderer_facade::render_menu_modern(renderer, &loading_frame(&hud))?;
+        self.submit_menu_frame(&hud)?;
         Ok(())
     }
 }
