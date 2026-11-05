@@ -80,6 +80,24 @@ impl<'a> RendererFacade<'a> {
             },
         }
     }
+    /// Explicit native resource-owner tick. Modern samples within its draw path
+    /// and rejects this maintenance command rather than advancing twice.
+    pub fn advance_animations(
+        &mut self,
+        generation: horizon_render_api::render_contract::ResourceGeneration,
+        tick: u64,
+    ) -> Result<usize> {
+        match &mut self.inner {
+            Adapter::Modern(_) => {
+                let _ = (generation, tick);
+                Err("modern animation clock belongs to frame submission".into())
+            }
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer
+                .advance_animations(generation, tick)
+                .map_err(Into::into),
+        }
+    }
     /// Modern render already presents internally. Legacy submits then presents
     /// once; offscreen success is distinct from a displayed window frame.
     pub fn render(&mut self, frame: &Frame<'_>) -> Result<FrameOutcome> {

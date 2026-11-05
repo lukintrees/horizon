@@ -18,6 +18,7 @@ use horizon_render_api::{
     scene::{Phase, SceneFrame, SectionKey, WorldScene},
 };
 
+mod animation;
 mod asset_snapshot;
 #[cfg(test)]
 pub(crate) use asset_snapshot::tests::assets as test_assets;
@@ -32,6 +33,12 @@ mod weather;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
+    pub animation_sprites: usize,
+    pub animation_frames: usize,
+    /// Conservatively charged shared RGBA source frames (not duplicated).
+    pub animation_source_bytes: usize,
+    /// Changed pixels plus one padded terrain sprite or decoded HUD pages.
+    pub animation_staging_bytes: usize,
     /// Combined source + icon RGBA buffers, excluding PNG codec overhead.
     pub screenshot_bytes: usize,
     pub gpu: Budget,
@@ -55,6 +62,10 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            animation_sprites: 4096,
+            animation_frames: 65536,
+            animation_source_bytes: 32 << 20,
+            animation_staging_bytes: 8 << 20,
             screenshot_bytes: 16 << 20,
             gpu: Budget::default(),
             sections: 1024,
@@ -122,6 +133,7 @@ pub struct TerrainHudRenderer {
     limits: Limits,
     game_layout: Option<crate::chunk::ColumnLayout>,
     resource_generation: Option<horizon_render_api::render_contract::ResourceGeneration>,
+    animations: animation::Animations,
     screen: screen::Resources,
     pub(crate) screenshots: screenshot::State,
 }
@@ -190,6 +202,7 @@ impl TerrainHudRenderer {
             limits,
             game_layout: None,
             resource_generation: None,
+            animations: animation::Animations::default(),
             screen: screen::Resources::default(),
             screenshots: screenshot::State::new(limits.screenshot_bytes),
         })
@@ -359,6 +372,7 @@ impl TerrainHudRenderer {
         visible: frame::VisibleSections<'_>,
         options: frame::Options,
     ) -> Result<(), String> {
+        self.animations.ready()?;
         let size = self.size();
         let prepared = frame::Prepared::new(source, size, visible, self.limits, options)
             .map_err(|error| error.to_string())?;
@@ -402,6 +416,7 @@ impl TerrainHudRenderer {
         precipitation: (&[crate::weather::Vertex], crate::weather::Time),
         sky_source: Option<&crate::gfx::Frame<'_>>,
     ) -> Result<(), String> {
+        self.animations.ready()?;
         let sky = sky_source
             .map(|source| sky::Prepared::new(source, self.size(), self.limits))
             .transpose()?;

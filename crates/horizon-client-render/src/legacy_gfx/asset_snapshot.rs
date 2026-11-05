@@ -137,13 +137,14 @@ impl TerrainHudRenderer {
     ) -> Result<StagedAssetRenderer<'a>, String> {
         let font_epoch = hud.font.epoch();
         let snapshot = AssetSnapshot::new(assets, hud, generation, preparation.base_bytes)?;
-        let renderer = Self::from_resources(
+        let mut renderer = Self::from_resources(
             context,
             &snapshot.resources(),
             lightmap,
             limits,
             preparation,
         )?;
+        renderer.install_animations(assets, hud)?;
         Ok(StagedAssetRenderer {
             renderer,
             hud,
