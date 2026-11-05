@@ -24,6 +24,8 @@ mod asset_snapshot;
 pub(crate) use asset_snapshot::tests::assets as test_assets;
 pub use asset_snapshot::{AssetSnapshot, StagedAssetRenderer};
 pub mod frame;
+mod reload;
+pub use reload::StagedAssetReload;
 mod resources;
 pub use resources::ResourceLimits;
 mod screen;

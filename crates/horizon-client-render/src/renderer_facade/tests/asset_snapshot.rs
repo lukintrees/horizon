@@ -132,5 +132,32 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
     .unwrap();
     let image = renderer.read_rgba([0, 0, 64, 64]).unwrap();
     assert!(image.as_chunks::<4>().0.contains(&[255; 4]));
+    let epoch = atlas.font.epoch();
+    renderer
+        .stage_reload_assets(
+            &assets,
+            &atlas,
+            ResourceGeneration(77),
+            ResourceGeneration(78),
+            0,
+            preparation,
+        )
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert_ne!(atlas.font.epoch(), epoch);
+    assert!(atlas.font.take_patches().is_empty());
+    let mut rebuilt = HudBatch::new([64; 2]);
+    rebuilt.text(&atlas, "Ж", 8., 8., u32::MAX, false);
+    assert_eq!(rebuilt.patches.len(), 1);
+    RendererFacade::legacy(
+        &mut renderer,
+        frame::VisibleSections::default(),
+        frame::Options::default(),
+    )
+    .render_menu(&MenuFrame::static_color(&rebuilt, [0., 0., 0., 1.]))
+    .unwrap();
+    let image = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+    assert!(image.as_chunks::<4>().0.contains(&[255; 4]));
     assert_eq!(renderer.resident_sections(), 0);
 }

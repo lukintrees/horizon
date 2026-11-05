@@ -4,6 +4,7 @@ use std::ffi::{c_char, c_void};
 use std::ops::Deref;
 use std::rc::Rc;
 
+#[derive(Clone)]
 pub(crate) enum ContextHandle<'a> {
     Borrowed(&'a Context),
     Owned(Rc<Context>),

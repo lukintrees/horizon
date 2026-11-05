@@ -75,6 +75,27 @@ impl TerrainHudRenderer {
     ) -> Result<Self, String> {
         let terrain = prepare(resources, lightmap, limits, preparation)?;
         let backend = Renderer::owned(context, limits.gpu)?;
+        Self::from_terrain(backend, terrain, resources, lightmap, limits)
+    }
+
+    pub(super) fn from_resources_backend(
+        backend: Renderer<'static>,
+        resources: &Resources<'_>,
+        lightmap: &[u8],
+        limits: Limits,
+        preparation: ResourceLimits,
+    ) -> Result<Self, String> {
+        let terrain = prepare(resources, lightmap, limits, preparation)?;
+        Self::from_terrain(backend, terrain, resources, lightmap, limits)
+    }
+
+    fn from_terrain(
+        backend: Renderer<'static>,
+        terrain: TerrainAtlas<'_>,
+        resources: &Resources<'_>,
+        lightmap: &[u8],
+        limits: Limits,
+    ) -> Result<Self, String> {
         let world = WorldScene::new_paged(
             backend,
             terrain.layout().clone(),

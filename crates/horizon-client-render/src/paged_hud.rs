@@ -32,6 +32,16 @@ impl Backing {
             limit,
         })
     }
+    pub fn compressed_bytes(&self) -> usize {
+        self.bytes
+    }
+    pub fn set_limit(&mut self, limit: usize) -> Result<(), String> {
+        if self.bytes > limit {
+            return Err("HUD backing limit below resident bytes".into());
+        }
+        self.limit = limit;
+        Ok(())
+    }
     pub fn layout(&self) -> Layout {
         self.layout
     }
@@ -197,6 +207,19 @@ impl Backing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn backing_limit_changes_are_checked_before_mutation() {
+        let layout = Layout::new([3, 1], 4, 2).unwrap();
+        let mut backing = Backing::new(layout, &[255; 12], 1024).unwrap();
+        let bytes = backing.compressed_bytes();
+        assert!(backing.set_limit(bytes - 1).is_err());
+        assert_eq!(backing.limit, 1024);
+        backing.set_limit(bytes).unwrap();
+        assert_eq!(backing.limit, bytes);
+        assert_eq!(backing.load(0).unwrap(), vec![255; 64]);
+        backing.set_limit(2048).unwrap();
+        assert_eq!(backing.limit, 2048);
+    }
     #[test]
     fn bridge_backing_edits_both_gutters_and_retains_unmodified_texels() {
         let layout = Layout::new([3, 1], 4, 2).unwrap();

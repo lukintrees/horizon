@@ -23,6 +23,8 @@ struct Sprite {
 pub(super) struct Animations {
     sprites: Vec<Sprite>,
     failed: bool,
+    source_bytes: usize,
+    source_frames: usize,
 }
 struct Work {
     terrain: Vec<(usize, Vec<u8>)>,
@@ -141,7 +143,12 @@ impl Animations {
                     .ok_or("animation shared source-byte budget exceeded")?;
             }
         }
+        result.source_bytes = source;
+        result.source_frames = frames;
         Ok(result)
+    }
+    pub(super) fn usage(&self) -> [usize; 3] {
+        [self.sprites.len(), self.source_frames, self.source_bytes]
     }
     pub(super) fn ready(&self) -> Result<(), String> {
         if self.failed {

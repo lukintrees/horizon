@@ -92,6 +92,7 @@ pub struct Renderer<'a> {
     textures: HashMap<TextureId, Texture>,
     meshes: HashMap<MeshId, Mesh>,
     budget: Budget,
+    object_limits: [usize; 2],
     stats: Stats,
     max_texture: u32,
 }
@@ -192,6 +193,7 @@ impl<'a> Renderer<'a> {
             textures: HashMap::new(),
             meshes: HashMap::new(),
             budget,
+            object_limits: [4096, 65536],
             stats: Stats::default(),
             max_texture: max_texture as u32,
         };
@@ -243,9 +245,42 @@ impl<'a> Renderer<'a> {
         Stats {
             texture_bytes: self.budget.texture_bytes - self.stats.texture_bytes,
             mesh_bytes: self.budget.mesh_bytes - self.stats.mesh_bytes,
-            textures: 4096 - self.stats.textures,
-            meshes: 65536 - self.stats.meshes,
+            textures: self.object_limits[0] - self.stats.textures,
+            meshes: self.object_limits[1] - self.stats.meshes,
         }
+    }
+
+    /// A private object namespace on the SAME context/window, limited to this
+    /// owner's unoccupied payload/object capacity. The caller must freeze this
+    /// owner until the candidate is dropped or published (the client reload
+    /// guard enforces that with an exclusive borrow). Not a global GL ledger.
+    /// Shader/program/driver overhead is not part of the payload budget.
+    pub fn staging_replacement(&self) -> Result<Self, String> {
+        let free = self.remaining();
+        let mut candidate = Self::from_context(
+            self.gl.context.clone(),
+            Budget {
+                texture_bytes: free.texture_bytes,
+                mesh_bytes: free.mesh_bytes,
+            },
+        )?;
+        candidate.object_limits = [free.textures, free.meshes];
+        Ok(candidate)
+    }
+
+    /// Explicit owner budget policy, checked before mutation. Promotion after a
+    /// staged replacement is prepared must not allocate until the old owner has
+    /// been dropped. Object limits return to the normal backend hard caps.
+    pub fn set_budget(&mut self, budget: Budget) -> Result<(), String> {
+        if self.stats.texture_bytes > budget.texture_bytes
+            || self.stats.mesh_bytes > budget.mesh_bytes
+        {
+            return Err("new resource budget is below resident usage".into());
+        }
+        self.gl.context.make_current()?;
+        self.budget = budget;
+        self.object_limits = [4096, 65536];
+        Ok(())
     }
 
     fn check(&self) -> Result<(), String> {
@@ -264,7 +299,7 @@ impl<'a> Renderer<'a> {
         layout: MeshLayout,
         base: impl Fn(&T) -> &Vertex,
     ) -> Result<MeshId, String> {
-        if self.stats.meshes >= 65536 {
+        if self.stats.meshes >= self.object_limits[1] {
             return Err("mesh object limit exceeded".into());
         }
         if vertices.is_empty()
@@ -409,7 +444,7 @@ impl RenderBackend for Renderer<'_> {
     type Error = String;
     fn create_texture(&mut self, image: Image<'_>) -> Result<TextureId, String> {
         let bytes = bytes(&image)?;
-        if self.stats.textures >= 4096 {
+        if self.stats.textures >= self.object_limits[0] {
             return Err("texture object limit exceeded".into());
         }
         if [image.width, image.height]
