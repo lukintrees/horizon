@@ -15462,7 +15462,7 @@ impl Game<'_> {
                         upgrade,
                         self.cursor,
                     );
-                    return horizon_client::renderer_facade::render_modern(
+                    return horizon_client::renderer_facade::render_menu_modern(
                         renderer,
                         &loading_frame(&hud),
                     );
@@ -15505,7 +15505,7 @@ impl Game<'_> {
                     Some(&status),
                     progress,
                 );
-                return horizon_client::renderer_facade::render_modern(
+                return horizon_client::renderer_facade::render_menu_modern(
                     renderer,
                     &loading_frame(&hud),
                 );
@@ -15525,7 +15525,7 @@ impl Game<'_> {
                     loader.progress.line(),
                     loader.progress.fraction(),
                 );
-                return horizon_client::renderer_facade::render_modern(
+                return horizon_client::renderer_facade::render_menu_modern(
                     renderer,
                     &loading_frame(&hud),
                 );
@@ -15545,7 +15545,7 @@ impl Game<'_> {
                     reload.progress.fraction(),
                     self.settings.file.bool("darkMojangStudiosBackground"),
                 );
-                return horizon_client::renderer_facade::render_modern(
+                return horizon_client::renderer_facade::render_menu_modern(
                     renderer,
                     &loading_frame(&hud),
                 );
@@ -20588,83 +20588,8 @@ fn hwnd(window: &Window) -> Option<isize> {
     }
 }
 
-fn loading_frame(hud: &HudBatch) -> Frame<'_> {
-    Frame {
-        weather: &[],
-        weather_time: horizon_client::weather::Time::new(0, 0.0),
-        camera: glam::DVec3::new(0.5, 100.0, 0.5),
-        yaw: 0.0,
-        pitch: 10.0,
-        fov_degrees: 85.0,
-        eye: glam::DVec3::new(0.5, 100.0, 0.5),
-        eye_rotation: [0.0, 10.0],
-        first_person: true,
-        bob: glam::Mat4::IDENTITY,
-        spin: glam::Mat4::IDENTITY,
-        sky: horizon_client::environment::Sky::default(),
-        shadow_scene_revision: (0, 0),
-        shadow_cache: false,
-        distance: 12.0,
-        detail_distance: 12.0,
-        depth_far: 1000.0,
-        underwater: false,
-        water_plane: None,
-        cave_culling: false,
-        title: true,
-        sky_blocked: false,
-        skybox: false,
-        end_sky: false,
-        end_sky_sprite: None,
-        environment_fog: None,
-        water_fog: [0.0; 3],
-        fog: None,
-        dark_disc: false,
-        outline: Vec::new(),
-        outline_after_terrain: false,
-        outline_high_contrast: false,
-        debug_lines: &[],
-        debug_lines_on_top: &[],
-        debug_crosshair: &[],
-        hud,
-        glint_alpha: 0.75,
-        glint_ticks: 0.0,
-        nether_lighting: false,
-        entities: &[],
-        static_block_entities: &[],
-        visible_static_block_entity_sections: &[],
-        static_block_entity_stats: Default::default(),
-        entity_motion: &[],
-        entity_spans: &[],
-        skin: None,
-        glowing: &[],
-        dynamic_lights: &[],
-        colored_lights: &[],
-        emissive_layers: &[],
-        clouds: None,
-        lightning: Default::default(),
-        additive: &[],
-        see_through: &[],
-        shadow_only: &[],
-        celestial: &[],
-        stars: None,
-        hand: &[],
-        hand_fov_degrees: 70.0,
-        screen: &[],
-        pack: Default::default(),
-        border: None,
-        game_time: 0.0,
-        shader_game_time: 0.0,
-        end_portal_sprites: [[0.0; 4]; 2],
-        crumbling_sprite: [0.0; 4],
-        ticks: 0,
-        darkness: (0.0, 0.0),
-        night_vision: 0.0,
-        block_flicker: 0.0,
-        boss_darken: 0.0,
-        chunk_fade: 0.0,
-        post_effects: horizon_client::post_chain::Request::none(),
-        menu_blur: None,
-    }
+fn loading_frame(hud: &HudBatch) -> horizon_client::renderer_facade::MenuFrame<'_> {
+    horizon_client::renderer_facade::MenuFrame::panorama(hud, 0., 10.)
 }
 
 /// The post-load setup once the resources are ready: `Game::new` and the
@@ -21103,7 +21028,7 @@ impl Loading {
             self.settings.file.double("panoramaScrollSpeed") as f32,
         );
         if let Some(renderer) = &mut self.renderer {
-            match horizon_client::renderer_facade::render_modern(renderer, &frame) {
+            match horizon_client::renderer_facade::render_menu_modern(renderer, &frame) {
                 Ok(true) if self.gui.is_some() && self.menu.pending.is_none() => {
                     self.title_drawn = true;
                     self.menu.perf.title_shown()

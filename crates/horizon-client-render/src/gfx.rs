@@ -6149,19 +6149,38 @@ impl Renderer {
         self.offscreen.is_some()
     }
     pub fn render(&mut self, frame: &Frame) -> Result<bool> {
+        self.render_with_menu(frame, None)
+    }
+    /// Explicit static menu; retain the title-only draw path without drawing
+    /// panorama or resident world sections. No persistent renderer override.
+    pub(crate) fn render_static_menu(&mut self, frame: &Frame, clear: [f32; 4]) -> Result<bool> {
+        if !frame.title
+            || !horizon_render_api::render_contract::MenuBackground::Static(clear).valid()
+        {
+            return Err("invalid static menu frame".into());
+        }
+        self.render_with_menu(frame, Some(clear))
+    }
+    fn render_with_menu(&mut self, frame: &Frame, menu_clear: Option<[f32; 4]>) -> Result<bool> {
         // A lost device cannot accept uploads either. Leave recovery to the
         // owner instead of submitting atlas patches to the invalid device.
         if self.device_lost() {
             return Err("the graphics device was lost".into());
         }
         if let Some(request) = self.capture.take() {
-            let result = self.write_capture(&request, frame);
-            self.capture_result = Some(result.map_err(|e| e.to_string()));
+            // The scene-capture format has no static-menu background field yet;
+            // never serialize a static image as a replayable panorama capture.
+            self.capture_result = Some(if menu_clear.is_some() {
+                Err("static menu scene capture is not supported".into())
+            } else {
+                self.write_capture(&request, frame)
+                    .map_err(|e| e.to_string())
+            });
         }
         let scaled = self.screenshot_size();
         let rendered = match scaled {
-            Some(size) => self.draw_scaled_frame(frame, size),
-            None => self.draw_frame(frame, None),
+            Some(size) => self.draw_scaled_frame(frame, size, menu_clear),
+            None => self.draw_frame(frame, None, menu_clear),
         };
         // A frame that was not drawn still submits the section copies and
         // atlas patches (glyphs, skins, maps), which the caller already took.
@@ -6220,7 +6239,12 @@ impl Renderer {
     /// every pass sizes itself by `config`, which says `size` for this frame, the HUD
     /// keeps its layout at a larger scale, and the world is drawn at `size` (a Resolution
     /// Scale below 100% stays as low). The window keeps its last frame.
-    fn draw_scaled_frame(&mut self, frame: &Frame, size: [u32; 2]) -> Result<bool> {
+    fn draw_scaled_frame(
+        &mut self,
+        frame: &Frame,
+        size: [u32; 2],
+        menu_clear: Option<[f32; 4]>,
+    ) -> Result<bool> {
         let window = [self.config.width, self.config.height];
         let mut config = self.config.clone();
         [config.width, config.height] = size;
@@ -6249,7 +6273,7 @@ impl Renderer {
         let offscreen = self.offscreen.replace(target);
         let window_depth = std::mem::replace(&mut self.depth, depth);
         // The frame's own targets at `size` can run out of memory too.
-        let drawn = self.draw_frame(frame, Some(GpuChecks::push(&self.device)));
+        let drawn = self.draw_frame(frame, Some(GpuChecks::push(&self.device)), menu_clear);
         self.depth = window_depth;
         self.offscreen = offscreen;
         self.hdr = hdr;
@@ -6260,7 +6284,12 @@ impl Renderer {
         drawn
     }
     /// `checks`: the error scopes of a scaled screenshot's frame, checked before its PNG is written.
-    fn draw_frame(&mut self, frame: &Frame, checks: Option<GpuChecks>) -> Result<bool> {
+    fn draw_frame(
+        &mut self,
+        frame: &Frame,
+        checks: Option<GpuChecks>,
+        menu_clear: Option<[f32; 4]>,
+    ) -> Result<bool> {
         // Its steps as spans (HORIZON_SPIKES): each lap names the step that just ended.
         let mut laps = crate::spans::laps();
         let landing = Instant::now();
@@ -6462,7 +6491,7 @@ impl Renderer {
             frame.camera,
         );
         let jittered = jitter * view_proj;
-        if frame.title {
+        if frame.title && menu_clear.is_none() {
             self.panorama.prepare(
                 &self.device,
                 &self.queue,
@@ -8077,7 +8106,7 @@ impl Renderer {
             .then(|| self.pack_post.as_ref().and_then(|p| p.1.as_ref()))
             .flatten()
             .and_then(|p| p.sky_clear());
-        let clear = if let Some([r, g, b, a]) = pack_sky_clear {
+        let clear = if let Some([r, g, b, a]) = menu_clear.or(pack_sky_clear) {
             wgpu::Color {
                 r: f64::from(r),
                 g: f64::from(g),
@@ -8483,8 +8512,10 @@ impl Renderer {
                     }
                 }
                 if frame.title {
-                    self.panorama.draw(&mut pass);
-                    pass.set_bind_group(0, &self.group, &[]);
+                    if menu_clear.is_none() {
+                        self.panorama.draw(&mut pass);
+                        pass.set_bind_group(0, &self.group, &[]);
+                    }
                 } else if celestial_vertices > 0 || frame.end_sky {
                     pass.set_pipeline(&self.celestial_pipeline);
                     pass.set_bind_group(0, &self.entity_group, &[]);

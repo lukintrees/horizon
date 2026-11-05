@@ -18,6 +18,8 @@ use crate::{
 use glam::{DVec3, Mat4};
 
 pub mod lightning;
+pub mod menu;
+pub use menu::{MenuBackground, MenuFrame};
 pub mod pack;
 pub mod skin;
 

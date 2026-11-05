@@ -4,7 +4,7 @@
   "sources": [
     {
       "path": "crates/horizon-client/src/game.rs",
-      "sha256": "0bccd36e4f052bcba78a009fc7d2f15b800ef88dca173d7f56a06738c19b9afd",
+      "sha256": "05e06090e5e7729afe3be5bd5377d81d432fbd32cac36fa1af32ee89528b7f52",
       "references": [
         {
           "line": 374,
@@ -1034,147 +1034,147 @@
           "code": "Ok(renderer)"
         },
         {
-          "line": 20882,
+          "line": 20807,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "renderer: Option<Renderer>,"
         },
         {
-          "line": 20982,
+          "line": 20907,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let boot_step = startup::step(\"renderer.boot\");"
         },
         {
-          "line": 20991,
+          "line": 20916,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok(r) => self.renderer = Some(r),"
         },
         {
-          "line": 21038,
+          "line": 20963,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = &mut self.renderer"
         },
         {
-          "line": 21040,
+          "line": 20965,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(renderer).release_surface()"
         },
         {
-          "line": 21042,
+          "line": 20967,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "log::warn!(\"Horizon: cannot hand the menu renderer's surface over: {error}\");"
         },
         {
-          "line": 21045,
+          "line": 20970,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let _step = startup::step(\"renderer.title_artwork\");"
         },
         {
-          "line": 21051,
+          "line": 20976,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.as_ref(),"
         },
         {
-          "line": 21056,
+          "line": 20981,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer = Some(r);"
         },
         {
-          "line": 21091,
+          "line": 21016,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 21093,
+          "line": 21018,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map(|r| [r.config.width, r.config.height])"
         },
         {
-          "line": 21105,
+          "line": 21030,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = &mut self.renderer {"
         },
         {
-          "line": 21106,
+          "line": 21031,
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": "match horizon_client::renderer_facade::render_modern(renderer, &frame) {"
+          "code": "match horizon_client::renderer_facade::render_menu_modern(renderer, &frame) {"
         },
         {
-          "line": 21134,
+          "line": 21059,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(renderer) = &mut self.renderer {"
         },
         {
-          "line": 21135,
+          "line": 21060,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "horizon_client::renderer_facade::RendererFacade::modern(renderer).release_surface()?;"
         },
         {
-          "line": 21138,
+          "line": 21063,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let renderer = startup::time(\"renderer.world\", || {"
         },
         {
-          "line": 21144,
+          "line": 21069,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer.as_ref(),"
         },
         {
-          "line": 21152,
+          "line": 21077,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "\"Horizon: world renderer ready after {} ms\","
         },
         {
-          "line": 21187,
+          "line": 21112,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "game.renderer = Some(renderer);"
         },
         {
-          "line": 21201,
+          "line": 21126,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "\"Horizon: startup handoff {} ms (renderer {} ms, start_game {} ms)\","
         },
         {
-          "line": 21338,
+          "line": 21263,
           "kinds": [
             "owner/factory/reference"
           ],
@@ -2345,7 +2345,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/no_resources.rs",
-      "sha256": "963289f47c8979a363ba7f6f3447f6316f1bc507b5caee8d01e68ab8a3760009",
+      "sha256": "ed57fb7121d157824cef47cd4c6a1aeef502d62b41d502b9d6b8b05f0ec30722",
       "references": [
         {
           "line": 11,
@@ -2387,38 +2387,38 @@
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": "match horizon_client::renderer_facade::render_modern(renderer, &loading_frame(&batch)) {"
+          "code": "match horizon_client::renderer_facade::render_menu_modern(renderer, &loading_frame(&batch))"
         },
         {
-          "line": 105,
+          "line": 106,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let renderer = loading_renderer("
         },
         {
-          "line": 113,
+          "line": 114,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok((window, renderer))"
         },
         {
-          "line": 116,
+          "line": 117,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "Ok((window, renderer)) => {"
         },
         {
-          "line": 119,
+          "line": 120,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "self.renderer = Some(renderer);"
         },
         {
-          "line": 135,
+          "line": 136,
           "kinds": [
             "owner/factory/reference"
           ],

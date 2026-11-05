@@ -65,7 +65,8 @@ impl Missing {
         let Some(renderer) = &mut self.renderer else {
             return;
         };
-        match horizon_client::renderer_facade::render_modern(renderer, &loading_frame(&batch)) {
+        match horizon_client::renderer_facade::render_menu_modern(renderer, &loading_frame(&batch))
+        {
             Ok(true) => return,
             Ok(false) => {}
             Err(e) => log::warn!("Horizon: frame failed: {e}"),

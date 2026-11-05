@@ -94,6 +94,7 @@ mod tests {
 /// profile. Native device limits are validated by the native context/backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
+    StaticMenu,
     Panorama,
     GpuPoses,
     ShaderPacks,
@@ -135,4 +136,39 @@ pub struct ScreenshotRequest {
     pub path: std::path::PathBuf,
     pub size: Option<[u32; 2]>,
     pub scaled: bool,
+}
+
+/// Explicit menu policy, selected by the producer (not an adapter downgrade).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MenuBackground {
+    Panorama,
+    /// Gamma-encoded SDR framebuffer RGBA (non-sRGB target), finite in 0..=1.
+    Static([f32; 4]),
+}
+impl MenuBackground {
+    pub fn valid(self) -> bool {
+        match self {
+            Self::Panorama => true,
+            Self::Static(color) => color
+                .into_iter()
+                .all(|v| v.is_finite() && (0.0..=1.0).contains(&v)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+    #[test]
+    fn explicit_backgrounds_validate_without_clamping_or_downgrading() {
+        assert!(MenuBackground::Panorama.valid());
+        assert!(MenuBackground::Static([0., 0.5, 1., 1.]).valid());
+        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+            for index in 0..4 {
+                let mut color = [0.; 4];
+                color[index] = value;
+                assert!(!MenuBackground::Static(color).valid());
+            }
+        }
+    }
 }

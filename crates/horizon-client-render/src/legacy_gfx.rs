@@ -299,6 +299,25 @@ impl TerrainHudRenderer {
             },
         )
     }
+    /// Explicit menu-only submission: clears a selected background then draws
+    /// the real HUD/patches, without touching resident section membership.
+    pub fn render_menu(&mut self, hud: &HudBatch, clear: [f32; 4]) -> Result<(), String> {
+        crate::frame::MenuFrame::static_color(hud, clear)
+            .validate_target(self.size())
+            .map_err(str::to_owned)?;
+        self.render(
+            &SceneFrame {
+                view_projection: horizon_render_api::IDENTITY,
+                camera: [0.; 3],
+                clear,
+                fog: None,
+                solid: &[],
+                translucent: &[],
+            },
+            hud,
+        )
+    }
+
     /// Draw the supported classic subset of the actual game frame. Unimplemented
     /// requested passes are errors, never silently hidden. Startup/resource and
     /// visibility scheduling still belong to the caller, not this coordinator.

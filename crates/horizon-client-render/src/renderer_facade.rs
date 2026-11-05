@@ -1,6 +1,7 @@
 //! C01 common submission boundary. Intentionally borrowed during R02 migration:
 //! Game still owns its modern renderer; no Deref or public GPU fields here.
 //! Submissions use the CPU Frame contract; gfx::Frame remains a compatibility export.
+pub use crate::frame::{MenuBackground, MenuFrame};
 use crate::{Result, frame::Frame, gfx, mesher::SectionMesh};
 use horizon_render_api::{
     render_contract::{Backend, Capabilities, Feature, FrameOutcome, ScreenshotRequest},
@@ -58,8 +59,13 @@ impl<'a> RendererFacade<'a> {
         Capabilities {
             backend,
             features: match backend {
-                Backend::Modern => &[Feature::Panorama, Feature::GpuPoses, Feature::ShaderPacks],
-                Backend::LegacyGl => &[],
+                Backend::Modern => &[
+                    Feature::StaticMenu,
+                    Feature::Panorama,
+                    Feature::GpuPoses,
+                    Feature::ShaderPacks,
+                ],
+                Backend::LegacyGl => &[Feature::StaticMenu],
             },
         }
     }
@@ -96,6 +102,48 @@ impl<'a> RendererFacade<'a> {
             }
         }
     }
+    /// Menu policy is explicit and separate from world Frame submission. A
+    /// panorama request on legacy fails; static is never an implicit fallback.
+    pub fn render_menu(&mut self, menu: &MenuFrame<'_>) -> Result<FrameOutcome> {
+        menu.validate()?;
+        match &mut self.inner {
+            Adapter::Modern(renderer) => {
+                menu.validate_target([renderer.config.width, renderer.config.height])?;
+                let mut frame = Frame::menu(menu.hud);
+                frame.yaw = menu.yaw;
+                frame.pitch = menu.pitch;
+                let drawn = match menu.background {
+                    MenuBackground::Panorama => renderer.render(&frame)?,
+                    MenuBackground::Static(clear) => renderer.render_static_menu(&frame, clear)?,
+                };
+                Ok(if !drawn {
+                    FrameOutcome::Deferred
+                } else if renderer.is_offscreen() {
+                    FrameOutcome::Offscreen
+                } else {
+                    FrameOutcome::Presented
+                })
+            }
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => {
+                let MenuBackground::Static(clear) = menu.background else {
+                    return Err("legacy GL2 panorama is not implemented; select an explicit static menu profile".into());
+                };
+                if renderer.size().contains(&0) {
+                    return Ok(FrameOutcome::Deferred);
+                }
+                renderer.render_menu(menu.hud, clear)?;
+                Ok(if renderer.present()? {
+                    FrameOutcome::Presented
+                } else if renderer.is_windowed() {
+                    FrameOutcome::Deferred
+                } else {
+                    FrameOutcome::Offscreen
+                })
+            }
+        }
+    }
+
     /// Queue a screenshot; the next rendered frame writes it. The legacy
     /// adapter has no readback yet (U01), so it rejects the request rather
     /// than silently dropping it.
@@ -333,6 +381,14 @@ pub fn has_section(renderer: &gfx::Renderer, key: SectionKey) -> bool {
 /// only: a legacy window has no Game-owned size until G01.
 pub fn drawable_size(renderer: &gfx::Renderer) -> [u32; 2] {
     [renderer.config.width, renderer.config.height]
+}
+
+/// Compatibility for Game loading/menu call sites: preserve its historical
+/// bool pacing while the public facade distinguishes offscreen completion.
+pub fn render_menu_modern(renderer: &mut gfx::Renderer, menu: &MenuFrame<'_>) -> Result<bool> {
+    RendererFacade::modern(renderer)
+        .render_menu(menu)
+        .map(|outcome| outcome != FrameOutcome::Deferred)
 }
 
 #[cfg(all(test, feature = "legacy-gl", target_os = "linux"))]

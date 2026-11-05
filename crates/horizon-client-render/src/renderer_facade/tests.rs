@@ -160,3 +160,157 @@ fn game_section_lifecycle_uses_dimension_minimum_and_reclaims_old_columns() {
     }
     assert_eq!(renderer.size(), [64; 2]);
 }
+
+#[test]
+#[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
+fn static_menu_is_explicit_preserves_world_and_rejects_panorama_without_clearing() {
+    use crate::{
+        chunk::ColumnLayout,
+        mesher::{SectionMesh, TerrainVertex},
+    };
+    use horizon_render_api::{IDENTITY, scene::SceneFrame};
+    let atlas = HudAtlas::boot();
+    let mut hud = HudBatch::new([64; 2]);
+    hud.fill(&atlas, 0., 0., 16., 16., u32::MAX);
+    let layout = pack_atlas(
+        &[SpriteSize {
+            width: 1,
+            height: 1,
+        }],
+        4,
+        1,
+        1,
+    )
+    .unwrap();
+    let page = build_page(&layout, 0, &[&[255, 0, 0, 255]]).unwrap();
+    let mut renderer = TerrainHudRenderer::new(
+        Context::new("osmesa", [64; 2]).unwrap(),
+        layout,
+        &[&page],
+        &[255; 1024],
+        &atlas,
+        Limits::default(),
+    )
+    .unwrap();
+    let options = frame::Options::default();
+    let visible = frame::VisibleSections {
+        solid: &[[0; 3]],
+        translucent: &[],
+    };
+    let clear = [0.25, 0.5, 0.75, 1.];
+    {
+        let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
+        facade
+            .clear_sections(ColumnLayout::new(0, 16).unwrap())
+            .unwrap();
+        let mut mesh = SectionMesh::default();
+        mesh.solid.extend(
+            [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]]
+                .map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, u32::MAX, 0xf0f0)),
+        );
+        facade.upload_section([0; 3], &mesh).unwrap();
+    }
+    renderer
+        .render(
+            &SceneFrame {
+                view_projection: IDENTITY,
+                camera: [0.; 3],
+                clear: [0.; 4],
+                fog: None,
+                solid: &[[0; 3]],
+                translucent: &[],
+            },
+            &HudBatch::new([64; 2]),
+        )
+        .unwrap();
+    assert_eq!(
+        renderer.read_rgba([32, 32, 1, 1]).unwrap(),
+        [255, 0, 0, 255]
+    );
+    {
+        let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
+        assert_eq!(
+            facade.capabilities().require(&[Feature::StaticMenu]),
+            Ok(())
+        );
+        assert_eq!(
+            facade
+                .render_menu(&MenuFrame::static_color(&hud, clear))
+                .unwrap(),
+            FrameOutcome::Offscreen
+        );
+        assert!(facade.has_section([0; 3]));
+        assert_eq!(facade.resident_sections(), 1);
+    }
+    let before = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+    for (value, expected) in before[(32 * 64 + 32) * 4..][..4]
+        .iter()
+        .zip([64u8, 128, 191, 255])
+    {
+        assert!(value.abs_diff(expected) <= 1);
+    }
+    assert!(before.as_chunks::<4>().0.contains(&[255; 4]));
+    {
+        let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
+        assert!(
+            facade
+                .render_menu(&MenuFrame::panorama(&hud, 10., 10.))
+                .is_err()
+        );
+        assert!(
+            facade
+                .render_menu(&MenuFrame::static_color(&hud, [f32::NAN; 4]))
+                .is_err()
+        );
+    }
+    assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
+    // Bad GUI input also cannot erase the previously displayed menu.
+    hud.vertices.push(hud.vertices[0]);
+    assert!(
+        RendererFacade::legacy(&mut renderer, visible, options)
+            .render_menu(&MenuFrame::static_color(&hud, clear))
+            .is_err()
+    );
+    assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
+    let empty = HudBatch::new([32; 2]);
+    {
+        let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
+        facade.resize([32; 2]).unwrap();
+        facade
+            .render_menu(&MenuFrame::static_color(&empty, clear))
+            .unwrap();
+        assert_eq!(facade.resident_sections(), 1);
+        let old_layout = HudBatch::new([64; 2]);
+        assert!(
+            facade
+                .render_menu(&MenuFrame::static_color(&old_layout, clear))
+                .is_err()
+        );
+    }
+    assert!(
+        renderer
+            .read_rgba([16, 16, 1, 1])
+            .unwrap()
+            .iter()
+            .zip([64u8, 128, 191, 255])
+            .all(|(a, b)| a.abs_diff(b) <= 1)
+    );
+    // Returning to a world must still draw the original resident VBO/texture.
+    renderer
+        .render(
+            &SceneFrame {
+                view_projection: IDENTITY,
+                camera: [0.; 3],
+                clear: [0.; 4],
+                fog: None,
+                solid: &[[0; 3]],
+                translucent: &[],
+            },
+            &empty,
+        )
+        .unwrap();
+    assert_eq!(
+        renderer.read_rgba([16, 16, 1, 1]).unwrap(),
+        [255, 0, 0, 255]
+    );
+}
