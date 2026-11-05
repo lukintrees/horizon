@@ -6,6 +6,8 @@ use crate::{
 };
 use std::collections::HashMap;
 
+/// X/Z section coordinates, Y relative to the scene's configured minimum.
+/// The default minimum is zero (so existing absolute-section probes agree).
 pub type SectionKey = [i32; 3];
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -23,6 +25,7 @@ pub enum SceneError<E> {
     SectionLimit,
     MissingSection(SectionKey),
     InvalidOrigin,
+    InvalidLayout,
     Backend(E),
 }
 
@@ -60,6 +63,7 @@ pub struct WorldScene<B: RenderBackend> {
     sections: HashMap<SectionKey, Section>,
     retired: Vec<MeshId>,
     max_sections: usize,
+    min_y: i32,
 }
 impl<B: RenderBackend> WorldScene<B> {
     pub fn new(
@@ -89,6 +93,7 @@ impl<B: RenderBackend> WorldScene<B> {
             sections: HashMap::new(),
             retired: Vec::new(),
             max_sections,
+            min_y: 0,
         };
         for rgba in pages {
             let id = scene
@@ -125,6 +130,55 @@ impl<B: RenderBackend> WorldScene<B> {
 
     pub fn section_count(&self) -> usize {
         self.sections.len()
+    }
+
+    pub fn has_section(&self, key: SectionKey) -> bool {
+        self.sections.contains_key(&key)
+    }
+
+    /// A dimension change commits a new Y origin only after validation and
+    /// previous garbage cleanup. Texture/atlas/lightmap resources survive.
+    /// Removed meshes are retained for retry until the next upload/draw/cleanup.
+    pub fn reset_sections(&mut self, min_y: i32) -> Result<(), SceneError<B::Error>> {
+        if min_y % 16 != 0 {
+            return Err(SceneError::InvalidLayout);
+        }
+        self.collect_garbage()?;
+        for (_, section) in std::mem::take(&mut self.sections) {
+            self.retire(section);
+        }
+        self.min_y = min_y;
+        Ok(())
+    }
+
+    /// Unload only this X/Z column, regardless of its vertical span. No second
+    /// resident index or unbounded temporary key list is allocated.
+    pub fn unload_column(&mut self, column: [i32; 2]) -> Result<usize, SceneError<B::Error>> {
+        self.collect_garbage()?;
+        let before = self.sections.len();
+        let retired = &mut self.retired;
+        self.sections.retain(|key, section| {
+            if [key[0], key[2]] != column {
+                return true;
+            }
+            retired.extend(
+                section
+                    .solid
+                    .drain(..)
+                    .chain(section.translucent.drain(..))
+                    .map(|run| run.mesh),
+            );
+            false
+        });
+        Ok(before - self.sections.len())
+    }
+
+    fn section_origin(&self, key: SectionKey) -> [f64; 3] {
+        [
+            f64::from(key[0]) * 16.,
+            f64::from(key[1]) * 16. + f64::from(self.min_y),
+            f64::from(key[2]) * 16.,
+        ]
     }
 
     pub fn collect_garbage(&mut self) -> Result<(), SceneError<B::Error>> {
@@ -229,7 +283,7 @@ impl<B: RenderBackend> WorldScene<B> {
             if !self.sections.contains_key(key) {
                 return Err(SceneError::MissingSection(*key));
             }
-            if crate::relative_origin(key.map(|v| f64::from(v) * 16.), frame.camera).is_none() {
+            if crate::relative_origin(self.section_origin(*key), frame.camera).is_none() {
                 return Err(SceneError::InvalidOrigin);
             }
         }
@@ -272,7 +326,7 @@ impl<B: RenderBackend> WorldScene<B> {
                         mesh: run.mesh,
                         texture: self.pages[run.page],
                         lightmap: self.lightmap.unwrap(),
-                        origin: key.map(|v| f64::from(v) * 16.),
+                        origin: self.section_origin(*key),
                         pass: run.pass,
                         scissor: None,
                     });
@@ -315,3 +369,6 @@ impl<B: RenderBackend> Drop for WorldScene<B> {
         // reclaim its remaining resources on drop (the GL backend does).
     }
 }
+
+#[cfg(test)]
+mod tests;

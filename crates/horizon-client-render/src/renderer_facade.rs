@@ -180,11 +180,45 @@ impl<'a> RendererFacade<'a> {
         }
         Ok(())
     }
+    pub fn has_section(&self, key: SectionKey) -> bool {
+        match &self.inner {
+            Adapter::Modern(renderer) => renderer.has_section((key[0], key[1], key[2])),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer.has_section(key),
+        }
+    }
+    pub fn resident_sections(&self) -> usize {
+        match &self.inner {
+            Adapter::Modern(renderer) => renderer.section_count(),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer.resident_sections(),
+        }
+    }
+    /// Reset world membership and vertical origin together. Resource/layout
+    /// generations and stale-job rejection remain the W01 owner's responsibility.
+    pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => renderer.clear_sections(layout),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer.clear_sections(layout)?,
+        }
+        Ok(())
+    }
+    /// May partially remove a batch on backend cleanup failure; errors propagate.
+    /// A higher-level legacy owner must stop/recover rather than render stale keys.
+    pub fn remove_columns(&mut self, columns: impl IntoIterator<Item = (i32, i32)>) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(renderer) => renderer.remove_columns(columns),
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer.remove_columns(columns)?,
+        }
+        Ok(())
+    }
     pub fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<()> {
         match &mut self.inner {
             Adapter::Modern(renderer) => renderer.upload((key[0], key[1], key[2]), mesh),
             #[cfg(feature = "legacy-gl")]
-            Adapter::Legacy { renderer, .. } => renderer.upload_section(key, mesh)?,
+            Adapter::Legacy { renderer, .. } => renderer.upload_game_section(key, mesh)?,
         }
         Ok(())
     }

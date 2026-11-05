@@ -52,6 +52,16 @@ wgpu-free dependency graph остаётся за D01.
   когда G01 начнёт классифицировать адаптер; до тех пор дальность не урезается.
 - Terrain upload (`upload_section`) — команда фасада: Game больше не вызывает `Renderer::upload`
   напрямую; ошибка (legacy) логируется, а не теряется молча.
+- **R02g (2026-11-05):** clear/remove/query terrain и Game/loading/reload resize проходят через
+  facade. Legacy adapter имеет настоящие clear/unload/contains/count operations, а не no-op stubs.
+  Game section Y — индекс относительно dimension minimum: перед первым legacy Game upload обязателен
+  `clear_sections(ColumnLayout)`. Без layout или при Y за его пределами upload отклоняется до GPU mutation.
+  Low-level zero-origin probes по-прежнему используют `upload_section` напрямую.
+- Native scene добавляет `min_y` к Y origin **до** camera subtraction/f32 conversion. Reset проверяет
+  alignment и pending cleanup до смены origin/membership; textures/lightmap/atlas сохраняются.
+  Column unload удаляет все Y только заданного X/Z, ошибки cleanup сохраняются для retry. Batch removal
+  не транзакционен: после частичной ошибки будущий owning legacy adapter обязан остановить draw/recover,
+  а не подтвердить успешную смену мира. W01 generation/revision queue здесь ещё не реализована.
 - `capabilities()` описывает реализованные feature families, **не** фактические hardware GL limits.
   `require()` явно отклоняет GPU poses/panorama/packs на legacy; F01 ещё должен вызвать negotiation
   до geometry generation. Native driver checks/budgets продолжают проверяться существующим backend.
@@ -83,11 +93,11 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 |---|---|
 | `Game.renderer`, `Loading.renderer`, `no_resources::Missing.renderer` | R02/R03: owning facade, shared state migration — интегратор |
 | `build_renderer`, `loading_renderer`, `renderer_for`, `new_renderer`, `recover_device` | R02/R03/G01: factory, ownership, reload/recovery — интегратор |
-| `config`, `suspended`, window sizing / resize handlers | R02b/c: размер drawable через `renderer_facade::drawable_size`, surface handover через команды фасада; resize outcome/`SurfaceConfiguration` остаются P01 |
+| `config`, `suspended`, window sizing / resize handlers | R02b/c: размер drawable через `renderer_facade::drawable_size`, surface handover через команды фасада; Game/reload resize уже команда facade (R02g); полноценный native minimize loop остаётся P01 |
 | `device`, `queue`, `hud` uploads в skins/maps/UI/glint | A01/A02/E01/R02: CPU patches/resource commands; не протаскивать device/queue в общий trait |
 | `screenshot*`, capture requests/results, device recovery | R02a: facade commands `request_screenshot`/`screenshot_pending`/`take_*`/`restore_*` уже используются Game; modern capture остаётся в modern adapter, legacy readback — U01 |
 | `info`, gpu times/census, HDR calibration, shader macros/packs | Backend-neutral diagnostics; modern-only commands явно capability gated |
-| `upload`, section membership/removals, `take_dropped_sections`, LOD / culling / static entities | W01/R02: terrain `upload_section` уже команда фасада (ошибка не теряется); neutral section keys/stamps, bounded queues, CPU visibility и modern GPU paths остаются |
+| `upload`, section membership/removals, `take_dropped_sections`, LOD / culling / static entities | W01/R02: upload/clear/remove/has/count уже методы facade; native Game key Y учитывает dimension minimum (R02g). W01 stamps, bounded queues, CPU visibility и modern GPU paths остаются |
 | `skins_entities`, `skinned_models`, GPU posing storage | E01: настоящее CPU posing, не только `skin=None` |
 | `gamma`, fullbright, animation/filtering, fog/lightmap | F01/A02: policy/settings commands, не публичные GPU-owned поля |
 | `frame::Frame` и DTO `skin`/`lightning`/`pack` | R01a вынесены в общий CPU-модуль; старые `gfx::*` пути совместимы. Остаток R01: visibility/resource descriptors и отделение dependency graph, а не второй Frame |
@@ -96,7 +106,7 @@ Headless и winit adapters используют один `WakePolicy`; Poll/Wait
 ## 4. Что не замораживаем ложным обещанием
 
 В этой ступени **ещё не реализованы** common menu request/static menu path, оставшиеся visibility/resource
-descriptors и wgpu-free dependency graph, resource reload completion API, owning factory/renderer selection, screenshot result facade, полноценный
+descriptors и wgpu-free dependency graph, resource reload completion API, owning factory/renderer selection, legacy screenshot readback, полноценный
 platform adapter и Game legacy startup. Их точные новые signatures согласует и внесёт интегратор;
 нельзя самостоятельно добавлять конкурирующие common types в task PR.
 

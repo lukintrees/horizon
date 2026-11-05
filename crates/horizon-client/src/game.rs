@@ -12305,7 +12305,11 @@ impl Game<'_> {
         self.clear_lod();
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
-            r.clear_sections(self.world.layout());
+            if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(r)
+                .clear_sections(self.world.layout())
+            {
+                log::warn!("Horizon: cannot clear terrain sections: {error}");
+            }
         }
         self.apply_settings();
         self.streaming.sky_light = dim != Dim::Nether;
@@ -12542,7 +12546,11 @@ impl Game<'_> {
         self.clear_lod();
         self.pending_uploads.clear();
         if let Some(r) = self.renderer.as_mut() {
-            r.clear_sections(self.world.layout());
+            if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(r)
+                .clear_sections(self.world.layout())
+            {
+                log::warn!("Horizon: cannot clear terrain sections: {error}");
+            }
         }
         // Clear sync data (registries, dialog tags) so dialogs don't leak
         // between worlds.
@@ -16909,7 +16917,11 @@ impl Game<'_> {
                 }
                 self.streaming.free(spent);
             }
-            renderer.remove_columns(unloaded.iter().map(|c| (c.x, c.z)));
+            if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)
+                .remove_columns(unloaded.iter().map(|c| (c.x, c.z)))
+            {
+                log::warn!("Horizon: cannot unload terrain columns: {error}");
+            }
             // Meshes in the works are the view's terrain while it is new, then edits'.
             let meshing = self.streaming.busy() || !self.pending_uploads.is_empty();
             let sampling = self.lod.as_ref().is_some_and(|lod| lod.sampling());
@@ -17345,7 +17357,12 @@ impl Game<'_> {
                 }
                 WindowEvent::Resized(size) => {
                     if let Some(r) = &mut self.renderer {
-                        r.resize(size.width, size.height);
+                        if let Err(error) =
+                            horizon_client::renderer_facade::RendererFacade::modern(r)
+                                .resize([size.width, size.height])
+                        {
+                            log::warn!("Horizon: cannot resize the drawable: {error}");
+                        }
                     }
                 }
                 WindowEvent::RedrawRequested => {
@@ -17505,7 +17522,12 @@ impl Game<'_> {
                 }
                 WindowEvent::Resized(size) => {
                     if let Some(r) = &mut self.renderer {
-                        r.resize(size.width, size.height);
+                        if let Err(error) =
+                            horizon_client::renderer_facade::RendererFacade::modern(r)
+                                .resize([size.width, size.height])
+                        {
+                            log::warn!("Horizon: cannot resize the drawable: {error}");
+                        }
                     }
                     self.observe_fullscreen();
                 }

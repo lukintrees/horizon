@@ -460,7 +460,9 @@ impl Game<'_> {
             // The old one's size: a splitscreen player's view is smaller than the window the new
             // one was sized from (it drew a window-sized frame into the view, cut off).
             if let Some(old) = &self.renderer {
-                renderer.resize(old.config.width, old.config.height);
+                let size = horizon_client::renderer_facade::drawable_size(old);
+                horizon_client::renderer_facade::RendererFacade::modern(&mut renderer)
+                    .resize(size)?;
             }
             self.renderer = Some(renderer);
             self.apply_ui_settings();

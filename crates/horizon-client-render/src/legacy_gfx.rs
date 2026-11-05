@@ -110,6 +110,7 @@ pub struct TerrainHudRenderer {
     glint_textures: Option<GlintTextures>,
     retired_glint: Vec<TextureId>,
     limits: Limits,
+    game_layout: Option<crate::chunk::ColumnLayout>,
     screen: screen::Resources,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
@@ -157,6 +158,7 @@ impl TerrainHudRenderer {
             glint_textures: None,
             retired_glint: Vec::new(),
             limits,
+            game_layout: None,
             screen: screen::Resources::default(),
         })
     }
@@ -216,6 +218,43 @@ impl TerrainHudRenderer {
     pub fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
         render_bridge::upload_section(&mut self.world, key, mesh, self.limits.section_vertices)
             .map_err(diagnostic)
+    }
+    /// Game keys use section Y relative to the dimension minimum, unlike the
+    /// zero-origin low-level probes. Require the layout before accepting them.
+    pub fn upload_game_section(
+        &mut self,
+        key: SectionKey,
+        mesh: &SectionMesh,
+    ) -> Result<(), String> {
+        let layout = self
+            .game_layout
+            .ok_or("legacy terrain layout must be set before Game uploads")?;
+        if usize::try_from(key[1])
+            .ok()
+            .is_none_or(|y| y >= layout.sections())
+        {
+            return Err("section Y outside the configured dimension".into());
+        }
+        self.upload_section(key, mesh)
+    }
+    pub fn has_section(&self, key: SectionKey) -> bool {
+        self.world.has_section(key)
+    }
+    pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) -> Result<(), String> {
+        self.world
+            .reset_sections(layout.min_y())
+            .map_err(diagnostic)?;
+        self.game_layout = Some(layout);
+        Ok(())
+    }
+    pub fn remove_columns(
+        &mut self,
+        columns: impl IntoIterator<Item = (i32, i32)>,
+    ) -> Result<(), String> {
+        for (x, z) in columns {
+            self.world.unload_column([x, z]).map_err(diagnostic)?;
+        }
+        Ok(())
     }
     pub fn unload_section(&mut self, key: SectionKey) -> Result<bool, String> {
         self.world.unload_section(key).map_err(diagnostic)

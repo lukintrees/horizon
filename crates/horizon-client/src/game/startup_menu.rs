@@ -964,7 +964,8 @@ impl Loading {
             }
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
-                    r.resize(size.width, size.height);
+                    horizon_client::renderer_facade::RendererFacade::modern(r)
+                        .resize([size.width, size.height])?;
                 }
                 self.apply_menu_settings();
             }

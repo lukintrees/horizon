@@ -133,7 +133,11 @@ impl ApplicationHandler for Missing {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
-                    r.resize(size.width, size.height);
+                    if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(r)
+                        .resize([size.width, size.height])
+                    {
+                        log::warn!("Horizon: cannot resize the drawable: {error}");
+                    }
                 }
                 window.request_redraw();
             }
