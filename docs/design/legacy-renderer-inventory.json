@@ -1990,7 +1990,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/entity_culling.rs",
-      "sha256": "36e9297cb2d7c783a97b8b4c12e97807fc6d9bda71ffd127273070f891fcd22b",
+      "sha256": "622f18695750225f7b744bb7d7a4191fb00b3b166fe7a1ce1881568ac3e9a222",
       "references": [
         {
           "line": 382,
@@ -2018,28 +2018,14 @@
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": "self.renderer"
+          "code": "self.renderer.as_ref().is_some_and(|r| {"
         },
         {
-          "line": 483,
-          "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".is_some_and(|r| r.has_section(section))"
-        },
-        {
-          "line": 499,
+          "line": 498,
           "kinds": [
             "owner/factory/reference"
           ],
-          "code": "self.renderer"
-        },
-        {
-          "line": 501,
-          "kinds": [
-            "candidate-member-access"
-          ],
-          "code": ".is_some_and(|r| r.has_section(section))"
+          "code": "self.renderer.as_ref().is_some_and(|r| {"
         }
       ]
     },

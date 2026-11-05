@@ -623,6 +623,45 @@ fn scene_lifecycle(context: &Context) -> Result<(), String> {
     frame.clear = [0., 0., 0., 1.];
     scene.render(&frame).map_err(error)?;
     check(&mut scene, 32, [0, 0, 0])?;
+    // Same resident-scene case, now with dimension-relative section Y. The
+    // constrained two-mesh budget also catches leaks across repeated resets.
+    let visible_keys = [key];
+    for min_y in [-64, -2032, 128, -64] {
+        scene.reset_sections(min_y).map_err(error)?;
+        require(
+            scene.section_count() == 0,
+            "reset kept old section membership",
+        )?;
+        frame.camera[1] = f64::from(min_y);
+        frame.solid = &visible_keys;
+        scene.replace_section(key, &green_run, &[]).map_err(error)?;
+        scene.render(&frame).map_err(error)?;
+        check(&mut scene, 32, [0, 128, 0])?;
+        require(
+            matches!(
+                scene.reset_sections(min_y + 1),
+                Err(SceneError::InvalidLayout)
+            ),
+            "unaligned minimum accepted",
+        )?;
+        require(scene.has_section(key), "invalid reset changed membership")?;
+        require(
+            scene.unload_column([key[0] - 1, key[2]]).map_err(error)? == 0,
+            "unrelated column removed",
+        )?;
+        require(
+            scene.unload_column([key[0], key[2]]).map_err(error)? == 1,
+            "column removal missed the resident mesh",
+        )?;
+        require(
+            matches!(scene.render(&frame), Err(SceneError::MissingSection(_))),
+            "removed section remained visible",
+        )?;
+        check(&mut scene, 32, [0, 128, 0])?; // rejection must not clear
+        frame.solid = &[];
+        scene.render(&frame).map_err(error)?;
+        check(&mut scene, 32, [0, 0, 0])?;
+    }
     drop(scene);
     require(
         renderer.stats() == Stats::default(),

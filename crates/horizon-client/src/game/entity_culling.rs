@@ -478,10 +478,9 @@ impl Game<'_> {
             }
         }
         proof.sections.iter().all(|&section| {
-            self.renderer
-                .as_ref()
-                .is_some_and(|r| r.has_section(section))
-                && !self.world.dirty_sections.contains(&section)
+            self.renderer.as_ref().is_some_and(|r| {
+                horizon_client::renderer_facade::has_section(r, [section.0, section.1, section.2])
+            }) && !self.world.dirty_sections.contains(&section)
                 && !self.streaming.is_meshing(section)
                 && !self.pending_uploads.iter().any(|(key, _)| *key == section)
         })
@@ -496,10 +495,9 @@ impl Game<'_> {
             return false;
         };
         let section = (pos[0] >> 4, y.div_euclid(16), pos[2] >> 4);
-        self.renderer
-            .as_ref()
-            .is_some_and(|r| r.has_section(section))
-            && !self.world.dirty_sections.contains(&section)
+        self.renderer.as_ref().is_some_and(|r| {
+            horizon_client::renderer_facade::has_section(r, [section.0, section.1, section.2])
+        }) && !self.world.dirty_sections.contains(&section)
             && !self.streaming.is_meshing(section)
             && !self.pending_uploads.iter().any(|(key, _)| *key == section)
     }

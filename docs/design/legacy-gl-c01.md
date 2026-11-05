@@ -122,3 +122,22 @@ unconfirmed/blocked, а не как успех. Когда G01/R03 подклю�
 Это начальная C01 v1 реализация и рабочий submission wiring, не закрытие всех критериев C01/R01–G01.
 Для четырёх подготовительных задач достаточно этой границы и scopes из промптов. Перед основной
 adapter-волной требуется следующий интеграционный шаг C01/R01 с объявлениями готовых operations.
+
+## 6. R02g: проверка и открытые gates (2026-11-05)
+
+Продолжение после `b00954c` (R02f), без повторной реализации принятых R01a/O01a/T01a/R02a–f.
+Расширенный independent `backend_resident_sections` теперь проверяет отрицательные/положительные
+минимумы dimension, invalid reset, column unload и повторные reset/upload в ограниченном mesh budget.
+
+Локально: **43 Rust tests**, workspace all-targets Clippy на host и i686 Windows target,
+**3×26 OSMesa cases** (gl20/gl21/native), **679 Python tests, 26 skipped**;
+rustfmt, inventory и public-tree checks. Новый facade GPU fixture также добавлен, но локально не запускался:
+full client требует другой toolchain/dependency environment.
+
+**CI нового head заблокирован:** GitHub workflow dispatch вернул HTTP 422
+`Actions has been disabled for this repository`. Последние зелёные PR/aggregate runs
+41897663762 / 41897652353 относятся к **b00954c**, а не к R02g. Их нельзя переиспользовать
+как доказательство новых Game call sites или нового facade fixture. Required checks/repository settings
+не менялись; draft остаётся draft. После включения Actions нужны full modern + legacy client checks,
+17 game GPU fixtures, hosted x86 и aggregate gate на актуальном head. Win7/X1650 runtime по-прежнему
+не квалифицирован. До этого новый full-client baseline не объявляется проверенным.

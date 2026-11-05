@@ -79,15 +79,19 @@ explicit machine-readable confirmation, proposed as:
 }
 ```
 
-This hook is not implemented yet.  Until the integrator adds it, a legacy run is
-**blocked** (`status.legacy` missing, or `status.renderer.backend == "Gl"`).
+The `status.legacy` object is now published by Game, but the normal modern
+startup correctly reports `confirmed=false` with empty GL fields. G01 still has
+to populate it from a real native context. Missing hooks in older binaries or
+unconfirmed legacy startup remain **blocked**, never successful. A wgpu `Gl`
+backend is not native legacy confirmation.
 An explicit wgpu backend (`Vulkan`, `Dx12`, `Metal`) or a log line mentioning a
 wgpu fallback is an **erroneous fallback** and fails.  The runner never treats
 "unavailable legacy startup" as success.
 
-Requested from the integrator (not implemented in this PR):
+Integrator follow-up (not completed by the original T01a PR):
 
-1. `status.legacy` confirmation with the fields above, or an agreed equivalent.
+1. Fill the existing `status.legacy` hook from an actual native backend at G01;
+   the current false/unconfirmed object is already integrated.
 2. An explicit startup failure when legacy is requested but unavailable; no
    silent wgpu fallback.
 3. A save acknowledgement that can be tied to a durable generation (optional;

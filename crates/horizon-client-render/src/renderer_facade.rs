@@ -182,7 +182,7 @@ impl<'a> RendererFacade<'a> {
     }
     pub fn has_section(&self, key: SectionKey) -> bool {
         match &self.inner {
-            Adapter::Modern(renderer) => renderer.has_section((key[0], key[1], key[2])),
+            Adapter::Modern(renderer) => has_section(renderer, key),
             #[cfg(feature = "legacy-gl")]
             Adapter::Legacy { renderer, .. } => renderer.has_section(key),
         }
@@ -321,6 +321,12 @@ pub fn render_modern(renderer: &mut gfx::Renderer, frame: &Frame<'_>) -> Result<
     RendererFacade::modern(renderer)
         .render(frame)
         .map(|outcome| outcome != FrameOutcome::Deferred)
+}
+
+/// Read-only membership seam while Game still owns a concrete modern renderer.
+/// Section Y is relative to the configured column minimum, as for uploads.
+pub fn has_section(renderer: &gfx::Renderer, key: SectionKey) -> bool {
+    renderer.has_section((key[0], key[1], key[2]))
 }
 
 /// The drawable size, without making Game read `SurfaceConfiguration`. Read
