@@ -520,3 +520,135 @@ fn native_screenshot_completes_once_before_present_and_survives_rejection_resize
     assert_eq!(decode("after.png").0, [32, 16]);
     assert!(!path("scaled.png").exists());
 }
+
+#[test]
+#[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
+fn native_resource_factory_streams_stable_layers_hud_and_generation_without_modern_device() {
+    use crate::legacy_gfx::ResourceLimits;
+    use crate::{
+        chunk::ColumnLayout,
+        mesher::{SectionMesh, TerrainVertex},
+    };
+    use horizon_render_api::{
+        IDENTITY,
+        render_contract::ResourceGeneration,
+        resource_contract::{Resources, TerrainAtlasLimits, TextureLayers},
+        scene::SceneFrame,
+    };
+    let atlas = HudAtlas::boot();
+    let hud_pixels = atlas.pixels();
+    let pixels = [255, 0, 0, 255, 0, 255, 0, 255];
+    let resources = Resources {
+        generation: ResourceGeneration(19),
+        terrain: TextureLayers {
+            size: 1,
+            layers: 2,
+            rgba: &pixels,
+        },
+        hud: horizon_render_api::Image {
+            width: atlas.width,
+            height: atlas.height,
+            rgba: &hud_pixels,
+        },
+        item_glint: horizon_render_api::Image {
+            width: 1,
+            height: 1,
+            rgba: &[255; 4],
+        },
+        armor_glint: horizon_render_api::Image {
+            width: 1,
+            height: 1,
+            rgba: &[255; 4],
+        },
+    };
+    let preparation = ResourceLimits {
+        terrain: TerrainAtlasLimits {
+            page_size: 4,
+            max_pages: 2,
+            ..TerrainAtlasLimits::default()
+        },
+        ..ResourceLimits::default()
+    };
+    let mut renderer = TerrainHudRenderer::from_resources(
+        Context::new("osmesa", [64; 2]).unwrap(),
+        &resources,
+        &[255; 1024],
+        Limits::default(),
+        preparation,
+    )
+    .unwrap();
+    assert_eq!(renderer.resource_generation(), Some(ResourceGeneration(19)));
+    let options = frame::Options::default();
+    let visible = frame::VisibleSections {
+        solid: &[[0; 3]],
+        translucent: &[],
+    };
+    let mut mesh = SectionMesh::default();
+    for (layer, left, right) in [(0, -1., 0.), (1, 0., 1.)] {
+        mesh.solid.extend(
+            [
+                [left, -1., 0.],
+                [right, -1., 0.],
+                [right, 1., 0.],
+                [left, 1., 0.],
+            ]
+            .map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000 | layer, u32::MAX, 0xf0f0)),
+        );
+    }
+    {
+        let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
+        assert_eq!(facade.resource_generation(), Some(ResourceGeneration(19)));
+        facade
+            .clear_sections(ColumnLayout::new(0, 16).unwrap())
+            .unwrap();
+        facade.upload_section([0; 3], &mesh).unwrap();
+    }
+    let scene = SceneFrame {
+        view_projection: IDENTITY,
+        camera: [0.; 3],
+        clear: [0.; 4],
+        fog: None,
+        solid: &[[0; 3]],
+        translucent: &[],
+    };
+    renderer.render(&scene, &HudBatch::new([64; 2])).unwrap();
+    assert_eq!(
+        renderer.read_rgba([16, 32, 1, 1]).unwrap(),
+        [255, 0, 0, 255]
+    );
+    assert_eq!(
+        renderer.read_rgba([48, 32, 1, 1]).unwrap(),
+        [0, 255, 0, 255]
+    );
+    let mut hud = HudBatch::new([64; 2]);
+    hud.fill(&atlas, 0., 0., 16., 16., u32::MAX);
+    {
+        let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
+        facade
+            .render_menu(&MenuFrame::static_color(&hud, [0.; 4]))
+            .unwrap();
+        assert_eq!(facade.resident_sections(), 1);
+    }
+    assert_eq!(renderer.read_rgba([8, 56, 1, 1]).unwrap(), [255; 4]);
+    assert_eq!(renderer.resource_generation(), Some(ResourceGeneration(19)));
+    // Failed factory construction cannot publish a new owner/generation or touch
+    // the already-active context's framebuffer. Driver binding is restored on read.
+    let before = renderer.read_rgba([0, 0, 64, 64]).unwrap();
+    assert!(
+        TerrainHudRenderer::from_resources(
+            Context::new("osmesa", [64; 2]).unwrap(),
+            &resources,
+            &[255; 1024],
+            Limits {
+                gpu: horizon_legacy_render::Budget {
+                    texture_bytes: 1,
+                    ..Default::default()
+                },
+                ..Limits::default()
+            },
+            preparation
+        )
+        .is_err()
+    );
+    assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
+}

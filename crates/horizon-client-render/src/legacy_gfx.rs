@@ -19,6 +19,8 @@ use horizon_render_api::{
 };
 
 pub mod frame;
+mod resources;
+pub use resources::ResourceLimits;
 mod screen;
 mod screenshot;
 mod sky;
@@ -115,6 +117,7 @@ pub struct TerrainHudRenderer {
     retired_glint: Vec<TextureId>,
     limits: Limits,
     game_layout: Option<crate::chunk::ColumnLayout>,
+    resource_generation: Option<horizon_render_api::render_contract::ResourceGeneration>,
     screen: screen::Resources,
     pub(crate) screenshots: screenshot::State,
 }
@@ -132,8 +135,26 @@ impl TerrainHudRenderer {
         limits: Limits,
     ) -> Result<Self, String> {
         let backend = Renderer::owned(context, limits.gpu)?;
-        let mut world = WorldScene::new(backend, layout, terrain_pages, lightmap, limits.sections)
+        let world = WorldScene::new(backend, layout, terrain_pages, lightmap, limits.sections)
             .map_err(diagnostic)?;
+        Self::from_world(
+            world,
+            lightmap,
+            Image {
+                width: hud.width,
+                height: hud.height,
+                rgba: &hud.pixels(),
+            },
+            limits,
+        )
+    }
+
+    fn from_world(
+        mut world: WorldScene<Renderer<'static>>,
+        lightmap: &[u8],
+        hud: Image<'_>,
+        limits: Limits,
+    ) -> Result<Self, String> {
         let layout = Layout::new(
             [hud.width, hud.height],
             limits.hud_page_size,
@@ -151,7 +172,7 @@ impl TerrainHudRenderer {
             .min(remaining.textures)
             .min(remaining.texture_bytes / layout.page_bytes());
         let cache = Cache::new(layout, hud_capacity).map_err(diagnostic)?;
-        let backing = Backing::new(layout, &hud.pixels(), limits.hud_backing_bytes)?;
+        let backing = Backing::new(layout, hud.rgba, limits.hud_backing_bytes)?;
         Ok(Self {
             world,
             hud: backing,
@@ -164,6 +185,7 @@ impl TerrainHudRenderer {
             retired_glint: Vec::new(),
             limits,
             game_layout: None,
+            resource_generation: None,
             screen: screen::Resources::default(),
             screenshots: screenshot::State::new(limits.screenshot_bytes),
         })

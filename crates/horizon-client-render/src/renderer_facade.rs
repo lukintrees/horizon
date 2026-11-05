@@ -54,6 +54,17 @@ impl<'a> RendererFacade<'a> {
             Adapter::Legacy { renderer, .. } => renderer.size(),
         }
     }
+    /// Published CPU bundle identity, if this owner was built from one. The
+    /// old modern/synthetic constructors do not track it: None is not zero.
+    pub fn resource_generation(
+        &self,
+    ) -> Option<horizon_render_api::render_contract::ResourceGeneration> {
+        match &self.inner {
+            Adapter::Modern(_) => None,
+            #[cfg(feature = "legacy-gl")]
+            Adapter::Legacy { renderer, .. } => renderer.resource_generation(),
+        }
+    }
     pub fn capabilities(&self) -> Capabilities {
         let backend = self.backend();
         Capabilities {

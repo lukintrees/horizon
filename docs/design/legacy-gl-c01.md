@@ -200,3 +200,31 @@ Full-client compile/GPU и hosted i686 выполняются focused Actions; �
 Локально: **47 native workspace Rust tests**, host all-targets Clippy, legacy Python guard tests,
 format/inventory/public-tree checks. Hosted x86 и full-client/19 GPU fixtures проверяются Actions.
 B1–B4, F01/G01/resource completion и настоящая Win7/X1650 qualification остаются открыты.
+
+
+## 9. A01b/R03a: native factory из CPU resources (2026-11-05)
+
+- `resource_contract::TerrainAtlas` принимает borrowed layer-major RGBA8 из общего `Resources`.
+  Layer ID остаётся индексом placement; high-bit mesher material flags не меняют индекс текстуры.
+  Padding=1 extrudes края. Проверяются exact pixels, размеры, max layers (не более 32768), pages,
+  page+slice-table staging bytes; defaults: 512² page, 128 pages, 2 MiB staging. Layout metadata
+  отдельно bounded layer count; это не полный peak memory budget A01/Q02.
+- `WorldScene::new_paged` подготавливает и загружает ровно одну страницу за раз. Borrowed slice
+  constructor сохранён. Preparation/length/upload failure уничтожает partial owner и возвращает
+  ошибку; ранее созданные textures удаляются. Тесты fake backend проверяют lazy ordering и cleanup.
+- `TerrainHudRenderer::from_resources(Context, Resources, lightmap, Limits, ResourceLimits)` создаёт
+  native owner без wgpu initialization/modern PreparedTextures. Bundle validate (default 128 MiB base)
+  и минимальная GPU residency (terrain+lightmap+white+2 glints+1 HUD page) проверяются до backend upload.
+  Actual driver/budget checks остаются backend-owned. HUD backing compressed; полная копия terrain
+  в owner не сохраняется. Старый low-level constructor совместим.
+- Успешный factory загружает оба glint images и публикует `ResourceGeneration`. Facade query возвращает
+  Some только для owner с такой provenance; старые modern/synthetic constructors возвращают None,
+  не выдуманную generation=0. Failed factory не публикует replacement и не меняет active owner.
+- CPU+OSMesa fixtures проверяют стабильные IDs на нескольких страницах (red/green terrain pixels),
+  HUD из bundle, сохранность resident sections, generation и failed-construction isolation.
+  Focused CI теперь включает **20** ignored game GPU fixtures и CPU factory preflight test.
+
+Это **initial factory**, не transactional reload и не Game startup: Game всё ещё modern-owned.
+Pack decode/borrow extraction, animation updates/font-cache reset при commit, F01 policy negotiation,
+resource replacement/context recovery и native platform loop остаются открыты. Реальный pack/hardware
+не заменяется синтетическими fixtures: B1–B4/Win7-X1650 qualification не заявляются.

@@ -325,3 +325,13 @@ readback и явные I/O/budget errors. Современный screenshot path
 Подробности/лимиты и проверка — [C01 §8](legacy-gl-c01.md#8-u01b-bounded-native-screenshot-completion-2026-11-05).
 Это закрывает initial native screenshot completion seam, но **не U01 целиком и не B1**:
 Game пока modern-owned, interactive native menu/startup и resource/profile integration ещё нужны.
+
+
+### Продолжение A01b/R03a (2026-11-05)
+
+Первый native factory принимает общий borrowed CPU `Resources`, сохраняет stable layer IDs,
+постранично загружает terrain без второй полной CPU-копии, создаёт HUD/glints и публикует generation
+только при успехе. Bounded preparation и lazy-upload cleanup проверяются CPU/GPU fixtures; подробности —
+[C01 §9](legacy-gl-c01.md#9-a01br03a-native-factory-из-cpu-resources-2026-11-05).
+Это заготовка для owning factory wiring, **не завершение A01/R03/G01**: transactional reload,
+animations, реальные pack producers и выбор native owner в Game ещё не подключены.

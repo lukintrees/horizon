@@ -20,6 +20,7 @@ pub enum Phase {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SceneError<E> {
     InvalidAtlas,
+    Atlas(crate::atlas::AtlasError),
     InvalidLightmap,
     InvalidRuns,
     SectionLimit,
@@ -80,6 +81,34 @@ impl<B: RenderBackend> WorldScene<B> {
         if pages.len() != atlas.page_count() || pages.iter().any(|p| Some(p.len()) != bytes) {
             return Err(SceneError::InvalidAtlas);
         }
+        Self::upload_pages(backend, atlas, lightmap, max_sections, |index| {
+            Ok(pages[index])
+        })
+    }
+
+    /// Prepare/upload exactly one page at a time. A failed preparation/upload
+    /// drops the partial owner, reclaiming all previously created textures.
+    pub fn new_paged(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        page: impl FnMut(usize) -> Result<Vec<u8>, crate::atlas::AtlasError>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::upload_pages(backend, atlas, lightmap, max_sections, page)
+    }
+
+    fn upload_pages<P: AsRef<[u8]>>(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        mut page: impl FnMut(usize) -> Result<P, crate::atlas::AtlasError>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        let side = atlas.page_size();
+        let bytes = (side as usize)
+            .checked_mul(side as usize)
+            .and_then(|n| n.checked_mul(4));
         if lightmap.len() != 16 * 16 * 4 {
             return Err(SceneError::InvalidLightmap);
         }
@@ -95,7 +124,12 @@ impl<B: RenderBackend> WorldScene<B> {
             max_sections,
             min_y: 0,
         };
-        for rgba in pages {
+        for index in 0..scene.atlas.page_count() {
+            let rgba = page(index).map_err(SceneError::Atlas)?;
+            let rgba = rgba.as_ref();
+            if Some(rgba.len()) != bytes {
+                return Err(SceneError::InvalidAtlas);
+            }
             let id = scene
                 .backend
                 .create_texture(Image {
