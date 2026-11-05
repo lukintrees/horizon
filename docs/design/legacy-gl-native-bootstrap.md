@@ -103,8 +103,9 @@ Title error screen **до** вызова неподключённых producers.
 проверять **только scratch saves**. Режим не является read-only браузером пользовательских миров.
 Профиль не меняет сохранённые HDR/pack picks; явные Title preferences пользователя могут сохраняться.
 
-Responsive loading window пока нет: full CPU startup происходит до native context/window.
-Это промежуточная реализация, не закрытый этап 2 и не playable world. GLX window fixture
+В MVP 2a full CPU startup ещё происходил до native context/window. MVP 2b ниже
+переносит heavy load на worker после boot window. Это всё ещё не закрытый этап 2
+и не playable world. GLX window fixture
 проверяется на Xvfb с llvmpipe (включая actual X11 front pixels), а не выдаётся за real Game
 runtime. Normal prepared resource folder по-прежнему отсутствует в текущем sandbox.
 
@@ -121,3 +122,62 @@ GL2 fixtures и отдельный `visible_glx` ignored fixture, явно за�
 Локально: 56 standalone Rust tests, Clippy `-D warnings`, 682 Python tests (1 skipped),
 fmt/inventory/public-tree/diff checks. Subsequent dead-window guard/focus refinement
 должен получить собственный exact-head CI result; не наследует эти результаты.
+
+
+## MVP 2b: loading window → CPU worker → тот же context в Game
+
+Обычный visible native route теперь показывает **существующий asset-free boot HUD**
+(`ui_theme::draw_boot`, wordmark/console) до dispatch heavy CPU resource load. Он не
+подменяется fake Title. Существующие `load_resources` и `GameCpuResources::load` работают
+на одном worker; новый renderer/backend/mesher или Game simulation не создаются. Native
+profile по-прежнему vanilla/static SDR/no panorama/no modern texture preparation.
+
+Одна generation, bounded completion channel capacity 1. Нет detached rest loader:
+сейчас весь CPU bundle заканчивается до перехода к Title. Пока worker занят, render thread
+помпит native resize/focus/close/minimize/restore и рисует boot screen. Это ещё не ранний
+интерактивный Title параллельно загрузке world rest.
+
+Close/stop/limited-run timeout ставят cancellation flag; checkpoints проверяются между
+CPU phases. Уже идущий file read/model bake не прерывается насильно. Main thread продолжает
+pump до завершения worker и делает join перед возвратом/следующей generation. Fatal GPU/
+pump error тоже отменяет и join-ит worker через Drop; такой emergency cleanup может ждать
+текущую CPU phase, без гарантии hard wall-clock deadline на зависшем файловом вводе.
+Не допускается продолжать global/cache writes от забытой generation после выхода.
+
+После join boot GPU allocations удаляются **до** передачи того же owning Context в
+`RendererOwner::legacy_menu_with_context`. Не создаётся второе окно/device; reference на
+boot context не утечёт. `Resources` остаются local owned Arc, без Box::leak нового route.
+GUI font/UI-theme cache сбрасываются на publication; loading focus переносится в Game.
+GPU asset staging после worker всё ещё синхронен: latency этой фазы логируется, она пока
+не разбита на bounded pump-aware uploads. Не утверждается непрерывная отзывчивость внутри неё.
+
+`--native-bootstrap-only` остаётся отдельной sync диагностикой. В normal menu report добавлены
+`loading_presentations` и `loading_context_transferred`. Закрытие до Game construction пишет
+`scenario=native-game-loading-cancelled`, `game_constructed=false`, `worker_joined=true`;
+его нельзя выдавать за menu smoke. `--frames` считает только Game menu frames, не boot frames;
+loading timeout для limited run применяется до handoff, menu loop имеет собственный budget.
+
+### Воспроизводимый normal-resource smoke (не выполнен здесь)
+
+```sh
+# Собрать feature-enabled binary, как выше. RESOURCE_DIR — только ваши ресурсы.
+# Linux: DISPLAY + libGL/X11/xkbcommon; для software GL2 можно использовать xvfb-run.
+python3 tools/native_game_menu_smoke.py \
+  --game target/debug/horizon-client --resources "$RESOURCE_DIR" \
+  --report .local/legacy-gl/native-menu.json
+```
+
+Runner сам создаёт fresh scratch home/game/player/XDG dirs, удаляет inherited HORIZON
+fixture/control/session switches, сохраняет display/ICD environment и не скачивает assets.
+Стартует **сам client** `--renderer native-gl2 --frames 180`, ждёт normal exit и строго
+проверяет actual Game report: menu-only scenario, native backend, loading presentations,
+same-context handoff, Game constructed и Presented menu frames. 180 frames дают время
+первоначальной onboarding fade; проверка не доказывает ручную навигацию/ввод.
+Timeout/nonzero exit/missing or offscreen/bootstrap/cancelled report не принимаются за успех.
+В итоговом JSON сохраняются binary hash, report и log tails, но не game assets/сохранения.
+`--frames N`, `--timeout SECONDS` на runner задают budget; клиенту передаётся
+`--timeout-seconds`. Exit 2 означает missing prerequisites, а не runtime PASS.
+
+Unit mocks runner-а — только проверки isolation/report validation. OSMesa boot/HUD и GLX
+same-context asset handoff fixtures — renderer/window evidence, **не normal-assets Game**.
+Здесь resources folder отсутствует, полный запуск этой команды по-прежнему не выполнен.

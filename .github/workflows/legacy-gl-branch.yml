@@ -219,12 +219,13 @@ jobs:
           done
       - name: Exercise visible boot HUD and same-context Game asset handoff
         env:
+          HORIZON_OSMESA_LIBRARY: libOSMesa.so.8
           LIBGL_ALWAYS_SOFTWARE: '1'
           GALLIUM_DRIVER: llvmpipe
           MESA_GL_VERSION_OVERRIDE: '2.0'
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
-          if xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --locked -p horizon-client-render --features legacy-gl --lib native_loading::tests::visible_boot_ -- --ignored > target/legacy-branch/visible-boot.log 2>&1; then
+          if cargo test --locked -p horizon-client --no-default-features --features legacy-gl --lib game::native_loading::tests::boot_producer_ -- --ignored > target/legacy-branch/visible-boot.log 2>&1 && xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --locked -p horizon-client-render --features legacy-gl --lib native_loading::tests::visible_boot_ -- --ignored >> target/legacy-branch/visible-boot.log 2>&1; then
             cat target/legacy-branch/visible-boot.log
           else
             cat target/legacy-branch/visible-boot.log

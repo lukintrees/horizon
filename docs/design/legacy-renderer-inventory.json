@@ -2464,7 +2464,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_loading.rs",
-      "sha256": "5a6c63d3facf02e30be5155919b149a08efeea9bd1f3293e87fa1a1839b56838",
+      "sha256": "4f3449ed55130fa79c5c0eee44c73eb45164fa6c3fe54b695c2879f74a23b95b",
       "references": [
         {
           "line": 96,
@@ -2481,14 +2481,14 @@
           "code": "render_startup::Renderer::context_kind(false)?,"
         },
         {
-          "line": 125,
+          "line": 127,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "render_startup::Renderer::NativeGl2,"
         },
         {
-          "line": 296,
+          "line": 317,
           "kinds": [
             "owner/factory/reference"
           ],
@@ -2551,7 +2551,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_startup.rs",
-      "sha256": "c9c4e69221c5302cd710f5c117c5e8785c42c2d65136d88abe67e7abeb50f852",
+      "sha256": "05de1f8d5968cf4a66719de5f62306a92bac0c3998d7b49248e6ca54866a922a",
       "references": [
         {
           "line": 11,
@@ -2610,63 +2610,63 @@
           "code": "game.renderer = RendererOwner::legacy_menu_with_context("
         },
         {
-          "line": 40,
+          "line": 42,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if game.renderer.backend() != Some(Backend::LegacyGl)"
         },
         {
-          "line": 41,
+          "line": 43,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "|| !game.options.renderer.is_native()"
         },
         {
-          "line": 55,
+          "line": 57,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 57,
+          "line": 59,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".ok_or(\"missing native Game renderer\")?"
         },
         {
-          "line": 62,
+          "line": 64,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let menu = game.options.renderer.menu(&hud);"
         },
         {
-          "line": 63,
+          "line": 65,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "game.renderer"
         },
         {
-          "line": 65,
+          "line": 67,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".ok_or(\"missing native Game renderer\")?"
         },
         {
-          "line": 73,
+          "line": 75,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "game.options.renderer.validate(&game.options)?;"
         },
         {
-          "line": 98,
+          "line": 100,
           "kinds": [
             "owner/factory/reference"
           ],

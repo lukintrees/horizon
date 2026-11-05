@@ -101,7 +101,9 @@ pub(super) fn run(
         render_startup::Renderer::context_kind(false)?,
         options.window_size,
     )?;
+    horizon_client::hud::GUI_SCALE.store(settings.gui_scale, Ordering::Relaxed);
     let boot = HudAtlas::boot();
+    horizon_client::ui_theme::reset_atlas();
     let progress = Progress::new();
     let mut shown = 0u64;
     let mut loaded;
@@ -227,6 +229,25 @@ mod tests {
             }
             assert!(start.elapsed() < Duration::from_secs(5));
             std::thread::yield_now();
+        }
+    }
+    #[test]
+    #[ignore = "requires OSMesa and GL2 overrides; real boot HUD producer, not a full Game launch"]
+    fn boot_producer_rasterizes_wordmark_console_and_glyph_updates() {
+        let context = Context::new("osmesa", [640, 360]).unwrap();
+        let boot = HudAtlas::boot();
+        horizon_client::ui_theme::reset_atlas();
+        let mut screen = LoadingScreen::new(&context, &boot).unwrap();
+        for frame in 0..8 {
+            boot.font.begin_frame();
+            let mut batch = HudBatch::new(context.size());
+            let lines = vec![format!("Loading CPU resources, phase {frame}: окно")];
+            horizon_client::ui_theme::draw_boot(&boot, &mut batch, &lines);
+            assert!(!batch.vertices.is_empty());
+            if frame == 0 {
+                assert!(!batch.patches.is_empty());
+            }
+            assert_eq!(screen.draw(&batch).unwrap(), FrameOutcome::Offscreen);
         }
     }
     #[test]

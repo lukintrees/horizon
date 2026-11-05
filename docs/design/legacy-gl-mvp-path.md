@@ -73,9 +73,20 @@ native window/event loop/loading menu; world CPU poses/visibility остаютс
 не pbuffer), native event pump и menu-only adapter в существующий Game/Title. Resize/focus/
 close, pointer, базовые UI keys/Unicode text идут без поддельных winit IDs. World entry,
 modern-only options и external actions пока показывают явную ошибку в настоящем Title;
-симуляция не запускается. CPU resources по-прежнему загружаются синхронно до окна:
-responsive loading/handoff ещё не подключён. XIM/preedit/compose и gameplay input не закрыты.
+симуляция не запускается. В этом первом patch CPU resources ещё загружались до окна;
+следующий MVP 2b ниже меняет этот порядок. XIM/preedit/compose и gameplay input не закрыты.
 Window-level Xvfb/llvmpipe evidence не заменяет actual Game runtime с normal resources.
+
+Продолжение MVP 2b: native window + existing asset-free boot HUD теперь создаются **до**
+resource worker. Один worker готовит existing resources + GameCpuResources, не создавая
+modern PreparedTextures и detached rest loader. Main thread продолжает native pump/draw;
+close/stop отменяют работу на CPU phase boundaries и ждут join с продолжающимся pump.
+Boot GPU resources освобождаются, тот же Context передаётся actual Game native factory.
+GPU staging/handoff остаётся синхронным и отдельно логируется — не обещана нулевая задержка
+в этой фазе. Offscreen/однокадровый bootstrap сохраняет диагностический sync route.
+Full assets runtime здесь всё ещё не наблюдался; окно/owner fixtures и compile не закрывают gate.
+Reproducer: `tools/native_game_menu_smoke.py` с собственными normal prepared resources,
+без control socket или synthetic Game. Это menu-only smoke, не world E2E/ручная навигация.
 
 **Выход:** в видимом окне Game можно пройти меню и выбрать мир. Pbuffer/OSMesa не замена.
 Полную main-menu panorama/blur не делать до playable world.

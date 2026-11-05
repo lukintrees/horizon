@@ -448,3 +448,21 @@ producers показывают Title::failed до world entry. Native startup б
 выбирает видимый menu-only loop; offscreen ограничен bootstrap-only. Lifecycle/platform
 часть этапа 2 начата, responsive loading/full UI/gameplay и actual-resource runtime evidence
 ещё открыты. См. [команды и ограничения](legacy-gl-native-bootstrap.md).
+
+
+## 17. MVP 2b: responsive native loading и same-context handoff
+
+Native normal startup: main-thread Context/borrowed LoadingScreen → actual boot HUD before
+worker dispatch → one bounded CPU completion → joined worker → drop boot GPU resources →
+move **same** Context into existing native asset factory → Game/Title menu loop.
+No native GPU handles/Context reach worker; no second window/modern renderer/PreparedTextures,
+no terrain placeholder, no leaked Resources lifetime. Bootstrap-only diagnostic remains sync.
+
+Cancellation belongs to loader generation (shared Progress flag); CPU checkpoints + joined
+ownership prevent late publication/worker accumulation. Normal cancel continues pumping until
+join; error-path Drop may wait for an uninterruptible phase. Full CPU load currently precedes
+Title; GPU handoff remains synchronous and measured, not a bounded streaming-upload claim.
+Boot and main-menu fonts/UI-theme cache publish at renderer commit; focus survives handoff.
+`tools/native_game_menu_smoke.py` consumes real Game reports in fresh scratch dirs and cannot
+accept bootstrap/offscreen/cancelled as observed native menu. No actual-resource runtime or
+world/input/save/reopen/Win7 gate is closed by its unit mocks or the GLX/OSMesa fixtures.

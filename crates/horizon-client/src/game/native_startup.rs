@@ -33,6 +33,8 @@ pub(super) fn initialize_with_context(
         &game.gui.atlas,
         ResourceGeneration(1),
     )?;
+    // The boot producer's cached UI-theme UVs belong to its retired atlas.
+    horizon_client::ui_theme::reset_atlas();
     Ok(())
 }
 
