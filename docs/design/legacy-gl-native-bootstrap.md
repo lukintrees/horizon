@@ -152,7 +152,9 @@ GPU asset staging после worker всё ещё синхронен: latency э
 не разбита на bounded pump-aware uploads. Не утверждается непрерывная отзывчивость внутри неё.
 
 `--native-bootstrap-only` остаётся отдельной sync диагностикой. В normal menu report добавлены
-`loading_presentations` и `loading_context_transferred`. Закрытие до Game construction пишет
+`loading_presentations`, `loading_context_transferred` и `loading_worker_joined`.
+Context-transfer/join flags независимы от числа показанных boot frames (например, при
+минимизированном окне оно может быть нулевым); smoke требует и flags, и положительный счётчик. Закрытие до Game construction пишет
 `scenario=native-game-loading-cancelled`, `game_constructed=false`, `worker_joined=true`;
 его нельзя выдавать за menu smoke. `--frames` считает только Game menu frames, не boot frames;
 loading timeout для limited run применяется до handoff, menu loop имеет собственный budget.

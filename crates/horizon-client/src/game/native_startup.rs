@@ -69,9 +69,12 @@ pub(super) fn render_menu(game: &mut Game<'_>) -> Result<FrameOutcome> {
 }
 
 pub(super) fn run(game: Game<'_>) -> Result<()> {
-    run_with_loading(game, 0)
+    run_inner(game, None)
 }
-pub(super) fn run_with_loading(mut game: Game<'_>, loading_presentations: u64) -> Result<()> {
+pub(super) fn run_with_loading(game: Game<'_>, loading_presentations: u64) -> Result<()> {
+    run_inner(game, Some(loading_presentations))
+}
+fn run_inner(mut game: Game<'_>, loading_presentations: Option<u64>) -> Result<()> {
     game.options.renderer.validate(&game.options)?;
     let bootstrap = game.options.native_bootstrap_only;
     let outcome = if bootstrap {
@@ -104,8 +107,9 @@ pub(super) fn run_with_loading(mut game: Game<'_>, loading_presentations: u64) -
         let report = serde_json::json!({
             "scenario": if bootstrap {"native-game-bootstrap-only"} else {"native-game-menu-only"},
             "game_constructed": true,
-            "loading_presentations": loading_presentations,
-            "loading_context_transferred": loading_presentations > 0,
+            "loading_presentations": loading_presentations.unwrap_or(0),
+            "loading_context_transferred": loading_presentations.is_some(),
+            "loading_worker_joined": loading_presentations.is_some(),
             "backend": "native-gl2",
             "resource_generation": generation.map(|g|g.0),
             "menu_submissions": game.frames,

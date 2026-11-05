@@ -11,6 +11,7 @@ from tools import native_game_menu_smoke as smoke
 def report():
     return {"scenario": "native-game-menu-only", "backend": "native-gl2",
             "game_constructed": True, "loading_context_transferred": True,
+            "loading_worker_joined": True,
             "loading_presentations": 2, "menu_submissions": 3, "resource_generation": 1,
             "outcome": "Presented", "presented": True, "playable": False, "world_opened": False}
 
@@ -20,7 +21,8 @@ class SmokeTests(unittest.TestCase):
         smoke.validate_report(report(), 3)
         for key, value in (("scenario", "native-game-bootstrap-only"), ("outcome", "Offscreen"),
                            ("backend", "modern"), ("game_constructed", False),
-                           ("loading_context_transferred", False), ("loading_presentations", 0),
+                           ("loading_context_transferred", False), ("loading_worker_joined", False),
+                           ("loading_presentations", 0),
                            ("menu_submissions", 0), ("menu_submissions", True),
                            ("resource_generation", None), ("presented", 1),
                            ("playable", True), ("world_opened", True)):

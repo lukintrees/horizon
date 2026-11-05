@@ -22,6 +22,7 @@ except ImportError:
 def validate_report(report: dict, frames: int) -> None:
     expected = {"scenario": "native-game-menu-only", "backend": "native-gl2",
                 "game_constructed": True, "loading_context_transferred": True,
+                "loading_worker_joined": True,
                 "outcome": "Presented", "presented": True, "playable": False,
                 "world_opened": False}
     for key, value in expected.items():
