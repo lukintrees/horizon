@@ -341,6 +341,102 @@ mod tests {
             .is_err()
         );
     }
+    #[test]
+    fn hud_dirty_pages_share_budget_with_terrain_and_inputs_are_checked() {
+        use horizon_render_api::atlas::{SpriteSize, pack_atlas};
+        let atlas = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }],
+            4,
+            1,
+            1,
+        )
+        .unwrap();
+        let layout = Layout::new([4, 4], 4, 4).unwrap();
+        let rect = crate::hud::Rect {
+            u0: 0.,
+            v0: 0.,
+            u1: 1.,
+            v1: 1.,
+            w: 4,
+            h: 4,
+        };
+        let clip = crate::sprites::test_frames(
+            0,
+            vec![vec![0, 50, 100, 150], vec![100, 150, 200, 250]],
+            r#"{"frametime":4,"interpolate":true}"#,
+        );
+        let state = Animations::new(
+            std::slice::from_ref(&clip),
+            &[(rect, clip.clone())],
+            &atlas,
+            layout,
+            Limits::default(),
+        )
+        .unwrap();
+        // 4 terrain + 64 HUD sampled pixels + four decoded 64-byte pages.
+        let work = state.prepare(2, layout, 324).unwrap();
+        assert_eq!(work.terrain_bytes, 4);
+        assert_eq!(work.hud[0].rgba, [50, 100, 150, 200].repeat(16));
+        assert!(state.prepare(2, layout, 323).is_err());
+        assert!(state.ready().is_ok()); // preflight failure did not poison the owner
+        for limits in [
+            Limits {
+                animation_sprites: 0,
+                ..Limits::default()
+            },
+            Limits {
+                animation_frames: 1,
+                ..Limits::default()
+            },
+        ] {
+            assert!(
+                Animations::new(std::slice::from_ref(&clip), &[], &atlas, layout, limits).is_err()
+            );
+        }
+        let unknown =
+            crate::sprites::test_frames(1, vec![vec![0; 4], vec![1; 4]], r#"{"frametime":4}"#);
+        assert!(Animations::new(&[unknown], &[], &atlas, layout, Limits::default()).is_err());
+        for frames in [
+            vec![vec![], vec![]],
+            vec![vec![0; 3], vec![0; 3]],
+            vec![vec![0; 4], vec![0; 16]],
+        ] {
+            let malformed = crate::sprites::test_frames(0, frames, r#"{"frametime":4}"#);
+            assert!(Animations::new(&[malformed], &[], &atlas, layout, Limits::default()).is_err());
+        }
+        for invalid in [
+            crate::hud::Rect {
+                u0: f32::NAN,
+                ..rect
+            },
+            crate::hud::Rect { u1: 2., ..rect },
+            crate::hud::Rect { u1: 0., ..rect },
+        ] {
+            assert!(
+                Animations::new(
+                    &[],
+                    &[(invalid, clip.clone())],
+                    &atlas,
+                    layout,
+                    Limits::default()
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            Animations::new(
+                &[],
+                &[(rect, clip.clone()), (rect, clip)],
+                &atlas,
+                layout,
+                Limits::default()
+            )
+            .is_err()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -373,6 +469,8 @@ mod gpu_tests {
             v0: 0.,
             u1: 0.5,
             v1: 1.,
+            w: 2,
+            h: 4,
         };
         atlas.sprites.insert("horizon/white".into(), rect);
         atlas.sprite_animations.push((
@@ -415,7 +513,7 @@ mod gpu_tests {
         }
         renderer.upload_section([0; 3], &mesh).unwrap();
         let mut hud = HudBatch::new([64; 2]);
-        hud.fill(&atlas, 0., 0., 16., 16., u32::MAX);
+        hud.rect_uv(0., 0., 16., 16., rect, u32::MAX);
         let scene = SceneFrame {
             view_projection: IDENTITY,
             camera: [0.; 3],
