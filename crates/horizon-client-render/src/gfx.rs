@@ -6077,10 +6077,14 @@ impl Renderer {
         bob: Mat4,
         depth_far: f32,
     ) -> Frustum {
-        let views = ViewSet::single(self.screen_view(fov_degrees, yaw, pitch, depth_far));
-        Frustum {
-            planes: frustum(views.cull().view_proj(bob)),
-        }
+        camera_frustum(
+            [self.config.width, self.config.height],
+            fov_degrees,
+            yaw,
+            pitch,
+            bob,
+            depth_far,
+        )
     }
     fn screen_view(&self, fov_degrees: f32, yaw: f32, pitch: f32, far: f32) -> View {
         let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
@@ -10369,6 +10373,13 @@ pub struct Frustum {
     planes: [Vec4; 6],
 }
 impl Frustum {
+    /// The planes of a clip-space matrix. The native Game path has no wgpu
+    /// renderer to ask, and culls with the same view-projection it draws.
+    pub fn from_view_projection(view_projection: Mat4) -> Self {
+        Self {
+            planes: frustum(view_projection),
+        }
+    }
     /// Whether the camera-relative box `min..max` is at least partly inside.
     pub fn intersects(&self, min: Vec3, max: Vec3) -> bool {
         !self.planes.iter().any(|p| {
@@ -10394,6 +10405,23 @@ impl Frustum {
             p.truncate().dot(v) + p.w >= 0.0
         })
     }
+}
+/// The flat-screen cull frustum for `size`, without a renderer. `Game` builds
+/// the world frame for either backend; on the native route there is no wgpu
+/// device to ask [`Renderer::camera_frustum`]. `pose` is the view bob/spin
+/// applied between the lens and the rotation, as in a frame.
+pub fn camera_frustum(
+    size: [u32; 2],
+    fov_degrees: f32,
+    yaw: f32,
+    pitch: f32,
+    pose: Mat4,
+    far: f32,
+) -> Frustum {
+    let aspect = size[0] as f32 / size[1].max(1) as f32;
+    Frustum::from_view_projection(
+        View::screen(yaw, pitch, fov_degrees, aspect, far).view_proj(pose),
+    )
 }
 /// Vanilla's `Projection`: reversed depth (near maps to 1, far to 0, tests
 /// are GREATER_THAN_OR_EQUAL), which keeps far faces a hair apart, like
@@ -10509,6 +10537,43 @@ fn frustum(m: Mat4) -> [Vec4; 6] {
 #[cfg(test)]
 mod tests {
     use crate::gfx::static_entity_shader;
+
+    /// A frame size is all the native route has: yaw 0 looks south (+Z),
+    /// yaw 90 west (-X), and the far plane ends the view.
+    #[test]
+    fn flat_screen_frustum_follows_minecraft_yaw_and_the_far_plane() {
+        let identity = glam::Mat4::IDENTITY;
+        let south = super::camera_frustum([1920, 1080], 70.0, 0.0, 0.0, identity, 256.0);
+        assert!(south.intersects(glam::Vec3::new(-1., -1., 9.), glam::Vec3::new(1., 1., 11.)));
+        assert!(!south.intersects(
+            glam::Vec3::new(-1., -1., -11.),
+            glam::Vec3::new(1., 1., -9.)
+        ));
+        assert!(!south.intersects(
+            glam::Vec3::new(-1., -1., 300.),
+            glam::Vec3::new(1., 1., 302.)
+        ));
+
+        let west = super::camera_frustum([1920, 1080], 70.0, 90.0, 0.0, identity, 256.0);
+        assert!(west.intersects(
+            glam::Vec3::new(-11., -1., -1.),
+            glam::Vec3::new(-9., 1., 1.)
+        ));
+        assert!(!west.intersects(glam::Vec3::new(9., -1., -1.), glam::Vec3::new(11., 1., 1.)));
+    }
+
+    /// The same box 45 degrees to the side is inside a wide window and outside
+    /// a narrow one: the producer must use the frame's aspect, not a square.
+    #[test]
+    fn flat_screen_frustum_follows_the_aspect_ratio() {
+        let identity = glam::Mat4::IDENTITY;
+        let at_45 = |size| {
+            super::camera_frustum(size, 70.0, 0.0, 0.0, identity, 256.0)
+                .intersects(glam::Vec3::new(9., -1., 9.), glam::Vec3::new(11., 1., 11.))
+        };
+        assert!(at_45([400, 100]));
+        assert!(!at_45([100, 400]));
+    }
 
     fn adapter(device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
         wgpu::AdapterInfo {

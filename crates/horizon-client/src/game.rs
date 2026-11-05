@@ -15592,11 +15592,7 @@ impl Game<'_> {
             }
             return Ok(false);
         }
-        let Some(size) = self
-            .renderer
-            .modern_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return Ok(false);
         };
         let alpha = self.clock.fraction();
@@ -15860,10 +15856,14 @@ impl Game<'_> {
                 dimension: self.dim.id().to_string(),
             }
         });
-        self.view_frustum = self
-            .renderer
-            .modern_ref()
-            .map(|r| r.camera_frustum(fov_degrees, yaw, pitch, bob * spin, depth_far));
+        self.view_frustum = Some(horizon_client::gfx::camera_frustum(
+            size,
+            fov_degrees,
+            yaw,
+            pitch,
+            bob * spin,
+            depth_far,
+        ));
         // Keep the buffer local while builders need mutable access to the game.
         let mut entities = std::mem::take(&mut self.entity_vertices);
         entities.clear();

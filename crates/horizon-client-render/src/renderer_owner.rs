@@ -71,6 +71,16 @@ impl RendererOwner {
             Owner::Legacy(_) => Some(Backend::LegacyGl),
         }
     }
+    /// The frame size the world producer needs before it can cull or lay out a
+    /// frame. `None` while no device exists yet, as before the native route.
+    pub fn size(&mut self) -> Option<[u32; 2]> {
+        match &mut self.inner {
+            Owner::Empty => None,
+            Owner::Modern(renderer) => Some([renderer.config.width, renderer.config.height]),
+            #[cfg(feature = "legacy-gl")]
+            Owner::Legacy(renderer) => Some(renderer.size()),
+        }
+    }
     /// A native owner may not enter winit/wgpu initialization or recovery.
     /// Empty is permitted: the default modern startup has not created a device yet.
     pub fn allow_modern_startup(&self) -> Result<(), &'static str> {
