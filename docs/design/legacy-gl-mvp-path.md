@@ -131,16 +131,21 @@ winit events с synthetic IDs. World entry/options/reconnect/deferred requests
 по-прежнему отказывают в общем Game до неподключённых side effects. Это **seam,
 не runtime acceptance**: normal-resource Game и мир здесь ещё не запускались.
 
+Промежуточный срез 3c: `RendererOwner::native_visible_sections` строит
+caller-owned `SectionOrder` из committed native residency и её Y origin.
+Shared camera frustum / distance predicate, полные 16³ AABB и f64 subtraction
+дают solid nearest-first/key ties и обратный translucent order. Pending GPU
+removal запрещает публикацию списка. Это ещё не Game caller: world-entry guard
+остаётся, а synthetic actual-Frame readback не закрывает runtime gate.
+
 Следующие seam'ы по порядку:
-1. Resident section keys у legacy owner → `VisibleSections` (frustum по AABB
-    секции 16³ и distance; cave graph современного renderer'а пока не
-    переносится — это оптимизация, не корректность), с caller-owned order.
-2. Existing world `Frame` → facade, live camera/lightmap/animations и CPU poses;
+1. Existing world `Frame` → facade с уже добавленным resident visibility/order,
+   live camera/lightmap/animations и CPU poses;
    снять world-entry guard только вместе с working native world submission.
    Без resident visibility такой кадр нарисовал бы небо/entities без terrain.
-3. Streaming: upload/unload в `update_world` через facade для legacy owner
+2. Streaming: upload/unload в `update_world` через facade для legacy owner
     (сейчас весь блок под `modern_mut()`); tickets W01a уже в ветке.
-4. Gameplay input (WASD/jump/capture/Escape) на native pump.
+3. Gameplay input (WASD/jump/capture/Escape) на native pump.
 
 **Выход:** игрок ходит по настоящему миру; chunks появляются и выгружаются в движении.
 Только конкретные unsupported producers этого сценария становятся blockers следующего patch.

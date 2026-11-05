@@ -132,6 +132,36 @@ fn reset_validation_and_cleanup_failures_do_not_publish_a_new_origin() {
     assert_eq!(scene.backend_mut().origins, [[0., -64., 0.]]);
     assert_eq!(scene.backend_mut().meshes.len(), 1);
 }
+
+#[test]
+fn enumerated_membership_tracks_replacement_unload_and_failed_reset() {
+    let mut scene = scene();
+    let membership = |scene: &WorldScene<Backend>| {
+        let mut keys: Vec<_> = scene.section_keys().collect();
+        keys.sort_unstable();
+        keys
+    };
+    for key in [[2, 3, -1], [-2, 0, 3], [-2, 7, 3]] {
+        scene.replace_section(key, &runs(), &[]).unwrap();
+    }
+    scene.replace_section([-2, 0, 3], &runs(), &[]).unwrap();
+    assert_eq!(membership(&scene), [[-2, 0, 3], [-2, 7, 3], [2, 3, -1]]);
+    scene.unload_column([-2, 3]).unwrap();
+    assert_eq!(membership(&scene), [[2, 3, -1]]);
+    scene.backend_mut().fail_remove = true;
+    assert!(scene.reset_sections(-64).is_err());
+    assert_eq!(membership(&scene), [[2, 3, -1]]);
+    draw(&mut scene, &[[2, 3, -1]]);
+    assert_eq!(scene.backend().origins, [[32., 48., -16.]]);
+    scene.reset_sections(-64).unwrap();
+    assert!(membership(&scene).is_empty());
+    scene.replace_section([0; 3], &runs(), &[]).unwrap();
+    assert_eq!(membership(&scene), [[0; 3]]);
+    draw(&mut scene, &[[0; 3]]);
+    assert_eq!(scene.backend().origins, [[0., -64., 0.]]);
+    scene.unload_section([0; 3]).unwrap();
+    assert!(membership(&scene).is_empty());
+}
 #[test]
 fn column_removal_keeps_other_columns_and_retries_garbage() {
     let mut scene = scene();

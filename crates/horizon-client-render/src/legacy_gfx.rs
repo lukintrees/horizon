@@ -298,6 +298,15 @@ impl TerrainHudRenderer {
     pub fn has_section(&self, key: SectionKey) -> bool {
         self.world.has_section(key)
     }
+    /// Resident membership for the caller's CPU visibility walk. A revoked
+    /// lease awaiting GPU removal must not become a drawable visible list.
+    pub fn section_keys(&self) -> Result<impl ExactSizeIterator<Item = SectionKey> + '_, String> {
+        self.streaming_ready()?;
+        Ok(self.world.section_keys())
+    }
+    pub fn terrain_min_y(&self) -> i32 {
+        self.world.min_y()
+    }
     pub fn clear_sections(&mut self, layout: crate::chunk::ColumnLayout) -> Result<(), String> {
         self.unstamped_sections()?;
         self.world

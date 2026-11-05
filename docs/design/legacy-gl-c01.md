@@ -523,3 +523,38 @@ runtime gates 1/2/3 и Win7/X1650 qualification остаются открыты�
 Защитные тесты не ослаблены. Исходный WSL checkout дал 15 failures/1 error из-за
 CRLF shell scripts/hooks и shebang `python3\r`; это не Game runtime evidence.
 Новый commit требует собственного aggregate CI, а не результатов `91488af43`.
+
+## 20. MVP 3c: native resident visibility/order seam
+
+Compatible v1 additions: `WorldScene::section_keys` заимствует committed
+membership без второго index, `min_y` возвращает committed Y origin.
+`TerrainHudRenderer::section_keys` сначала проверяет pending-removal barrier;
+revoked lease с незавершённым GPU cleanup не становится draw list.
+
+`RendererOwner::native_visible_sections` заполняет caller-owned `SectionOrder`:
+shared `streaming::in_view_distance` и `gfx::Frustum`, full 16³ AABB,
+camera subtraction в f64 до f32, centre-distance/key ties nearest-first для
+solid и обратный порядок для translucent. Scratch capacity ограничена actual
+resident cap и резервируется fallibly; failed walk не публикует старые списки.
+Borrow membership освобождается до facade submission. Cave graph и сортировка
+translucent quads внутри секции не дублируются: последняя остаётся у producer.
+
+CPU regressions покрывают permutation/order, camera walk, AABB/distance slack,
+negative flooring, dimension origin, world-edge precision и failed-list clearing.
+OSMesa regression scope — real `Frame`/facade readback, resident-only selection,
+translucent order, camera movement, unload и смена world/Y origin. Это synthetic
+geometry fixture, **не** запуск normal-resource Game. Game caller/world Frame,
+live CPU poses, stamped Game streaming и gameplay input ещё не подключены;
+world-entry guard, runtime gates 1/2/3 и Win7/X1650 qualification остаются открытыми.
+
+CI01 scope policy защищает и `renderer_owner/**`, а не только owning `.rs`:
+task edit нового visibility module отвергается; integration role разрешён.
+Локально на стабильных Rust sources прошли 15 focused commands в default/native
+профилях и standalone render-api (47 tests + all-targets Clippy). Повторный
+`pr_ready --quick --base 1a12a2d51` с test `line-tables-only` прошёл public tree,
+fmt/Clippy/doc checks и 1308 Rust tests, но **не green**: Python — 689 run,
+один неизменённый `WinError 1314` symlink privilege error, 15 skipped.
+Две unchanged crash source-location assertions падали только в validation с
+debug=0: frozen-source A/B дважды воспроизвёл failure и дважды прошёл с render-package
+line tables, без правок tests/production code. Новый OSMesa fixture локально только
+compiled/ignored; actual execution требует собственного exact-head Linux CI.

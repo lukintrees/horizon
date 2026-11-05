@@ -3,6 +3,9 @@
 use crate::{gfx, renderer_facade::RendererFacade};
 use horizon_render_api::render_contract::{Backend, FrameOptions, VisibleSections};
 
+mod visibility;
+pub use visibility::SectionOrder;
+
 #[derive(Default)]
 pub struct RendererOwner {
     inner: Owner,
@@ -80,6 +83,30 @@ impl RendererOwner {
             #[cfg(feature = "legacy-gl")]
             Owner::Legacy(renderer) => Some(renderer.size()),
         }
+    }
+    /// Fill caller-owned CPU visibility from native residency, then release the
+    /// resident borrow before facade submission. Modern retains its own walk;
+    /// `None` is not an invented empty native scene or permission to fall back.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_visible_sections<'a>(
+        &self,
+        order: &'a mut SectionOrder,
+        camera: glam::DVec3,
+        radius: i32,
+        frustum: &gfx::Frustum,
+    ) -> crate::Result<Option<VisibleSections<'a>>> {
+        order.clear();
+        let Owner::Legacy(renderer) = &self.inner else {
+            return Ok(None);
+        };
+        order.update(
+            renderer.section_keys()?,
+            renderer.terrain_min_y(),
+            camera,
+            radius,
+            frustum,
+        )?;
+        Ok(Some(order.visible()))
     }
     /// A native owner may not enter winit/wgpu initialization or recovery.
     /// Empty is permitted: the default modern startup has not created a device yet.

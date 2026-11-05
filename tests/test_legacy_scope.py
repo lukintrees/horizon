@@ -56,9 +56,10 @@ class ScopeTests(unittest.TestCase):
     def test_protected_changes_including_new_manifests_are_rejected(self):
         for path in ["Cargo.toml", "Cargo.lock", "crates/new/Cargo.toml", "new/Cargo.lock",
                      ".github/workflows/fake.yml", ".github/legacy-gl-policy.json",
-                      "tools/ci/legacy_scope.py", "AGENTS.md",
-                      "crates/horizon-client-render/src/renderer_facade.rs",
-                      "crates/horizon-client-render/src/legacy_gfx/asset_snapshot.rs",
+                       "tools/ci/legacy_scope.py", "AGENTS.md",
+                       "crates/horizon-client-render/src/renderer_facade.rs",
+                       "crates/horizon-client-render/src/renderer_owner/visibility.rs",
+                       "crates/horizon-client-render/src/legacy_gfx/asset_snapshot.rs",
                       "crates/horizon-client-render/src/legacy_gfx/resources.rs",
                       "crates/horizon-client-render/src/frame/skin.rs",
                       "crates/horizon-render-api/src/platform_contract.rs",
@@ -73,6 +74,9 @@ class ScopeTests(unittest.TestCase):
             scope.inspect_paths(["docs/design/legacy-gl-integration.md"], "task", POLICY)
         self.assertEqual(scope.inspect_paths(["tests/test_thing.py"], "task", POLICY), "full")
         self.assertEqual(scope.inspect_paths(["Cargo.toml"], "integration", POLICY), "full")
+        self.assertEqual(scope.inspect_paths(
+            ["crates/horizon-client-render/src/renderer_owner/visibility.rs"],
+            "integration", POLICY), "full")
 
     def test_metadata_is_required_but_does_not_authorize(self):
         body = event()["pull_request"]["body"]

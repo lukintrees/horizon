@@ -224,6 +224,17 @@ impl<B: RenderBackend> WorldScene<B> {
         self.sections.contains_key(&key)
     }
 
+    /// Borrow actual resident membership, not a second index or a visible list.
+    /// Storage order is unspecified; the caller owns culling and draw order.
+    pub fn section_keys(&self) -> impl ExactSizeIterator<Item = SectionKey> + '_ {
+        self.sections.keys().copied()
+    }
+
+    /// The committed block Y origin of section index zero.
+    pub fn min_y(&self) -> i32 {
+        self.min_y
+    }
+
     /// A dimension change commits a new Y origin only after validation and
     /// previous garbage cleanup. Texture/atlas/lightmap resources survive.
     /// Removed meshes are retained for retry until the next upload/draw/cleanup.

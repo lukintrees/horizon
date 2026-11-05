@@ -436,6 +436,7 @@ mod gpu_tests {
         // fault/retry tests deliberately omit the backend acknowledgement).
         let before = renderer.read_rgba([0, 0, 64, 64]).unwrap();
         assert!(renderer.streaming.as_mut().unwrap().revoke([0; 3], revisit));
+        assert!(renderer.section_keys().is_err());
         assert!(renderer.render_menu(&hud, [0.; 4]).is_err());
         assert!(
             renderer
@@ -454,6 +455,7 @@ mod gpu_tests {
                 .removals,
             1
         );
+        assert!(renderer.section_keys().unwrap().next().is_none());
         let pending = facade(&mut renderer)
             .request_stream_section([0; 3])
             .unwrap()
