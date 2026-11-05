@@ -2551,7 +2551,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_startup.rs",
-      "sha256": "05de1f8d5968cf4a66719de5f62306a92bac0c3998d7b49248e6ca54866a922a",
+      "sha256": "c1f9fc951d240f4922602a32f24d67fad774537cbc34699e7a453531738629b1",
       "references": [
         {
           "line": 11,
@@ -2659,14 +2659,14 @@
           "code": ".ok_or(\"missing native Game renderer\")?"
         },
         {
-          "line": 75,
+          "line": 78,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "game.options.renderer.validate(&game.options)?;"
         },
         {
-          "line": 100,
+          "line": 103,
           "kinds": [
             "owner/factory/reference"
           ],
