@@ -213,18 +213,26 @@ jobs:
           for filter in native_loading::checked_stage_tests::boot_resources_ native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests:: renderer_owner::visibility::gpu_tests:: renderer_owner::native_streaming::gpu_tests:: renderer_owner::native_streaming::gpu_epoch_tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
-              if [ "$filter" = renderer_owner::native_streaming::gpu_epoch_tests:: ]; then
+              observed=''
+              case "$filter" in
+                renderer_owner::native_streaming::gpu_epoch_tests::)
+                  observed='renderer_owner::native_streaming::gpu_epoch_tests::backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epochs' ;;
+                renderer_owner::native_streaming::gpu_tests::)
+                  observed='renderer_owner::native_streaming::gpu_tests::consumer_scope_never_mints_off_view_forced_tickets_and_readmits_after_move' ;;
+              esac
+              if [ -n "$observed" ]; then
                 # Exit zero with zero matched/ignored tests is not execution evidence.
-                python3 - <<'PYOBSERVED'
-          import re
+                EXPECTED_NATIVE_TEST="$observed" python3 - <<'PYOBSERVED'
+          import os, re
           from pathlib import Path
-          name = 'renderer_owner::native_streaming::gpu_epoch_tests::backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epochs'
+          name = os.environ['EXPECTED_NATIVE_TEST']
           log = Path('target/legacy-branch/gpu-tests.log').read_text()
           if not re.search(r'^test ' + re.escape(name) + r' \.\.\. ok$', log, re.M):
               raise SystemExit('native resource epoch regression was not executed successfully')
           if not re.search(r'^test result: ok\. [1-9][0-9]* passed; 0 failed;', log, re.M):
               raise SystemExit('missing positive libtest pass accounting')
-          print('::notice title=Observed GL2 resource epoch regression::' + name + ' passed (transport geometry, not Game acceptance)')
+          title = 'Observed GL2 resource epoch regression' if 'gpu_epoch_tests::' in name else 'Observed GL2 native admission scope regression'
+          print('::notice title=' + title + '::' + name + ' passed (transport geometry, not Game acceptance)')
           PYOBSERVED
               fi
             else

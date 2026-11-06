@@ -116,6 +116,7 @@ impl NativeStream {
             let mut hook = Hook {
                 state: self,
                 renderer,
+                view: (streamer.center, streamer.radius),
                 budget,
             };
             hook.synchronize_membership(world);
@@ -147,6 +148,7 @@ impl NativeStream {
 struct Hook<'a> {
     state: &'a mut NativeStream,
     renderer: &'a mut TerrainHudRenderer,
+    view: ((i32, i32), i32),
     budget: UploadBudget,
 }
 impl Hook<'_> {
@@ -216,6 +218,7 @@ impl Hook<'_> {
         }
     }
     fn prune(&mut self, world: &mut World, center: (i32, i32), radius: i32) {
+        self.view = (center, radius);
         if self.state.error.is_some() {
             return;
         }
@@ -263,11 +266,16 @@ fn within_view(center: (i32, i32), radius: i32, x: i32, z: i32) -> bool {
         && in_view_distance(center, radius, x, z)
 }
 impl MeshAdmission for Hook<'_> {
+    fn wants_column(&self, x: i32, z: i32) -> bool {
+        self.state.error.is_none() && within_view(self.view.0, self.view.1, x, z)
+    }
     fn bounded_section_dispatch(&self) -> bool {
         true
     }
     fn request(&mut self, key: SectionKey) -> Admission {
-        if self.state.error.is_some() {
+        // Same scope as prune, including forced generation columns. Never mint
+        // a ticket for work the end-of-frame prune will immediately revoke.
+        if !self.wants_column(key[0], key[2]) {
             return Admission::Defer;
         }
         match self.renderer.request_stream_section(key) {
@@ -412,6 +420,7 @@ mod gpu_tests {
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,
+            view: ((0, 0), 2),
             budget: UploadBudget::default(),
         };
         let key = [0, 0, 0];
@@ -431,6 +440,8 @@ mod gpu_tests {
                 .columns()
                 .any(|(column, sections)| column == (0, 0) && sections.contains(0))
         );
+        assert!(matches!(hook.request(key), Admission::Defer));
+        hook.prune(&mut world, (0, 0), 2); // actual readmission into the draw view
         let second = ticket(&mut hook, key);
         assert_ne!(first, second);
         assert!(matches!(
@@ -518,6 +529,7 @@ mod gpu_tests {
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,
+            view: ((0, 0), 2),
             budget: UploadBudget::default(),
         };
         let a = [0, 0, 0];
@@ -599,6 +611,7 @@ mod gpu_tests {
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,
+            view: ((0, 0), 2),
             budget: UploadBudget::default(),
         };
         let next = ticket(&mut hook, a);
@@ -616,6 +629,94 @@ mod gpu_tests {
     }
     #[test]
     #[ignore = "requires OSMesa and explicit GL2 environment"]
+    fn consumer_scope_never_mints_off_view_forced_tickets_and_readmits_after_move() {
+        let mut renderer = renderer();
+        let mut state = NativeStream::default();
+        let mut world = World::new(BlockStateId(0), 0);
+        world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
+        world.chunks.insert((40, 0), Arc::new(Chunk::empty(40, 0)));
+        state.bind(&mut renderer, Arc::new(()), &mut world).unwrap();
+        let mut hook = Hook {
+            state: &mut state,
+            renderer: &mut renderer,
+            view: ((0, 0), 2),
+            budget: UploadBudget::default(),
+        };
+        hook.synchronize_membership(&mut world);
+        hook.prune(&mut world, (0, 0), 2);
+        let a = [0, 0, 0];
+        let b = [0, 1, 0];
+        let far = [40, 0, 0];
+        let first = ticket(&mut hook, a);
+        assert!(matches!(
+            hook.complete(a, Some(first), mesh()),
+            Delivery::Queued
+        ));
+        let before = hook.renderer.stream_usage().unwrap();
+        assert_eq!((before.slots, before.pending), (1, 1)); // one spare metadata slot
+        for _ in 0..1024 {
+            assert!(!hook.wants_column(far[0], far[2]));
+            assert!(matches!(hook.request(far), Admission::Defer));
+            assert_eq!(hook.renderer.stream_usage().unwrap(), before);
+            assert_eq!(hook.state.tickets.len(), 1);
+        }
+        let second = ticket(&mut hook, b);
+        assert_eq!(
+            second.revision,
+            first.revision + 1,
+            "rejected work minted hidden tickets"
+        );
+        let retry = match hook.complete(b, Some(second), mesh()) {
+            Delivery::Retry(mesh) => mesh,
+            _ => panic!("pending=1 must still apply"),
+        };
+        hook.prune(&mut world, (40, 0), 2);
+        assert!(!hook.wants_column(0, 0));
+        assert!(matches!(hook.request(a), Admission::Defer));
+        assert!(matches!(
+            hook.complete(b, Some(second), retry),
+            Delivery::Discard(_)
+        ));
+        let usage = hook.renderer.stream_usage().unwrap();
+        assert_eq!((usage.slots, usage.pending, usage.bytes), (0, 0, 0));
+        assert!(hook.wants_column(40, 0));
+        let remote = ticket(&mut hook, far);
+        assert!(remote.revision > second.revision);
+        assert!(matches!(
+            hook.complete(far, Some(remote), mesh()),
+            Delivery::Queued
+        ));
+        hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        assert_eq!(
+            hook.renderer.section_keys().unwrap().collect::<Vec<_>>(),
+            [far]
+        );
+        hook.prune(&mut world, (0, 0), 0);
+        assert!(!hook.wants_column(0, 0));
+        assert!(matches!(hook.request(a), Admission::Defer));
+        assert_eq!(hook.renderer.section_keys().unwrap().count(), 0);
+        hook.prune(&mut world, (0, 0), 2);
+        let fresh = ticket(&mut hook, a);
+        assert!(fresh.revision > remote.revision);
+        assert!(matches!(
+            hook.complete(a, Some(first), mesh()),
+            Delivery::Discard(_)
+        ));
+        assert!(matches!(
+            hook.complete(a, Some(fresh), mesh()),
+            Delivery::Queued
+        ));
+        hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        assert_eq!(
+            hook.renderer.section_keys().unwrap().collect::<Vec<_>>(),
+            [a]
+        );
+        assert!(world.dirty_sections.contains(&(0, 0, 0)));
+        assert!(hook.state.error.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires OSMesa and explicit GL2 environment"]
     fn oversized_completion_is_a_reported_error_not_an_immortal_pending_head() {
         let mut renderer = renderer();
         let mut state = NativeStream::default();
@@ -624,6 +725,7 @@ mod gpu_tests {
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,
+            view: ((0, 0), 2),
             budget: UploadBudget { jobs: 1, bytes: 1 },
         };
         let stamp = ticket(&mut hook, [0; 3]);

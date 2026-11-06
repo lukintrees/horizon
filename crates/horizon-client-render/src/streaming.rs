@@ -1629,12 +1629,12 @@ impl Streaming {
         if admission.bounded_section_dispatch() {
             // forget_columns invalidates sequences, but its queued region
             // snapshots otherwise survive until a worker eventually pops them.
-            // Retire native stale jobs before spending fresh dispatch capacity.
+            // Retire native stale/off-view jobs before spending fresh capacity.
             // Never drop potentially large last Arc snapshots under queue lock.
             let retired = {
                 let mut queue = self.shared.queue.lock().unwrap();
                 retire_mesh_jobs(&mut queue, &mut self.meshing, |x, z| {
-                    world.chunks.contains_key(&(x, z))
+                    world.chunks.contains_key(&(x, z)) && admission.wants_column(x, z)
                 })
             };
             #[cfg(test)]
@@ -2101,6 +2101,9 @@ impl Streaming {
         // capacity frees; `requeue` then has a small queue to keep close.
         let room = (self.workers * 32).saturating_sub(self.meshing.len());
         let mut quota = admission::DispatchQuota::new(admission, room);
+        // Keep unloaded-column cleanup and ordinary out-of-range waiting above.
+        // Forced generation interests must not consume a renderer's draw quota.
+        admission::scope_candidates(admission, &mut candidates);
         nearest_first(&mut candidates, room);
         for (_, x, z, sections) in candidates {
             let Some(region) = Self::region(world, x, z) else {
@@ -2963,11 +2966,11 @@ fn retire_aborted_jobs(queue: &mut BinaryHeap<Queued>) -> Vec<Queued> {
 fn retire_mesh_jobs(
     queue: &mut BinaryHeap<Queued>,
     meshing: &mut FxHashMap<(i32, i32, i32), u64>,
-    loaded: impl Fn(i32, i32) -> bool,
+    wanted: impl Fn(i32, i32) -> bool,
 ) -> Vec<Queued> {
     let retired = retirement::retire_where(queue, |q| match &q.job {
         Job::Mesh(x, sy, z, _, seq, _) => {
-            meshing.get(&(*x, *sy, *z)) != Some(seq) || !loaded(*x, *z)
+            meshing.get(&(*x, *sy, *z)) != Some(seq) || !wanted(*x, *z)
         }
         _ => false,
     });
@@ -3195,6 +3198,116 @@ mod tests {
             ),
         }
     }
+    #[test]
+    fn native_queue_consumer_scope_precedes_nearest_and_keeps_forced_work_dirty() {
+        struct Scope {
+            column: (i32, i32),
+        }
+        impl MeshAdmission for Scope {
+            fn wants_column(&self, x: i32, z: i32) -> bool {
+                (x, z) == self.column
+            }
+            fn request(&mut self, _: [i32; 3]) -> Admission {
+                panic!("selection must not mint")
+            }
+            fn complete(
+                &mut self,
+                _: [i32; 3],
+                _: Option<SectionStamp>,
+                _: SectionMesh,
+            ) -> Delivery {
+                panic!("selection only")
+            }
+        }
+        let mut dirty = crate::world::DirtySections::default();
+        for sy in [0, 23, 63, 64, 130, 255] {
+            dirty.insert((1, sy, 0));
+        }
+        let forced: HashSet<_> = (100..228).map(|x| (x, 0)).collect();
+        let extra: Vec<_> = forced.iter().map(|&key| (key, 0)).collect();
+        for &(x, z) in &forced {
+            for sy in 0..24 {
+                dirty.insert((x, sy, z));
+            }
+        }
+        let ranges = Ranges {
+            center: (0, 0),
+            radius: 2,
+            extra: &extra,
+            forced: &forced,
+            cover: None,
+            band: None,
+        };
+        assert!(
+            ranges.in_view(100, 0),
+            "generation's forced view must stay unchanged"
+        );
+        let rank = |columns: Vec<((i32, i32), SectionMask)>| {
+            columns
+                .into_iter()
+                .map(|((x, z), mask)| (ranges.priority(x, z), x, z, mask))
+                .collect::<Vec<_>>()
+        };
+        let modern = admission::Modern;
+        let all = rank(dirty.columns().collect());
+        let mut baseline = all.clone();
+        admission::scope_candidates(&modern, &mut baseline);
+        assert_eq!(
+            baseline.len(),
+            129,
+            "default modern scope must include forced work"
+        );
+        nearest_first(&mut baseline, 1);
+        assert!(
+            forced.contains(&(baseline[0].1, baseline[0].2)),
+            "fixture must reproduce off-view priority starvation"
+        );
+        let scope = Scope { column: (1, 0) };
+        // The same interest predicate retires current-but-off-view queued
+        // snapshots BEFORE quota room is computed, not just at completion.
+        let snapshot = Arc::new(Chunk::empty(100, 0));
+        let weak = Arc::downgrade(&snapshot);
+        let mut queue = BinaryHeap::from([queued_mesh(100, 77, snapshot)]);
+        let mut current = [((100, 0, 0), 77)].into_iter().collect();
+        let retired = retire_mesh_jobs(&mut queue, &mut current, |x, z| scope.wants_column(x, z));
+        assert_eq!(retired.len(), 1);
+        assert!(
+            queue.is_empty() && current.is_empty(),
+            "off-view jobs consumed native quota"
+        );
+        assert!(weak.upgrade().is_some());
+        drop(retired);
+        assert!(weak.upgrade().is_none());
+        for _ in 0..256 {
+            let mut wanted = all.clone();
+            admission::scope_candidates(&scope, &mut wanted);
+            nearest_first(&mut wanted, 1);
+            assert_eq!(wanted.len(), 1);
+            assert_eq!((wanted[0].1, wanted[0].2), (1, 0));
+            assert_eq!(
+                wanted[0].3.iter().collect::<Vec<_>>(),
+                [0, 23, 63, 64, 130, 255]
+            );
+            assert_eq!(
+                dirty.len(),
+                128 * 24 + 6,
+                "consumer filtering lost future dirty work"
+            );
+        }
+        let moved = Scope { column: (100, 0) };
+        let mut wanted = all;
+        admission::scope_candidates(&moved, &mut wanted);
+        assert_eq!(wanted.len(), 1);
+        assert_eq!((wanted[0].1, wanted[0].2), (100, 0));
+        assert_eq!(
+            wanted[0].3,
+            SectionMask::below(24),
+            "readmission lost sections"
+        );
+        assert_eq!(forced.len(), 128);
+        assert_eq!(extra.len(), 128);
+    }
+
     #[test]
     fn native_queue_abort_preserves_save_payloads_and_worker_access() {
         // Actual Queued/Job transport, not a generator or persistence fixture.

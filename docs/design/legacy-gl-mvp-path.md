@@ -426,3 +426,42 @@ Prepared-resource scenario по-прежнему не исполнялся; worl
 
 Default modern scheduling, renderer contracts и world-entry guard не изменены.
 Normal-resource/Game/save-reopen и Win7/X1650 gates остаются OPEN.
+
+
+## Native consumer interest до dispatch — forced-column starvation regression
+
+Найден конкретный scheduler/owner mismatch: `Ranges::in_view` принимает forced
+колонки (это корректно для generation/modern), но native `Hook::prune` держит только
+текущий draw view. Раньше Hook мог выдать ticket такой off-view колонке, запустить
+Mesher и сразу отозвать ticket на post-update prune. При большом forced/extra наборе
+такие ready candidates с высоким priority также вытесняли текущий view из
+`nearest_first` и тратили native section quota на гарантированно stale работу.
+
+Исправление не меняет generation/forced/save policy и default modern behavior:
+
+- Default `MeshAdmission::wants_column` принимает все колонки. Native Hook использует
+  **тот же view predicate**, что prune; bounds явно заданы при создании Hook и
+  обновляются prune. Rejected columns не mint tickets, даже когда metadata slot свободен.
+- Existing unloaded-dirty cleanup и обычный out-of-range waiting остаются **до**
+  consumer filtering. Ready candidates фильтруются in-place **до nearest-first** и
+  до cloning region snapshots/dispatch. Неиспользованные forced masks сохраняются.
+- Native queued retirement использует тот же interest predicate: уже queued,
+  current-but-off-view Mesh jobs отпускают snapshots и current-map quota; running
+  CPU jobs не preempted и проходят прежний completion gate.
+
+Resource-free actual Queued/DirtySections/SectionMask regression создаёт 128 forced
+колонок, каждая с priority ниже wanted колонки, и room=1. Проверяется baseline
+starvation, 256 повторений корректного scoped отбора, modern preservation, сохранение
+mask bits через все четыре u64 слова, retirement текущего off-view queued job и
+readmission сохранённой dirty колонки после смены scope.
+
+Отдельный opt-in native Hook/OSMesa regression делает 1024 off-view requests при
+**свободном metadata slot** и pending=1, проверяет неизменные usage/tickets и отсутствие
+hidden nonce minting. Затем реальная смена view отзывает pending/retry, разрешает
+fresh forced-column ticket, radius=0 очищает interests, возврат view использует новый
+stamp и не принимает старый. CI требует named pass этой regression, а не exit zero
+с нулём matched tests. Existing epoch rollback/commit readback остаётся в матрице.
+
+Эти проверки — scheduler/owner/GL2 fixtures, не normal-resource Mesher/Game. Prepared
+worker scenario и Game/save/reopen/Win7-X1650 gates остаются OPEN; world-entry guard
+не изменён. Общий heap budget и preemption/hard frame latency не заявляются.

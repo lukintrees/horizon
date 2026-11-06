@@ -1,6 +1,6 @@
 //! Owner-thread mesh admission/delivery hooks. Workers carry only a CPU stamp.
 //! Modern streaming retains its existing unstamped upload list.
-use crate::mesher::SectionMesh;
+use crate::{mesher::SectionMesh, section_mask::SectionMask};
 use horizon_render_api::{render_contract::SectionStamp, scene::SectionKey};
 
 pub enum Admission {
@@ -20,6 +20,11 @@ pub enum Delivery {
     Discard(SectionMesh),
 }
 pub trait MeshAdmission {
+    /// Consumer interest, independent of world-generation/forced chunk tickets.
+    /// Rejection must not consume dirty work; modern keeps all candidates.
+    fn wants_column(&self, _x: i32, _z: i32) -> bool {
+        true
+    }
     /// Native caps current in-flight sections, not merely candidate columns.
     /// Default false preserves the existing modern scheduling behavior.
     fn bounded_section_dispatch(&self) -> bool {
@@ -33,6 +38,16 @@ pub trait MeshAdmission {
         mesh: SectionMesh,
     ) -> Delivery;
 }
+/// Filter BEFORE nearest-first truncation or cloning region snapshots. A forced
+/// generation column can rank first but never belong to the native draw view.
+/// Filtering only in request() would let such columns starve wanted candidates.
+pub(super) fn scope_candidates(
+    admission: &impl MeshAdmission,
+    candidates: &mut Vec<(i64, i32, i32, SectionMask)>,
+) {
+    candidates.retain(|&(_, x, z, _)| admission.wants_column(x, z));
+}
+
 /// A column may contain many dirty sections. Charge the native worker room
 /// before minting a ticket, and only for an actually admitted dispatch.
 pub(super) struct DispatchQuota(Option<usize>);
