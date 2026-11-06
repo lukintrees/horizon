@@ -108,6 +108,59 @@ impl RendererOwner {
         )?;
         Ok(Some(order.visible()))
     }
+    /// Existing Game world Frame -> committed native residency -> common facade.
+    /// The caller retains/reuses visibility scratch. Never invent an empty world
+    /// before streaming has an identity, or manufacture a modern fallback.
+    #[cfg(feature = "legacy-gl")]
+    pub fn render_native_world(
+        &mut self,
+        source: &crate::frame::Frame<'_>,
+        order: &mut SectionOrder,
+        radius: i32,
+        options: FrameOptions,
+    ) -> crate::Result<horizon_render_api::render_contract::FrameOutcome> {
+        use horizon_render_api::render_contract::FrameOutcome;
+        order.clear();
+        let result = (|| {
+            let Owner::Legacy(renderer) = &self.inner else {
+                return Err("native world submission requires a native owner".into());
+            };
+            if renderer.size().contains(&0) {
+                return Ok(FrameOutcome::Deferred);
+            }
+            if source.title {
+                return Err("native world submission cannot request a title panorama".into());
+            }
+            if renderer.stream_usage().is_none() {
+                return Err("native world submission requires initialized world streaming".into());
+            }
+            let generation = renderer
+                .resource_generation()
+                .ok_or("native world submission requires committed CPU assets")?;
+            let frustum = gfx::camera_frustum(
+                renderer.size(),
+                source.fov_degrees,
+                source.yaw,
+                source.pitch,
+                source.bob * source.spin,
+                source.depth_far,
+            );
+            let visible = self
+                .native_visible_sections(order, source.camera, radius, &frustum)?
+                .ok_or("native world visibility lost its owner")?;
+            let mut facade = self
+                .facade(visible, options)
+                .ok_or("missing native world facade")?;
+            // Reuse the published asset identity and Game's existing clock. CPU
+            // posing belongs to Game; GPU skin requests still fail explicitly.
+            facade.advance_animations(generation, source.ticks)?;
+            facade.render(source)
+        })();
+        if result.is_err() {
+            order.clear();
+        }
+        result
+    }
     /// A native owner may not enter winit/wgpu initialization or recovery.
     /// Empty is permitted: the default modern startup has not created a device yet.
     pub fn allow_modern_startup(&self) -> Result<(), &'static str> {
@@ -186,6 +239,23 @@ mod tests {
                 .facade(VisibleSections::default(), FrameOptions::default())
                 .is_none()
         );
+    }
+    #[cfg(feature = "legacy-gl")]
+    #[test]
+    fn empty_world_owner_refuses_submission_without_initializing_a_device() {
+        let mut owner = RendererOwner::default();
+        let mut order = SectionOrder::default();
+        let hud = crate::hud::HudBatch::new([64; 2]);
+        let source = crate::legacy_gfx::frame::tests::source(&hud);
+        assert!(
+            owner
+                .render_native_world(&source, &mut order, 3, FrameOptions::default())
+                .unwrap_err()
+                .to_string()
+                .contains("requires a native owner")
+        );
+        assert_eq!(owner.backend(), None);
+        assert!(order.visible().solid.is_empty());
     }
     #[cfg(feature = "legacy-gl")]
     #[test]

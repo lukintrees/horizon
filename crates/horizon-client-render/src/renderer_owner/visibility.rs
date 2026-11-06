@@ -286,29 +286,17 @@ mod gpu_tests {
         order: &mut SectionOrder,
         source: &gfx::Frame<'_>,
     ) -> [u8; 3] {
-        let frustum = gfx::camera_frustum(
-            owner.size().unwrap(),
-            source.fov_degrees,
-            source.yaw,
-            source.pitch,
-            source.bob * source.spin,
-            source.depth_far,
-        );
-        let visible = owner
-            .native_visible_sections(order, source.camera, 3, &frustum)
-            .unwrap()
-            .unwrap();
         assert_eq!(
             owner
-                .facade(
-                    visible,
+                .render_native_world(
+                    source,
+                    order,
+                    3,
                     FrameOptions {
                         gamma: 0.,
                         fullbright: true
                     }
                 )
-                .unwrap()
-                .render(source)
                 .unwrap(),
             FrameOutcome::Offscreen
         );
@@ -328,6 +316,177 @@ mod gpu_tests {
                 .all(|(a, b)| a.abs_diff(b) <= 1),
             "RGB {actual:?}, expected {expected:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
+    fn native_world_frame_uses_clock_live_lightmap_cpu_poses_and_rejects_bad_requests() {
+        let mut assets = test_assets();
+        assets.animations.push(crate::sprites::test_frames(
+            0,
+            vec![vec![255, 0, 0, 255], vec![0, 0, 255, 255]],
+            r#"{"frametime":1}"#,
+        ));
+        let atlas = HudAtlas::boot();
+        let hud = HudBatch::new([64; 2]);
+        let renderer = TerrainHudRenderer::stage_assets(
+            horizon_legacy_render::Context::new("osmesa", [64; 2]).unwrap(),
+            &assets,
+            &atlas,
+            ResourceGeneration(78),
+            &[255; 1024],
+            Limits::default(),
+            ResourceLimits {
+                terrain: TerrainAtlasLimits {
+                    page_size: 8,
+                    max_pages: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .commit()
+        .unwrap();
+        let mut owner = RendererOwner::from_legacy(renderer);
+        let mut order = SectionOrder::default();
+        let mut source = frame::tests::source(&hud);
+        source.camera = DVec3::splat(8.);
+        source.pitch = 0.;
+        source.fov_degrees = 90.;
+        source.sky.ambient_light_color = [0.25; 3];
+        // Initialized streaming is required even for an empty resident world.
+        assert!(
+            owner
+                .render_native_world(&source, &mut order, 3, FrameOptions::default())
+                .unwrap_err()
+                .to_string()
+                .contains("initialized world streaming")
+        );
+        let mut terrain = mesh(0, false);
+        for vertex in &mut Arc::make_mut(&mut terrain).solid {
+            vertex.light = 0;
+        }
+        {
+            let mut f = facade(&mut owner);
+            f.begin_streaming(WorldGeneration(1), ColumnLayout::new(0, 256).unwrap())
+                .unwrap();
+            let key = [0, 0, 1];
+            let ticket = f.request_stream_section(key).unwrap().unwrap();
+            f.queue_stream_section(key, ticket, &terrain).unwrap();
+            f.drain_streaming(1, usize::MAX).unwrap();
+        }
+        fn submit(
+            owner: &mut RendererOwner,
+            order: &mut SectionOrder,
+            source: &gfx::Frame<'_>,
+            options: FrameOptions,
+        ) -> [u8; 3] {
+            assert_eq!(
+                owner
+                    .render_native_world(source, order, 3, options)
+                    .unwrap(),
+                FrameOutcome::Offscreen
+            );
+            pixel(owner)
+        }
+        fn pixel(owner: &mut RendererOwner) -> [u8; 3] {
+            let Owner::Legacy(r) = &mut owner.inner else {
+                unreachable!()
+            };
+            r.read_rgba([32, 32, 1, 1]).unwrap()[..3]
+                .try_into()
+                .unwrap()
+        }
+        rgb(
+            submit(&mut owner, &mut order, &source, FrameOptions::default()),
+            [63, 0, 0],
+        );
+        source.ticks = 1;
+        source.sky.ambient_light_color = [0.5; 3];
+        rgb(
+            submit(&mut owner, &mut order, &source, FrameOptions::default()),
+            [0, 0, 127],
+        );
+        // The same tick is idempotent, gamma/fullbright still come from caller.
+        rgb(
+            submit(
+                &mut owner,
+                &mut order,
+                &source,
+                FrameOptions {
+                    gamma: 1.,
+                    fullbright: false,
+                },
+            ),
+            [0, 0, 239],
+        );
+        rgb(
+            submit(
+                &mut owner,
+                &mut order,
+                &source,
+                FrameOptions {
+                    gamma: 0.,
+                    fullbright: true,
+                },
+            ),
+            [0, 0, 255],
+        );
+        let entities = [[-4., -4., 8.], [4., -4., 8.], [4., 4., 8.], [-4., 4., 8.]].map(|pos| {
+            crate::mesher::Vertex {
+                pos,
+                uv: [0.5; 2],
+                layer: 1,
+                color: u32::MAX,
+                light: 0,
+                normal: [0; 4],
+                glint_uv: [0.; 2],
+            }
+        });
+        source.entities = &entities;
+        rgb(
+            submit(
+                &mut owner,
+                &mut order,
+                &source,
+                FrameOptions {
+                    gamma: 0.,
+                    fullbright: true,
+                },
+            ),
+            [0, 255, 0],
+        );
+        let skin = crate::frame::SkinFrame::default();
+        source.skin = Some(&skin);
+        assert!(
+            owner
+                .render_native_world(&source, &mut order, 3, FrameOptions::default())
+                .unwrap_err()
+                .to_string()
+                .contains("GPU-posed entities")
+        );
+        assert!(order.visible().solid.is_empty());
+        rgb(pixel(&mut owner), [0, 255, 0]);
+        source.skin = None;
+        source.title = true;
+        assert!(
+            owner
+                .render_native_world(&source, &mut order, 3, FrameOptions::default())
+                .unwrap_err()
+                .to_string()
+                .contains("title panorama")
+        );
+        rgb(pixel(&mut owner), [0, 255, 0]);
+        source.title = false;
+        source.camera.x = f64::NAN;
+        assert!(
+            owner
+                .render_native_world(&source, &mut order, 3, FrameOptions::default())
+                .is_err()
+        );
+        assert!(order.visible().translucent.is_empty());
+        rgb(pixel(&mut owner), [0, 255, 0]);
     }
 
     #[test]

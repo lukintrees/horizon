@@ -2960,6 +2960,9 @@ struct Game<'a> {
     pending_uploads: Vec<((i32, i32, i32), horizon_client::mesher::SectionMesh)>,
     /// This frame's view frustum, for culling entities and block entities.
     view_frustum: Option<horizon_client::gfx::Frustum>,
+    /// Scratch only; committed native residency remains in the renderer owner.
+    #[cfg(feature = "legacy-gl")]
+    native_section_order: horizon_client::renderer_owner::SectionOrder,
     entity_culler: Option<horizon_client::entity_culling::Culler>,
     async_entity_culler: Option<entity_culling::AsyncCuller>,
     async_entity_culling_failed: bool,
@@ -15621,7 +15624,9 @@ impl Game<'_> {
             }
             return Ok(false);
         }
-        if self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl) {
+        if self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl)
+            && self.title.is_some()
+        {
             #[cfg(feature = "legacy-gl")]
             return native_startup::draw_menu(self).map(|outcome| outcome.was_presented());
             #[cfg(not(feature = "legacy-gl"))]
@@ -15630,6 +15635,9 @@ impl Game<'_> {
         let Some(size) = self.renderer.size() else {
             return Ok(false);
         };
+        if size.contains(&0) {
+            return Ok(false);
+        }
         let alpha = self.clock.fraction();
         // Camera.getCameraEntityPartialTicks: the view, the hand and the
         // player's own model stay smooth while the level is frozen.
@@ -16158,14 +16166,44 @@ impl Game<'_> {
             },
             chunk_fade: self.settings.chunk_fade,
         };
-        let result = match self.renderer.modern_mut() {
-            Some(renderer) => {
-                renderer.set_pass_timing(self.debug || self.gpu_passes);
+        let result = if self.renderer.backend()
+            == Some(horizon_client::render_contract::Backend::LegacyGl)
+        {
+            #[cfg(feature = "legacy-gl")]
+            {
                 horizon_client::spans::time("renderer", || {
-                    horizon_client::renderer_facade::render_modern(renderer, &frame)
+                    self.renderer.render_native_world(
+                        &frame,
+                        &mut self.native_section_order,
+                        self.streaming.radius,
+                        horizon_client::render_contract::FrameOptions {
+                            gamma: self.settings.gamma,
+                            fullbright: self.settings.extras.fullbright,
+                        },
+                    )
+                })
+                .and_then(|outcome| {
+                    if outcome == FrameOutcome::Offscreen && !self.options.offscreen {
+                        Err("native world window submission completed offscreen".into())
+                    } else {
+                        Ok(outcome != FrameOutcome::Deferred)
+                    }
                 })
             }
-            None => Err("renderer".into()),
+            #[cfg(not(feature = "legacy-gl"))]
+            {
+                Err("native owner requires the legacy-gl client feature".into())
+            }
+        } else {
+            match self.renderer.modern_mut() {
+                Some(renderer) => {
+                    renderer.set_pass_timing(self.debug || self.gpu_passes);
+                    horizon_client::spans::time("renderer", || {
+                        horizon_client::renderer_facade::render_modern(renderer, &frame)
+                    })
+                }
+                None => Err("renderer".into()),
+            }
         };
         // A frame the surface refused (occluded, lost, timed out) is `Ok(false)`.
         self.frame_drawn = matches!(result, Ok(true));
@@ -18971,6 +19009,8 @@ impl<'a> Game<'a> {
             repro: Default::default(),
             agent: agent::Agent::default(),
             view_frustum: None,
+            #[cfg(feature = "legacy-gl")]
+            native_section_order: Default::default(),
             entity_culler: None,
             async_entity_culler: None,
             async_entity_culling_failed: false,
