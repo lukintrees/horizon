@@ -183,7 +183,11 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     assert!(stream.meshed_total > 0, "no worker completion consumed");
     let stone_image = image(&mut owner);
     assert!(
-        stone_image.chunks_exact(4).any(|p| p[..3] != [0, 0, 0]),
+        stone_image
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p[..3] != [0, 0, 0]),
         "real worker geometry was not drawn"
     );
     let before = stream.meshed_total;
@@ -219,7 +223,13 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     assert!(stream.meshed_total > before);
     assert!(native(&mut owner).has_section(key));
     let gold_image = image(&mut owner);
-    assert!(gold_image.chunks_exact(4).any(|p| p[..3] != [0, 0, 0]));
+    assert!(
+        gold_image
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p[..3] != [0, 0, 0])
+    );
     assert_ne!(
         gold_image, stone_image,
         "obsolete stone mesh won over the replacement gold block (requires distinct normal textures)"
@@ -236,7 +246,11 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     assert!(!native(&mut owner).has_section(key));
     let empty_image = image(&mut owner);
     assert!(
-        empty_image.chunks_exact(4).all(|p| p == [0, 0, 0, 255]),
+        empty_image
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p == &[0, 0, 0, 255]),
         "forgotten geometry remained visible"
     );
     if let Some(path) = std::env::var_os("HORIZON_NATIVE_WORKER_REPORT") {
