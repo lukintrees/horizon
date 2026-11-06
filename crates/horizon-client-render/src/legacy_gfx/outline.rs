@@ -83,6 +83,7 @@ mod tests {
     #[test]
     fn actual_frame_accepts_block_edges_but_not_debug_passes_and_orders_contrast_layers() {
         let hud = HudBatch::new([64; 2]);
+        let lines = [[0.; 8]];
         let mut source = frame::tests::source(&hud);
         source.camera = glam::DVec3::ZERO;
         source.outline = vec![[-0.5, 0., 0., 0.5, 0., 0.]];
@@ -111,7 +112,6 @@ mod tests {
             [87. / 255., 1., 225. / 255., 1.]
         );
         for index in 0..3 {
-            let lines = [[0.; 8]];
             match index {
                 0 => source.debug_lines = &lines,
                 1 => source.debug_lines_on_top = &lines,
