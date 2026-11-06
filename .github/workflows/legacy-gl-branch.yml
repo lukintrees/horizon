@@ -210,7 +210,7 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          for filter in native_loading::checked_stage_tests::boot_resources_ native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests:: renderer_owner::visibility::gpu_tests:: renderer_owner::native_streaming::gpu_tests::; do
+          for filter in native_loading::checked_stage_tests::boot_resources_ native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests:: renderer_owner::visibility::gpu_tests:: renderer_owner::native_streaming::gpu_tests:: renderer_owner::native_streaming::gpu_epoch_tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
             else

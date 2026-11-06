@@ -2298,15 +2298,14 @@ impl Streaming {
         self.shared
             .aborted
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        if let Ok(mut queue) = self.shared.queue.lock() {
-            let mut saves = Vec::new();
-            for item in std::mem::take(&mut *queue).into_vec() {
-                if matches!(item.job, Job::Save(..)) {
-                    saves.push(item);
-                }
-            }
-            *queue = std::collections::BinaryHeap::from(saves);
-        }
+        // Last region/mesh/proto references may have expensive destructors.
+        // Keep pending saves runnable while those canceled payloads are freed.
+        let retired = self
+            .shared
+            .queue
+            .lock()
+            .map(|mut queue| retire_aborted_jobs(&mut queue))
+            .unwrap_or_default();
         self.generating.clear();
         self.decorating = 0;
         self.decorating_finals.clear();
@@ -2316,6 +2315,7 @@ impl Streaming {
         self.meshing.clear();
         self.lighting.clear();
         self.jobs.notify_all();
+        drop(retired); // outside the queue lock, after saves have been woken
     }
     /// Save what generation holds outside the world: the proto chunks
     /// decoration wrote to. With `wait`, the decorations, columns and saves
@@ -2951,6 +2951,12 @@ impl Drop for Streaming {
 }
 /// The queued jobs' priorities computed again from each one's column
 /// `distance` (`Streaming::submit`).
+/// World-exit cancellation preserves only persistence work. Return canceled
+/// payload ownership so destructors cannot serialize the pool behind its lock.
+fn retire_aborted_jobs(queue: &mut BinaryHeap<Queued>) -> Vec<Queued> {
+    retirement::retire_where(queue, |q| !matches!(&q.job, Job::Save(_)))
+}
+
 /// Only queued Mesh jobs are cancellable here. Running work has left the
 /// queue and will use normal sequence/column validation at completion. Save,
 /// light, generation and reclaim jobs retain their original scheduling.
@@ -3189,6 +3195,79 @@ mod tests {
             ),
         }
     }
+    #[test]
+    fn native_queue_abort_preserves_save_payloads_and_worker_access() {
+        // Actual Queued/Job transport, not a generator or persistence fixture.
+        let snapshot = Arc::new(Chunk::empty(0, 0));
+        let weak = Arc::downgrade(&snapshot);
+        let queue = Arc::new(Mutex::new(BinaryHeap::new()));
+        {
+            let mut heap = queue.lock().unwrap();
+            for (order, marker) in [(1, 10_u32), (3, 20), (5, 30)] {
+                heap.push(Queued {
+                    priority: i64::MIN,
+                    at: None,
+                    bias: 0,
+                    order,
+                    job: Job::Save(vec![Box::new(marker)]),
+                });
+            }
+            heap.push(queued_mesh(0, 2, snapshot.clone()));
+            heap.push(Queued {
+                priority: i64::MIN,
+                at: None,
+                bias: 0,
+                order: 4,
+                job: Job::Free(Vec::new()),
+            });
+            heap.push(Queued {
+                priority: 0,
+                at: Some((0, 0)),
+                bias: 0,
+                order: 6,
+                job: Job::Light(0, 0, Box::default(), 1, false),
+            });
+            heap.push(Queued {
+                priority: 0,
+                at: Some((0, 0)),
+                bias: 0,
+                order: 7,
+                job: Job::Generate(0, 0),
+            });
+        }
+        drop(snapshot);
+        let retired = retire_aborted_jobs(&mut queue.lock().unwrap());
+        assert_eq!(retired.len(), 4);
+        assert!(
+            weak.upgrade().is_some(),
+            "retirement must transfer, not destroy payloads under lock"
+        );
+        // A worker must be able to pop every Save BEFORE retired snapshots are
+        // destroyed by the owner; joining also prevents a false scheduling pass.
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                let mut markers = Vec::new();
+                loop {
+                    let Some(q) = queue.lock().unwrap().pop() else {
+                        break;
+                    };
+                    let Job::Save(protos) = q.job else {
+                        panic!("non-save survived abort")
+                    };
+                    for p in protos {
+                        markers.push(*p.downcast::<u32>().unwrap());
+                    }
+                }
+                markers
+            });
+            assert_eq!(worker.join().unwrap(), [10, 20, 30]);
+            assert!(weak.upgrade().is_some());
+        });
+        assert!(queue.lock().unwrap().is_empty());
+        drop(retired);
+        assert!(weak.upgrade().is_none());
+    }
+
     #[test]
     fn native_queue_retirement_preserves_current_sequence_and_non_mesh_work() {
         let snapshot = Arc::new(Chunk::empty(0, 0));

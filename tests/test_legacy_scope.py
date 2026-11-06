@@ -61,6 +61,8 @@ class ScopeTests(unittest.TestCase):
                        "crates/horizon-client-render/src/streaming.rs",
                        "crates/horizon-client-render/src/streaming/admission.rs",
                        "crates/horizon-client-render/src/streaming/retirement.rs",
+                       "crates/horizon-render-api/src/streaming.rs",
+                       "crates/horizon-render-api/src/streaming/churn_tests.rs",
                        "crates/horizon-client/src/game/input_event.rs",
                        "crates/horizon-client/src/game/native_input.rs",
                        "crates/horizon-client-render/src/renderer_owner/visibility.rs",

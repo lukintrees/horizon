@@ -385,3 +385,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod churn_tests;

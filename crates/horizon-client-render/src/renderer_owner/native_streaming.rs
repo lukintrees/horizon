@@ -368,7 +368,7 @@ mod gpu_tests {
     };
     use horizon_world::registry::BlockStateId;
 
-    fn renderer() -> TerrainHudRenderer {
+    pub(super) fn renderer() -> TerrainHudRenderer {
         let atlas = HudAtlas::boot();
         TerrainHudRenderer::stage_assets(
             horizon_legacy_render::Context::new("osmesa", [64; 2]).unwrap(),
@@ -395,7 +395,7 @@ mod gpu_tests {
         );
         result
     }
-    fn ticket(hook: &mut Hook<'_>, key: SectionKey) -> SectionStamp {
+    pub(super) fn ticket(hook: &mut Hook<'_>, key: SectionKey) -> SectionStamp {
         match hook.request(key) {
             Admission::Stamped(stamp) => stamp,
             _ => panic!("no ticket"),
@@ -639,3 +639,6 @@ mod gpu_tests {
 
 #[cfg(test)]
 mod worker_tests;
+
+#[cfg(test)]
+mod gpu_epoch_tests;

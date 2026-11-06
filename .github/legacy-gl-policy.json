@@ -17,6 +17,8 @@
     "crates/horizon-render-api/src/lib.rs",
     "crates/horizon-render-api/src/entity.rs",
     "crates/horizon-render-api/src/scene.rs",
+    "crates/horizon-render-api/src/streaming.rs",
+    "crates/horizon-render-api/src/streaming/**",
     "crates/horizon-render-api/src/paged_gui.rs",
     "crates/horizon-render-api/src/*contract.rs",
     "crates/horizon-client/src/game.rs",

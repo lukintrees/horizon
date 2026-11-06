@@ -397,3 +397,32 @@ fast path без obsolete jobs сохраняет allocation heap. Работа,
   terminal outcome, за успешно проверенную отмену.
 
 Prepared-resource scenario по-прежнему не исполнялся; world/save/Win7 gates не сняты.
+
+
+## Resource epoch/backpressure churn и world-exit queue lock — CI/local Rust
+
+Следующий ресурс-независимый блок не расширяет renderer feature scope:
+
+- `abort_generation` сохраняет прежнее правило «после abort остаются только Saves»,
+  но возвращает ownership canceled jobs из heap helper, отпускает queue mutex и
+  будит pool **до** освобождения payloads. Раньше последние Arc region/mesh/proto
+  references уничтожались внутри queue lock и мешали worker'ам забрать pending Save.
+  Это исправление lock lifetime, не новая save реализация и не save/reopen acceptance.
+  Actual Queued/Job test проверяет сохранение opaque Save payloads/FIFO и pop реальным
+  scoped worker'ом, пока canceled snapshots ещё удерживаются owner'ом.
+- Independent render-api Rust test исполняет 20 000 owner-state operations через
+  production `Stream`: fresh/superseded requests, stale/duplicate completions,
+  backpressure/retry, out-of-order/duplicate ack, cleanup retry, resource rebase.
+  Usage сверяется с actual pending storage; Weak проверяет отсутствие удержания
+  rejected/retired payloads. Coverage counters не дают пустому состоянию выдать
+  vacuous pass. Это generic ticket/ownership contract, не процессный RAM budget.
+- Отдельный opt-in OSMesa test проходит actual native Hook + staged resource reload:
+  `pending=1`, CPU Retry без копирования Vec, failed/canceled stage сохраняет old
+  resident pixels/pending/ticket, committed stage очищает old pending/residency и
+  отвергает старый CPU stamp даже до rebind. После rebind fresh owner ticket рисует
+  green вместо red; повторный bind той же эпохи не сбрасывает current residency.
+  CI явно исполняет `renderer_owner::native_streaming::gpu_epoch_tests:: --ignored`.
+  Это GL2 readback с transport geometry/test assets, не normal-resource Mesher/Game.
+
+Default modern scheduling, renderer contracts и world-entry guard не изменены.
+Normal-resource/Game/save-reopen и Win7/X1650 gates остаются OPEN.
