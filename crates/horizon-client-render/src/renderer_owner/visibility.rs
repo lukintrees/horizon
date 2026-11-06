@@ -365,7 +365,10 @@ mod gpu_tests {
                 .contains("initialized world streaming")
         );
         let mut terrain = mesh(0, false);
-        for vertex in &mut Arc::make_mut(&mut terrain).solid {
+        for vertex in &mut Arc::get_mut(&mut terrain)
+            .expect("unique fixture mesh")
+            .solid
+        {
             vertex.light = 0;
         }
         {
