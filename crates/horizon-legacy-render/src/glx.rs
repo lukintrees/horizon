@@ -65,6 +65,9 @@ pub struct Context {
     keys: RefCell<[bool; 256]>,
     usages: RefCell<[u16; 256]>,
     relative: RefCell<Option<raw_input::Input>>,
+    // XI registers callbacks on Display even if capture setup fails. Its
+    // library must survive XCloseDisplay, not merely the relative-mode object.
+    xi: RefCell<Option<Library>>,
     keyboard_error: RefCell<Option<String>>,
     description: String,
     _thread: PhantomData<Rc<()>>,
@@ -135,6 +138,7 @@ impl Context {
             keys: RefCell::new([false; 256]),
             usages: RefCell::new([0; 256]),
             relative: RefCell::new(None),
+            xi: RefCell::new(None),
             keyboard_error: RefCell::new(None),
             description: String::new(),
             _thread: PhantomData,
@@ -506,8 +510,13 @@ impl crate::ContextImpl for Context {
                 return Err("native drawable cannot capture pointer".into());
             }
             let root = self.root;
+            let mut xi = self.xi.borrow_mut();
+            if xi.is_none() {
+                *xi = Some(Library::open(c"libXi.so.6")?);
+            }
             *input = Some(raw_input::Input::new(
                 &self._x11,
+                xi.as_ref().ok_or("missing XI library")?,
                 self.display,
                 root,
                 self.window,

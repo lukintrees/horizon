@@ -62,7 +62,6 @@ struct Color {
     pad: u8,
 }
 pub(super) struct Input {
-    _xi: Library,
     display: Display,
     root: Xid,
     window: Xid,
@@ -78,8 +77,13 @@ pub(super) struct Input {
     active: Cell<bool>,
 }
 impl Input {
-    pub fn new(x11: &Library, display: Display, root: Xid, window: Xid) -> Result<Self, String> {
-        let xi = Library::open(c"libXi.so.6")?;
+    pub fn new(
+        x11: &Library,
+        xi: &Library,
+        display: Display,
+        root: Xid,
+        window: Xid,
+    ) -> Result<Self, String> {
         macro_rules! load {
             ($lib:ident,$name:literal,$ty:ty) => {{
                 // SAFETY: fixed public Xlib/XInput function name and C signature.
@@ -127,7 +131,6 @@ impl Input {
         );
         let select = load!(xi, c"XISelectEvents", Select);
         let mut this = Self {
-            _xi: xi,
             display,
             root,
             window,
