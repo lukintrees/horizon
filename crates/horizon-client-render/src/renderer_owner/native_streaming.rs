@@ -96,10 +96,10 @@ impl NativeStream {
                 error: Some("native streaming requires a native owner".into()),
             };
         };
-        if self.error.is_none() {
-            if let Err(error) = self.bind(renderer, streamer.mesh_epoch(), world) {
-                self.error = Some(error);
-            }
+        if self.error.is_none()
+            && let Err(error) = self.bind(renderer, streamer.mesh_epoch(), world)
+        {
+            self.error = Some(error);
         }
         if self.error.is_none() && self.interest_radius != Some(streamer.radius) {
             if interest_fits(
@@ -131,10 +131,10 @@ impl NativeStream {
                 }
                 hook.synchronize_membership(world);
                 hook.prune(world, streamer.center, streamer.radius);
-                if hook.state.error.is_none() {
-                    if let Err(error) = hook.renderer.drain_streaming(budget.jobs, budget.bytes) {
-                        hook.fail(error);
-                    }
+                if hook.state.error.is_none()
+                    && let Err(error) = hook.renderer.drain_streaming(budget.jobs, budget.bytes)
+                {
+                    hook.fail(error);
                 }
             }
         }

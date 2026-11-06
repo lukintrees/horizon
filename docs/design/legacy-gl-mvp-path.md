@@ -9,10 +9,11 @@
 
 ## Текущий прогресс — контрольная точка 2026-11-06
 
-Предыдущий проверенный срез 3c закоммичен и отправлен в integration branch.
-Его **кодовый** head: `de84398c74c2d5cb7b6b579fb3cf85800b0b90c4`.
-`7a9c2deff` добавил native resident visibility/order и scope protection;
-`de84398c7` исправил YAML запуска новой CPU-проверки. Это ещё **не playable MVP**.
+Проверенный baseline 3d: `137d56bacce0d585c3645d00a685b3fe36db267b`
+([evidence](https://github.com/lukintrees/horizon/pull/4#issuecomment-6682711599)).
+Текущий кодовый срез 3e добавляет stamped dispatch/delivery (§MVP 3e ниже);
+его exact-head проверки фиксируются отдельным комментарием в draft PR #4.
+Это ещё **не playable MVP**.
 
 | Участок | Что уже реализовано |
 |---|---|
