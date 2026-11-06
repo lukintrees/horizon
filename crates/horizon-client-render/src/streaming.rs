@@ -540,6 +540,10 @@ pub struct Streaming {
     light_snapshots: FxHashMap<(i32, i32), u64>,
     pub generated_total: u64,
     pub meshed_total: u64,
+    /// Observation only: opt-in real-worker tests must see stale delivery, not
+    /// merely finish before an old job has returned. No production API/state.
+    #[cfg(test)]
+    pub(crate) obsolete_mesh_completions: u64,
     /// Chunks come from a server (`insert_remote`/`forget`): nothing is
     /// generated and columns are only unloaded when the server says so.
     pub remote: bool,
@@ -1088,6 +1092,8 @@ impl Streaming {
             light_snapshots: Default::default(),
             generated_total: 0,
             meshed_total: 0,
+            #[cfg(test)]
+            obsolete_mesh_completions: 0,
             remote: false,
             extra: Vec::new(),
             cover: None,
@@ -1700,6 +1706,10 @@ impl Streaming {
                         loaded,
                     ) {
                         Delivery::Obsolete(mesh) => {
+                            #[cfg(test)]
+                            {
+                                self.obsolete_mesh_completions += 1;
+                            }
                             if current == Some(seq) {
                                 self.meshing.remove(&(x, sy, z));
                             }

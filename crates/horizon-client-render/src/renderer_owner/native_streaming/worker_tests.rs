@@ -31,6 +31,7 @@ fn settle(
     owner: &mut RendererOwner,
     stream: &mut Streaming,
     world: &mut World,
+    obsolete_at_least: u64,
 ) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -67,6 +68,7 @@ fn settle(
             && world.dirty_sections.is_empty()
             && usage.pending == 0
             && usage.removals == 0
+            && stream.obsolete_mesh_completions >= obsolete_at_least
         {
             return;
         }
@@ -83,7 +85,7 @@ fn settle(
 }
 fn image(owner: &mut RendererOwner) -> Vec<u8> {
     let renderer = native(owner);
-    let keys: Vec<_> = renderer.section_keys().unwrap().copied().collect();
+    let keys: Vec<_> = renderer.section_keys().unwrap().collect();
     renderer
         .render(
             &SceneFrame {
@@ -146,7 +148,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         .registry
         .default_state("minecraft:gold_block")
         .ok_or("missing gold block")?;
-    let mut world = World::new(air, biomes.id("minecraft:plains"));
+    let mut world = World::new(air, 0);
     for z in -2..=2 {
         for x in -2..=2 {
             let mut chunk = Chunk::empty(x, z);
@@ -172,7 +174,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     .commit()?;
     let mut owner = RendererOwner::from_legacy(renderer);
     let mut state = NativeStream::default();
-    settle(&mut state, &mut owner, &mut stream, &mut world);
+    settle(&mut state, &mut owner, &mut stream, &mut world, 0);
     let key = [0, (-world.layout().min_y()).div_euclid(16), 0];
     assert!(
         native(&mut owner).has_section(key),
@@ -185,6 +187,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         "real worker geometry was not drawn"
     );
     let before = stream.meshed_total;
+    let stale_before = stream.obsolete_mesh_completions;
 
     world.dirty_sections.insert((key[0], key[1], key[2]));
     let result = state.update(&mut owner, &mut stream, &mut world, UploadBudget::default());
@@ -201,7 +204,13 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     let mut replacement = Chunk::empty(0, 0);
     replacement.set(8, 0, 8, gold.0);
     stream.insert_remote(&mut world, replacement);
-    settle(&mut state, &mut owner, &mut stream, &mut world);
+    settle(
+        &mut state,
+        &mut owner,
+        &mut stream,
+        &mut world,
+        stale_before + 1,
+    );
     let current = state.tickets[&key];
     assert_ne!(
         current, obsolete,
@@ -217,7 +226,13 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     );
 
     assert_eq!(stream.forget_columns(&mut world, &gone).len(), 1);
-    settle(&mut state, &mut owner, &mut stream, &mut world);
+    settle(
+        &mut state,
+        &mut owner,
+        &mut stream,
+        &mut world,
+        stale_before + 1,
+    );
     assert!(!native(&mut owner).has_section(key));
     let empty_image = image(&mut owner);
     assert!(
@@ -227,6 +242,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     if let Some(path) = std::env::var_os("HORIZON_NATIVE_WORKER_REPORT") {
         let report = serde_json::json!({
             "scenario": "native-prepared-real-mesher",
+            "obsolete_completions": stream.obsolete_mesh_completions - stale_before,
             "normal_resources": true, "worker_completions": stream.meshed_total,
             "received_columns": stream.generated_total, "pending_limit": 1,
             "old_revision": obsolete.revision, "new_revision": current.revision,

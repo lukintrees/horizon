@@ -327,7 +327,9 @@ acceptance-сценарии, walk/look/break/place/inventory/save/reopen и Win7
 `NativeStream::update`, который вызывает Game. Mesh и SectionStamp не подставляются.
 Колонки подаются через existing remote-column API: это изолированная проверка
 mesher delivery, **не vanilla terrain generation, не Game/world/save E2E**.
-Boot HUD не используется для проверки world pixels.
+Boot HUD не используется для проверки world pixels. Test-only counter в actual
+`Delivery::Obsolete` требует дождаться и действительно отвергнуть старый completion;
+одного завершения до возврата старого job недостаточно.
 
 Сценарий требует: реальный stone mesh в GPU/readback → dispatch старого snapshot →
 forget/reinsert того же coordinate с gold block до сбора completion → новый issued

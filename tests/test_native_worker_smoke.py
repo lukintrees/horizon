@@ -16,7 +16,7 @@ class NativeWorkerSmoke(unittest.TestCase):
                     pending_limit=1, nonempty_draw=True, replacement_draw_changed=True,
                     forgotten_draw_empty=True, game_acceptance=False,
                     terrain_generation_tested=False, save_reopen_tested=False,
-                    worker_completions=20, received_columns=26, old_revision=2,
+                    worker_completions=20, obsolete_completions=1, received_columns=26, old_revision=2,
                     new_revision=3, resource_generation=1)
 
     def test_report_requires_observed_results_and_distinct_tickets(self):
