@@ -16,6 +16,7 @@ FRAME = ROOT / "crates/horizon-client-render/src/frame"
 COMMON = [
     "crates/horizon-render-api/src/streaming.rs",
     "crates/horizon-render-api/src/screenshot.rs",
+    "crates/horizon-render-api/src/stroke.rs",
     "crates/horizon-render-api/src/render_contract.rs",
     "crates/horizon-render-api/src/resource_contract.rs",
     "crates/horizon-render-api/src/platform_contract.rs",

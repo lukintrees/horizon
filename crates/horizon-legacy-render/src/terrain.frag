@@ -7,6 +7,7 @@ uniform float gui_glint;
 uniform float screen_mode;
 uniform float additive_mode;
 uniform float weather_mode;
+uniform float stroke_mode;
 varying vec2 foil_uv;
 uniform float entity_mode;
 uniform float mask_only;
@@ -37,7 +38,8 @@ void main() {
     // yields the same clamped integer texel as weather_texel, including NPOT.
     vec2 image_uv = uv;
     if (weather_mode > 0.5) image_uv = fract(uv);
-    vec4 sample_color = texture2D(image, image_uv);
+    vec4 sample_color = vec4(1.0);
+    if (stroke_mode < 0.5) sample_color = texture2D(image, image_uv);
     if (screen_mode > 0.5) {
         vec4 result = sample_color * tint;
         if (screen_mode > 1.5) result.a = 1.0;
@@ -78,7 +80,7 @@ void main() {
             pixel.rgb += g * g;
             pixel.a = max(pixel.a, glint_strength);
         }
-    } else pixel.rgb *= texture2D(lightmap, light_uv).rgb;
+    } else if (stroke_mode < 0.5) pixel.rgb *= texture2D(lightmap, light_uv).rgb;
     float amount = linear_fog(distance_to_eye, fog.a, fog_end);
     if (game_fog.w > 0.5) {
         amount = max(amount, linear_fog(cylindrical_distance, game_fog.x, game_fog.y)) * game_fog.z;

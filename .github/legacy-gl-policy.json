@@ -16,6 +16,8 @@
     "docs/design/legacy-gl-launch-plan.md",
     "crates/horizon-render-api/src/lib.rs",
     "crates/horizon-render-api/src/entity.rs",
+    "crates/horizon-render-api/src/stroke.rs",
+    "crates/horizon-render-api/src/stroke/**",
     "crates/horizon-render-api/src/scene.rs",
     "crates/horizon-render-api/src/streaming.rs",
     "crates/horizon-render-api/src/streaming/**",

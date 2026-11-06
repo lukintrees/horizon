@@ -11,6 +11,7 @@ pub mod scene;
 pub mod screen;
 pub mod screenshot;
 pub mod streaming;
+pub mod stroke;
 pub mod terrain;
 
 /// Expanded, camera-relative-at-draw-time vertex. Terrain RGB already includes
@@ -51,6 +52,8 @@ pub enum Pass {
     Gui(gui::Material),
     Cutout,
     Translucent,
+    /// Pre-expanded clip-space strokes: LEQUAL, alpha blend, no depth writes.
+    Stroke,
     /// Screen-space geometry uses the supplied projection, without depth testing.
     Overlay,
     OverlayInvert,

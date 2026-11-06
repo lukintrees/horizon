@@ -43,6 +43,7 @@ enum MeshLayout {
     Basic,
     Entity,
     Gui,
+    Stroke,
 }
 impl MeshLayout {
     fn stride(self) -> i32 {
@@ -50,12 +51,14 @@ impl MeshLayout {
             Self::Basic => 44,
             Self::Entity => 84,
             Self::Gui => 52,
+            Self::Stroke => 40,
         }
     }
     fn pass(pass: Pass) -> Self {
         match pass {
             Pass::Entity(_) => Self::Entity,
             Pass::Gui(_) => Self::Gui,
+            Pass::Stroke => Self::Stroke,
             _ => Self::Basic,
         }
     }
@@ -83,6 +86,7 @@ struct Uniforms {
     additive: i32,
     weather: i32,
     background_depth: i32,
+    stroke: i32,
 }
 
 pub struct Renderer<'a> {
@@ -121,6 +125,14 @@ fn reserved_capacity(free: Stats, reserve: Stats) -> Result<Stats, String> {
 fn id() -> Result<u64, String> {
     IDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
         .map_err(|_| "resource ID space exhausted".into())
+}
+fn valid_vertex(v: &Vertex) -> bool {
+    v.pos
+        .iter()
+        .chain(&v.uv)
+        .chain(&v.light_uv)
+        .chain(&v.color)
+        .all(|v| v.is_finite())
 }
 fn charge(used: usize, bytes: usize, limit: usize) -> Result<(), String> {
     if used.checked_add(bytes).is_none_or(|n| n > limit) {
@@ -210,6 +222,7 @@ impl<'a> Renderer<'a> {
                 additive: -1,
                 weather: -1,
                 background_depth: -1,
+                stroke: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -245,6 +258,7 @@ impl<'a> Renderer<'a> {
                 additive: location(c"additive_mode")?,
                 weather: location(c"weather_mode")?,
                 background_depth: location(c"background_depth")?,
+                stroke: location(c"stroke_mode")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -320,12 +334,20 @@ impl<'a> Renderer<'a> {
             Err(format!("OpenGL error: {error:#x}"))
         }
     }
+    /// Typed clip-space geometry; ordinary/GUI/entity meshes cannot use Stroke.
+    pub fn create_stroke_mesh(
+        &mut self,
+        vertices: &[horizon_render_api::stroke::Vertex],
+        indices: &[u16],
+    ) -> Result<MeshId, String> {
+        self.upload_mesh(vertices, indices, MeshLayout::Stroke, |v| v.valid())
+    }
     fn upload_mesh<T>(
         &mut self,
         vertices: &[T],
         indices: &[u16],
         layout: MeshLayout,
-        base: impl Fn(&T) -> &Vertex,
+        valid: impl Fn(&T) -> bool,
     ) -> Result<MeshId, String> {
         if self.stats.meshes >= self.object_limits[1] {
             return Err("mesh object limit exceeded".into());
@@ -336,15 +358,7 @@ impl<'a> Renderer<'a> {
             || indices.len() % 3 != 0
             || indices.len() > i32::MAX as usize
             || indices.iter().any(|&i| i as usize >= vertices.len())
-            || vertices.iter().any(|value| {
-                let v = base(value);
-                v.pos
-                    .iter()
-                    .chain(&v.uv)
-                    .chain(&v.light_uv)
-                    .chain(&v.color)
-                    .any(|n| !n.is_finite())
-            })
+            || vertices.iter().any(|value| !valid(value))
         {
             return Err("invalid indexed triangle mesh".into());
         }
@@ -360,7 +374,7 @@ impl<'a> Renderer<'a> {
         let id = MeshId(id()?);
         self.gl.context.make_current()?;
         let mut buffers = [0; 2];
-        // SAFETY: the only callers instantiate T as repr(C) Vertex/LitVertex/GuiVertex,
+        // SAFETY: the only callers instantiate T as repr(C) Vertex/LitVertex/GuiVertex/stroke::Vertex,
         // containing only floats and no padding. Checked sizes match live arrays. GL copies client storage during BufferData.
         unsafe {
             (self.gl.gen_buffers)(2, buffers.as_mut_ptr());
@@ -576,7 +590,7 @@ impl RenderBackend for Renderer<'_> {
         self.check()
     }
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, String> {
-        self.upload_mesh(vertices, indices, MeshLayout::Basic, |v| v)
+        self.upload_mesh(vertices, indices, MeshLayout::Basic, valid_vertex)
     }
     fn create_entity_mesh(
         &mut self,
@@ -592,7 +606,9 @@ impl RenderBackend for Renderer<'_> {
         }) {
             return Err("invalid entity lighting".into());
         }
-        self.upload_mesh(vertices, indices, MeshLayout::Entity, |v| &v.base)
+        self.upload_mesh(vertices, indices, MeshLayout::Entity, |v| {
+            valid_vertex(&v.base)
+        })
     }
     fn create_gui_mesh(
         &mut self,
@@ -605,7 +621,9 @@ impl RenderBackend for Renderer<'_> {
         {
             return Err("invalid GUI glint UV".into());
         }
-        self.upload_mesh(vertices, indices, MeshLayout::Gui, |v| &v.base)
+        self.upload_mesh(vertices, indices, MeshLayout::Gui, |v| {
+            valid_vertex(&v.base)
+        })
     }
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), String> {
         self.gl.context.make_current()?;
@@ -669,6 +687,10 @@ impl RenderBackend for Renderer<'_> {
             (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
             for draw in frame.draws {
                 let pass = draw.pass.pipeline();
+                (self.gl.uniform1f)(
+                    self.uniforms.stroke,
+                    if pass == Pass::Stroke { 1. } else { 0. },
+                );
                 let screen = match draw.pass {
                     Pass::Screen(material) => Some(material),
                     _ => None,
@@ -810,7 +832,7 @@ impl RenderBackend for Renderer<'_> {
                     (self.gl.enable)(0x0B71);
                 }
                 (self.gl.depth_func)(
-                    if pass == Pass::OverlayDepth || matches!(pass, Pass::Entity(_)) {
+                    if matches!(pass, Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_)) {
                         0x0203
                     } else {
                         0x0201
@@ -835,7 +857,7 @@ impl RenderBackend for Renderer<'_> {
                     {
                         Some((0x0302, 1, 0x0302, 1))
                     }
-                    Pass::Overlay | Pass::OverlayDepth | Pass::Entity(_) => {
+                    Pass::Overlay | Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_) => {
                         Some((0x0302, 0x0303, 1, 0x0303))
                     }
                     Pass::Translucent => Some((0x0302, 0x0303, 0x0302, 0x0303)),
@@ -877,7 +899,12 @@ impl RenderBackend for Renderer<'_> {
                 }
                 (self.gl.bind_buffer)(0x8892, mesh.buffers[0]);
                 (self.gl.bind_buffer)(0x8893, mesh.buffers[1]);
-                for (index, count, offset) in [(0, 3, 0), (1, 2, 12), (2, 2, 20), (3, 4, 28)] {
+                let attributes = if mesh.layout == MeshLayout::Stroke {
+                    [(0, 4, 0), (1, 2, 0), (2, 2, 32), (3, 4, 16)]
+                } else {
+                    [(0, 3, 0), (1, 2, 12), (2, 2, 20), (3, 4, 28)]
+                };
+                for (index, count, offset) in attributes {
                     (self.gl.attribute_pointer)(
                         index,
                         count,
@@ -1027,6 +1054,9 @@ fn program(gl: &Gl<'_>) -> Result<u32, String> {
     }
 }
 const _: () = {
+    assert!(size_of::<horizon_render_api::stroke::Vertex>() == 40);
+    assert!(std::mem::offset_of!(horizon_render_api::stroke::Vertex, color) == 16);
+    assert!(std::mem::offset_of!(horizon_render_api::stroke::Vertex, distances) == 32);
     assert!(size_of::<Vertex>() == 44);
     assert!(std::mem::offset_of!(Vertex, color) == 28);
 };
@@ -1178,3 +1208,7 @@ mod reserve_tests {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "renderer/stroke_tests.rs"]
+mod stroke_tests;

@@ -1,5 +1,6 @@
 #version 110
-attribute vec3 position;
+attribute vec4 position;
+uniform float stroke_mode;
 attribute vec2 texcoord;
 attribute vec2 lightcoord;
 attribute vec4 color;
@@ -18,7 +19,7 @@ varying vec4 tint;
 varying float distance_to_eye;
 varying float cylindrical_distance;
 void main() {
-    vec3 relative = position + origin;
+    vec3 relative = position.xyz + origin;
     gl_Position = matrix * vec4(relative, 1.0);
     if (background_depth > 0.5) gl_Position.z = 0.0;
     uv = texcoord;
@@ -29,4 +30,9 @@ void main() {
     vertex_light = light_color;
     distance_to_eye = length(relative);
     cylindrical_distance = max(length(relative.xz), abs(relative.y));
+    if (stroke_mode > 0.5) {
+        gl_Position = position;
+        distance_to_eye = lightcoord.x;
+        cylindrical_distance = lightcoord.y;
+    }
 }
