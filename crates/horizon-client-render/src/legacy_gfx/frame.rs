@@ -348,11 +348,10 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
         (frame.title, "title panorama"),
         (frame.clouds.is_some(), "clouds"),
         (
-            !frame.outline.is_empty()
-                || !frame.debug_lines.is_empty()
+            !frame.debug_lines.is_empty()
                 || !frame.debug_lines_on_top.is_empty()
                 || !frame.debug_crosshair.is_empty(),
-            "lines/outlines",
+            "debug lines/crosshair",
         ),
         (
             frame.skin.is_some(),

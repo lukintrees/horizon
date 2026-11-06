@@ -465,3 +465,28 @@ stamp и не принимает старый. CI требует named pass эт
 Эти проверки — scheduler/owner/GL2 fixtures, не normal-resource Mesher/Game. Prepared
 worker scenario и Game/save/reopen/Win7-X1650 gates остаются OPEN; world-entry guard
 не изменён. Общий heap budget и preemption/hard frame latency не заявляются.
+
+## First-world blocker: block-selection outline
+
+Native `render_game_frame` больше не отвергает реальные `Frame::outline` edges.
+Через общий CPU contract `horizon-render-api/src/stroke.rs` (integrator-owned)
+они расширяются в GL2 triangle quads постоянной пиксельной толщины; `GL_LINES`
+и driver-dependent wide lines не используются. Камера вычитается в f64 до f32,
+сохранены camera-space layering, homogeneous w и исходные spherical/cylindrical
+fog distances. Near/far/eye/viewport clipping выполняется до perspective divide.
+Обычный black-alpha и high-contrast black/bright layers сохраняют порядок всей
+формы; `outline_after_terrain` выбирает место относительно translucent terrain.
+
+Typed `Pass::Stroke` использует LEQUAL, alpha blend, без depth writes/culling или
+entity polygon bias. Mesh/pass mismatch и некорректные inputs отвергаются до clear.
+Предел — 256 source edges, два слоя: максимум 88 064 tracked transient mesh bytes,
+один mesh, без новых textures. Подготовка и capacity preflight — до world clear;
+mesh освобождается после draw, при ошибке остаётся в existing retryable cleanup.
+Debug gizmos/crosshair всё ещё explicit unsupported, не выдаются за block outline.
+
+Resource-free CPU tests и OSMesa readbacks проверяют math, depth/fog/state reset,
+actual Frame adapter, оба режима, позицию относительно прозрачной terrain,
+повторные кадры без накопления и failure-before-clear. Это не normal-resource Game
+launch: world-entry guard сохранён. Для следующего runtime gate всё ещё нужны
+собственные pinned 26.3 prepared resources; Game/menu/world/save/reopen и
+Win7 SP1 x86/X1650 acceptance остаются OPEN. Modern default не изменён.

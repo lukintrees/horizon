@@ -20,6 +20,7 @@ use horizon_render_api::{
 
 mod animation;
 mod asset_snapshot;
+mod outline;
 #[cfg(test)]
 pub(crate) use asset_snapshot::tests::assets as test_assets;
 pub use asset_snapshot::{AssetSnapshot, StagePoint, StagedAssetRenderer};
@@ -441,12 +442,15 @@ impl TerrainHudRenderer {
         screen_quads: &[crate::screen_effects::ScreenQuad],
         additive_vertices: &[crate::mesher::Vertex],
         precipitation: (&[crate::weather::Vertex], crate::weather::Time),
-        sky_source: Option<&crate::gfx::Frame<'_>>,
+        game_source: Option<&crate::gfx::Frame<'_>>,
     ) -> Result<(), String> {
         self.animations.ready()?;
         self.streaming_ready()?;
-        let sky = sky_source
+        let sky = game_source
             .map(|source| sky::Prepared::new(source, self.size(), self.limits))
+            .transpose()?;
+        let outline = game_source
+            .map(|source| outline::Prepared::new(source, self.size(), world.view_projection))
             .transpose()?;
         let celestial = if let Some(sky) = &sky {
             let mut runs = entity_bridge::prepare_with(
@@ -684,6 +688,11 @@ impl TerrainHudRenderer {
         {
             return Err("no transient mesh capacity for legacy frame".into());
         }
+        if outline.as_ref().is_some_and(|o| {
+            o.bytes() > remaining.mesh_bytes || (o.bytes() > 0 && remaining.meshes == 0)
+        }) {
+            return Err("no transient outline mesh capacity".into());
+        }
         let view = paged_gui::WorldView {
             view_projection: world.view_projection,
             camera: world.camera,
@@ -750,6 +759,10 @@ impl TerrainHudRenderer {
                 backing.load(page)
             })
             .map_err(diagnostic)?;
+        if let Some(outline) = outline.as_ref().filter(|o| !o.after_terrain) {
+            self.screen
+                .render_outline(self.world.backend_mut(), outline, self.white, world.fog)?;
+        }
         self.world
             .render_phase(world, Phase::Translucent)
             .map_err(diagnostic)?;
@@ -758,6 +771,10 @@ impl TerrainHudRenderer {
                 backing.load(page)
             })
             .map_err(diagnostic)?;
+        if let Some(outline) = outline.as_ref().filter(|o| o.after_terrain) {
+            self.screen
+                .render_outline(self.world.backend_mut(), outline, self.white, world.fog)?;
+        }
         if !weather.is_empty() {
             self.cache.release(self.world.backend_mut())?;
             self.screen
