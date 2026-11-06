@@ -320,6 +320,7 @@ fn visible_glx_window_draws_resizes_pumps_bounded_input_and_reclaims_native_wind
 fn visible_glx_physical_keys_and_unbounded_raw_motion_release_on_focus_and_drop() {
     let _guard = DISPLAY_TEST.lock().unwrap();
     use horizon_render_api::platform_contract::PointerMode;
+    eprintln!("native input test: create context");
     let context = Context::new([64; 2]).unwrap();
     type Focus = unsafe extern "C" fn(Display, Xid, c_int, c_ulong) -> c_int;
     type FakeMotion = unsafe extern "C" fn(Display, c_int, c_int, c_ulong) -> c_int;
@@ -360,12 +361,15 @@ fn visible_glx_physical_keys_and_unbounded_raw_motion_release_on_focus_and_drop(
                 "{events:?}"
             );
         }
+        eprintln!("native input test: enable XI2 relative mode");
         context.set_pointer_mode(PointerMode::Relative).unwrap();
+        eprintln!("native input test: inject raw motion");
         for _ in 0..3 {
             assert_ne!(motion(context.display, 1024, -1024, 0), 0);
         }
         (context.calls.sync)(context.display, 0);
         let events = context.poll_events().unwrap();
+        eprintln!("native input test: collected raw events {events:?}");
         let (mut x, mut y) = (0., 0.);
         for event in &events.events {
             if let WindowEvent::RelativeMotion { x: dx, y: dy } = event {
@@ -402,7 +406,9 @@ fn visible_glx_physical_keys_and_unbounded_raw_motion_release_on_focus_and_drop(
         context.poll_events().unwrap();
         context.set_pointer_mode(PointerMode::Relative).unwrap();
     }
+    eprintln!("native input test: drop captured context");
     drop(context); // must release an active grab before closing its Display
+    eprintln!("native input test: recreate context");
     let next = Context::new([64; 2]).unwrap();
     // SAFETY: real second window; successful grab proves previous teardown did
     // not leave a process-global pointer lock behind.

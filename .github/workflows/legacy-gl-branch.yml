@@ -139,7 +139,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native build headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6 libgl1-mesa-dri libglx-mesa0 libxkbcommon0 libxi6 libxtst6 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6 libgl1-mesa-dri libglx-mesa0 libxkbcommon0 libxi6 libxtst6 xvfb xauth gdb
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-gl-branch
@@ -291,7 +291,7 @@ jobs:
           toolchain: '1.88.0'
           components: rustfmt, clippy
       - name: Install Mesa and visible X11 test display
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 libgl1-mesa-dri libglx-mesa0 libx11-6 libxkbcommon0 libxi6 libxtst6 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 libgl1-mesa-dri libglx-mesa0 libx11-6 libxkbcommon0 libxi6 libxtst6 xvfb xauth gdb
       - name: Check independent renderer and run real GL2 readbacks
         env:
           HORIZON_OSMESA_LIBRARY: libOSMesa.so.8
@@ -312,9 +312,13 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           mkdir -p target/legacy-gl-probe
-          if xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml visible_glx -- --ignored > target/legacy-gl-probe/glx-window.log 2>&1; then
+          if xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' cargo test --offline --manifest-path crates/horizon-legacy-render/Cargo.toml visible_glx -- --ignored --nocapture > target/legacy-gl-probe/glx-window.log 2>&1; then
             cat target/legacy-gl-probe/glx-window.log
           else
+            test_bin=$(find crates/horizon-legacy-render/target/debug/deps -maxdepth 1 -type f -name 'horizon_legacy_render-*' -executable | head -n 1)
+            if [ -n "$test_bin" ]; then
+              xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' timeout 60s gdb --batch -ex run -ex 'thread apply all bt 8' --args "$test_bin" visible_glx_physical --ignored --nocapture >> target/legacy-gl-probe/glx-window.log 2>&1 || true
+            fi
             cat target/legacy-gl-probe/glx-window.log
             python3 - <<'PYGLX'
           from pathlib import Path
