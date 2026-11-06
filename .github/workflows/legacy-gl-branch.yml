@@ -217,7 +217,7 @@ jobs:
               cat target/legacy-branch/gpu-tests.log
               python3 - <<'PYFAIL'
           from pathlib import Path
-          text = '\n'.join(Path('target/legacy-branch/gpu-tests.log').read_text().splitlines()[-85:])
+          text = '\n'.join(Path('target/legacy-branch/gpu-tests.log').read_text().splitlines()[-45:])
           text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           print('::error title=Real game GL2 tests::' + text)
           PYFAIL
@@ -238,7 +238,7 @@ jobs:
             cat target/legacy-branch/visible-boot.log
             python3 - <<'PYBOOT'
           from pathlib import Path
-          text = '\n'.join(Path('target/legacy-branch/visible-boot.log').read_text().splitlines()[-85:])
+          text = '\n'.join(Path('target/legacy-branch/visible-boot.log').read_text().splitlines()[-45:])
           print('::error title=Visible native loading handoff::' + text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
           PYBOOT
             exit 1
@@ -317,12 +317,12 @@ jobs:
           else
             test_bin=$(find crates/horizon-legacy-render/target/debug/deps -maxdepth 1 -type f -name 'horizon_legacy_render-*' -executable | head -n 1)
             if [ -n "$test_bin" ]; then
-              xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' timeout 60s gdb --batch -ex run -ex 'thread apply all bt 8' --args "$test_bin" visible_glx_physical --ignored --nocapture >> target/legacy-gl-probe/glx-window.log 2>&1 || true
+              xvfb-run -a -s '-screen 0 1024x768x24 +extension GLX' timeout 60s gdb --batch -ex run -ex 'bt 20' --args "$test_bin" visible_glx_physical --ignored --nocapture >> target/legacy-gl-probe/glx-window.log 2>&1 || true
             fi
             cat target/legacy-gl-probe/glx-window.log
             python3 - <<'PYGLX'
           from pathlib import Path
-          text = '\n'.join(Path('target/legacy-gl-probe/glx-window.log').read_text().splitlines()[-85:])
+          text = '\n'.join(Path('target/legacy-gl-probe/glx-window.log').read_text().splitlines()[-45:])
           text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           print('::error title=Visible native GLX window::' + text)
           PYGLX

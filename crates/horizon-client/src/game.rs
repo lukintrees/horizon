@@ -17419,7 +17419,14 @@ impl Game<'_> {
         {
             self.last_input = Instant::now();
             if !event.repeat {
-                self.toggle_fullscreen();
+                if self.options.renderer.is_native() {
+                    if let Err(error) = self.native_menu_only() {
+                        self.error = Some(error);
+                        self.exit_on_error(event_loop);
+                    }
+                } else {
+                    self.toggle_fullscreen();
+                }
             }
             return;
         }
