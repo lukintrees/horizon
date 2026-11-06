@@ -437,12 +437,15 @@ mod gpu_tests {
             ),
             [0, 0, 255],
         );
+        // CPU entity UVs address the HUD atlas, not terrain layer indices.
+        let white = atlas.font.white();
+        let uv = [(white.u0 + white.u1) * 0.5, (white.v0 + white.v1) * 0.5];
         let entities = [[-4., -4., 8.], [4., -4., 8.], [4., 4., 8.], [-4., 4., 8.]].map(|pos| {
             crate::mesher::Vertex {
                 pos,
-                uv: [0.5; 2],
-                layer: 1,
-                color: u32::MAX,
+                uv,
+                layer: 0,
+                color: u32::from_le_bytes([0, 255, 0, 255]),
                 light: 0,
                 normal: [0; 4],
                 glint_uv: [0.; 2],
