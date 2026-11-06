@@ -6,6 +6,7 @@
 //! the player clicked, typed, and which keys went down over an item
 //! (`native_panel_event`). With no mod showing a panel, each hook here
 //! returns after one check.
+use super::input_event::KeyEvent;
 use super::{
     Game, Screen,
     native_hooks::{NativePanelEvent as BrowserEvent, NativeStack as BrowserStack},
@@ -441,7 +442,7 @@ impl Game<'_> {
             && self.panel.search.as_ref().is_some_and(|s| s.focused)
     }
     /// A key press while the search box has focus.
-    pub(super) fn mod_browser_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn mod_browser_key(&mut self, event: &super::input_event::KeyEvent) {
         use winit::keyboard::PhysicalKey;
         let shortcut = self.edit_shortcut(event);
         let ctrl = self.has_control_down();

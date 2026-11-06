@@ -3,6 +3,7 @@
 //! debug overlay's GUI scale. The statuses live in `debug-profile.json`
 //! (`horizon_client::debug_entries`).
 //! https://mcsrc.dev/2/26.3/net/minecraft/client/gui/screens/debug/DebugOptionsScreen
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     debug_entries::{Category, Entry, Profile, Status, search},
@@ -11,7 +12,7 @@ use horizon_client::{
     text::Text,
     ui::{self, EditBox, Scroll},
 };
-use winit::event::{ElementState, KeyEvent};
+use winit::event::ElementState;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `HeaderAndFooterLayout(this, 61, 33)`.

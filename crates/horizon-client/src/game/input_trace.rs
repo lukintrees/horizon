@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 use winit::{
-    event::{ElementState, MouseScrollDelta, WindowEvent},
+    event::{ElementState, MouseScrollDelta},
     keyboard::PhysicalKey,
 };
 
@@ -435,7 +435,12 @@ impl Game<'_> {
 
     /// Keep the window events that are input. Agent-made window events are left
     /// out: the control-socket line that caused them is recorded instead.
-    pub(super) fn trace_window_event(&mut self, origin: InputOrigin, event: &WindowEvent) {
+    pub(super) fn trace_window_event(
+        &mut self,
+        origin: InputOrigin,
+        event: &super::input_event::Event,
+    ) {
+        use super::input_event::Event as WindowEvent;
         if origin == InputOrigin::Agent || !self.tracing_input() {
             return;
         }

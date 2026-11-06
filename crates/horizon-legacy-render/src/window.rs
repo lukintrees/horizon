@@ -9,7 +9,7 @@ pub enum MouseButton {
     X1,
     X2,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WindowEvent {
     Resized([u32; 2]),
     Focused(bool),
@@ -29,9 +29,21 @@ pub enum WindowEvent {
         pressed: bool,
         repeat: bool,
     },
+    /// USB HID page 07, normalized by the native producer (not a keysym).
+    PhysicalKey {
+        usage: u16,
+        pressed: bool,
+        repeat: bool,
+    },
     Text {
         character: char,
         repeat_count: u16,
+    },
+    /// Explicit failure of a requested native input mode/device; not a fake delta.
+    InputUnavailable,
+    RelativeMotion {
+        x: f64,
+        y: f64,
     },
     PointerMoved {
         x: i32,
@@ -75,6 +87,10 @@ mod state {
         #[cfg(windows)]
         pub programmatic_resize: Cell<bool>,
         pub buttons: Cell<u8>,
+        #[cfg(windows)]
+        pub relative: Cell<bool>,
+        #[cfg(windows)]
+        pub clip: Cell<Option<[i32; 4]>>,
         queue: RefCell<VecDeque<WindowEvent>>,
         lost: Cell<u64>,
         closed: Cell<bool>,
@@ -88,6 +104,10 @@ mod state {
                 #[cfg(windows)]
                 programmatic_resize: Cell::new(false),
                 buttons: Cell::new(0),
+                #[cfg(windows)]
+                relative: Cell::new(false),
+                #[cfg(windows)]
+                clip: Cell::new(None),
                 queue: RefCell::new(VecDeque::with_capacity(CAPACITY)),
                 lost: Cell::new(0),
                 closed: Cell::new(false),
@@ -188,6 +208,17 @@ mod state {
                         repeat: pressed && lparam as usize & (1 << 30) != 0,
                         repeat_count: (lparam as u16).max(1),
                     });
+                    if let Some(usage) = crate::keyboard::win32(
+                        ((lparam as usize >> 16) & 255) as u8,
+                        lparam as usize & (1 << 24) != 0,
+                        wparam as u32,
+                    ) {
+                        self.push(WindowEvent::PhysicalKey {
+                            usage,
+                            pressed,
+                            repeat: pressed && lparam as usize & (1 << 30) != 0,
+                        });
+                    }
                 }
                 0x0102 => {
                     self.text(wparam as u16, (lparam as u16).max(1));
@@ -289,6 +320,11 @@ mod tests {
                     repeat: true,
                     repeat_count: 1
                 },
+                WindowEvent::PhysicalKey {
+                    usage: 0xe4,
+                    pressed: true,
+                    repeat: true
+                },
                 WindowEvent::Key {
                     virtual_key: 0xa3,
                     scan_code: 0x1d,
@@ -296,6 +332,11 @@ mod tests {
                     pressed: false,
                     repeat: false,
                     repeat_count: 1
+                },
+                WindowEvent::PhysicalKey {
+                    usage: 0xe4,
+                    pressed: false,
+                    repeat: false
                 }
             ]
         );

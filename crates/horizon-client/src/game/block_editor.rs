@@ -4,6 +4,7 @@
 //! lays out its widgets, takes their presses and builds the packet for the
 //! server. The screens change the client's copy of the block entity as they
 //! are used, as vanilla's do, so the box preview follows them.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     containers::BlockEntity,
@@ -13,7 +14,7 @@ use horizon_client::{
 };
 use horizon_protocol::packets::play::Serverbound as S;
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 

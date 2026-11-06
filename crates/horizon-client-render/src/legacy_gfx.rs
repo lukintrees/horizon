@@ -829,6 +829,12 @@ impl TerrainHudRenderer {
     }
     /// Pump native window events before computing view/HUD input for the frame.
     /// Zero drawable dimensions mean minimized: suspend rendering until restored.
+    pub fn set_pointer_mode(
+        &mut self,
+        mode: horizon_render_api::platform_contract::PointerMode,
+    ) -> Result<(), String> {
+        self.world.backend_mut().context().set_pointer_mode(mode)
+    }
     pub fn poll_events(&mut self) -> Result<horizon_legacy_render::WindowEvents, String> {
         self.world.backend_mut().context().poll_events()
     }

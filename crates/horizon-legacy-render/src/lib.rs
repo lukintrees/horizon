@@ -4,6 +4,7 @@ mod driver;
 mod egl;
 #[cfg(target_os = "linux")]
 mod glx;
+mod keyboard;
 #[cfg(target_os = "linux")]
 mod osmesa;
 mod raw;
@@ -33,6 +34,15 @@ trait ContextImpl {
     }
     fn drawable_size(&self) -> Option<[u32; 2]> {
         None
+    }
+    fn set_pointer_mode(
+        &self,
+        mode: horizon_render_api::platform_contract::PointerMode,
+    ) -> Result<(), String> {
+        match mode {
+            horizon_render_api::platform_contract::PointerMode::Free => Ok(()),
+            _ => Err("context has no relative mouse producer".into()),
+        }
     }
     fn poll_events(&self) -> Result<WindowEvents, String> {
         Ok(WindowEvents::default())
@@ -108,6 +118,12 @@ impl Context {
     /// Bounded own-window pump; offscreen contexts report no events. Native
     /// modal moving/sizing may temporarily block inside DispatchMessage.
     /// On overflow/focus loss the game must release its held input state.
+    pub fn set_pointer_mode(
+        &self,
+        mode: horizon_render_api::platform_contract::PointerMode,
+    ) -> Result<(), String> {
+        self.inner.set_pointer_mode(mode)
+    }
     pub fn poll_events(&self) -> Result<WindowEvents, String> {
         self.inner.poll_events()
     }

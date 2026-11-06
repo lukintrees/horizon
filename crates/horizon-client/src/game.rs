@@ -145,6 +145,7 @@ mod hand;
 mod headless;
 mod ime;
 mod initial_spawn;
+mod input_event;
 mod input_trace;
 mod integrated;
 mod interaction_shapes;
@@ -215,6 +216,8 @@ mod native_entity_refs;
 mod native_explosions;
 mod native_falling;
 mod native_hooks;
+#[cfg(feature = "legacy-gl")]
+mod native_input;
 mod native_inventories;
 mod native_item_container;
 mod native_item_energy;
@@ -8083,6 +8086,32 @@ impl Game<'_> {
             // MouseHandler.grabMouse: KeyMapping.setAll unless
             // InputQuirks.RESTORE_KEY_STATE_AFTER_MOUSE_GRAB is off (macOS).
             self.restore_held_keys();
+        }
+        #[cfg(feature = "legacy-gl")]
+        if self.options.renderer.is_native() {
+            use horizon_client::platform_contract::PointerMode;
+            let mode = if capture {
+                PointerMode::Relative
+            } else {
+                PointerMode::Free
+            };
+            let result = match self.renderer.facade(Default::default(), Default::default()) {
+                Some(mut renderer) => renderer.set_native_pointer_mode(mode),
+                None if !capture => Ok(()),
+                None => Err("native pointer requires an owner".into()),
+            };
+            self.capture_mode = None;
+            self.captured = capture && result.is_ok();
+            self.mouse = Default::default();
+            // Raw native motion has no warp event to ignore. Prime the shared
+            // MouseHandler so its first real delta is not swallowed.
+            self.mouse.set_ignore_first_move();
+            self.mouse
+                .on_move(0., 0., 0., 0., self.focused, self.captured);
+            if let Err(error) = result {
+                self.error = Some(error);
+            }
+            return;
         }
         let Some(window) = &self.window else { return };
         let size = self.renderer.modern_ref().map_or_else(
@@ -17203,23 +17232,8 @@ impl ApplicationHandler for Game<'_> {
         }
     }
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
-        // A composited view renders offscreen but its keyboard/mouse owner still
-        // controls a visible native window. A headless offscreen run never does.
-        if self.pending_save.is_none()
-            && self.captured
-            && self.focused
-            && self.keyboard_mouse
-            && (!self.options.offscreen || self.split_window)
-            && self.screen == Screen::Playing
-            && let DeviceEvent::MouseMotion { delta: (x, y) } = event
-        {
-            // MouseHandler.onMove with the pointer grabbed; applied once per frame.
-            self.note_input(
-                input_trace::InputOrigin::User,
-                input_trace::TraceKind::Motion { x, y },
-            );
-            self.mouse.on_move(0.0, 0.0, x, y, true, true);
-            self.last_input = Instant::now();
+        if let DeviceEvent::MouseMotion { delta: (x, y) } = event {
+            self.relative_motion(x, y);
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -17236,6 +17250,27 @@ impl ApplicationHandler for Game<'_> {
 /// winit's events for a window's game, with any loop: a headless client (#4951) has no
 /// winit loop and calls these from its own.
 impl Game<'_> {
+    fn relative_motion(&mut self, x: f64, y: f64) {
+        // A composited view renders offscreen but its keyboard/mouse owner still
+        // controls a visible native window. A headless offscreen run never does.
+        if self.pending_save.is_none()
+            && self.captured
+            && self.focused
+            && self.keyboard_mouse
+            && (!self.options.offscreen || self.split_window)
+            && self.screen == Screen::Playing
+            && x.is_finite()
+            && y.is_finite()
+        {
+            // MouseHandler.onMove with the pointer grabbed; applied once per frame.
+            self.note_input(
+                input_trace::InputOrigin::User,
+                input_trace::TraceKind::Motion { x, y },
+            );
+            self.mouse.on_move(0.0, 0.0, x, y, true, true);
+            self.last_input = Instant::now();
+        }
+    }
     /// winit's `window_event`. The control socket and the pad menu call it too, with the
     /// input they make up.
     pub(super) fn handle_window_event(
@@ -17255,6 +17290,20 @@ impl Game<'_> {
             return;
         }
         follow_keymap(&mut event);
+        if let WindowEvent::KeyboardInput { event, .. } = &event
+            && event.state == ElementState::Pressed
+        {
+            horizon_client::keybinds::learn_layout(event);
+        }
+        self.handle_input_event(event_loop, event.into(), origin);
+    }
+    fn handle_input_event(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        mut event: input_event::Event,
+        origin: input_trace::InputOrigin,
+    ) {
+        use input_event::Event as WindowEvent;
         // MacosUtil.setCtrlClickEmulatesRightClick: Control + left click is a right click.
         if let WindowEvent::MouseInput { state, button, .. } = &mut event
             && *button == MouseButton::Left
@@ -17274,7 +17323,6 @@ impl Game<'_> {
         {
             if event.state == ElementState::Pressed {
                 self.physical_keys.insert(key);
-                horizon_client::keybinds::learn_layout(event);
             } else {
                 self.physical_keys.remove(&key);
             }
@@ -17304,12 +17352,17 @@ impl Game<'_> {
                 return;
             }
         }
-        self.handle_window_event_inner(event_loop, event);
+        self.handle_input_event_inner(event_loop, event);
         if let Some((button, pressed, modifiers)) = mouse {
             self.native_mouse_button_post(button, pressed, modifiers);
         }
     }
-    fn handle_window_event_inner(&mut self, event_loop: &dyn EventLoopCtl, mut event: WindowEvent) {
+    fn handle_input_event_inner(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        mut event: input_event::Event,
+    ) {
+        use input_event::Event as WindowEvent;
         if let WindowEvent::Focused(false) = &event {
             self.physical_keys.clear();
             self.physical_buttons.clear();
@@ -17435,8 +17488,8 @@ impl Game<'_> {
             let upgrade = starting.handle.upgrade();
             match &event {
                 WindowEvent::CursorMoved { position, .. } => {
-                    if let Some(r) = self.renderer.modern_ref() {
-                        let b = HudBatch::new([r.config.width, r.config.height]);
+                    if let Some(size) = self.renderer.size() {
+                        let b = HudBatch::new(size);
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                     }
                 }
@@ -17723,8 +17776,8 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    if let Some(r) = self.renderer.modern_ref() {
-                        let b = HudBatch::new([r.config.width, r.config.height]);
+                    if let Some(size) = self.renderer.size() {
+                        let b = HudBatch::new(size);
                         let previous = self.cursor;
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                         if self.screen_mouse_dragged(previous) {

@@ -1,5 +1,6 @@
 //! Chat, the command registries and the per-world state behind commands
 //! (game rules, the world clock, difficulty), bound to the game.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     chat::{
@@ -30,10 +31,7 @@ pub(super) fn chat_tree(
         None => horizon_client::command::vanilla::game_dispatcher(),
     }
 }
-use winit::{
-    event::KeyEvent,
-    keyboard::{KeyCode, PhysicalKey},
-};
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `base` with the commands native mods own (`native_commands`) added: each a
 /// literal that takes the rest of the line as it was typed, run by

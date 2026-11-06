@@ -62,6 +62,16 @@ impl<'a> RendererFacade<'a> {
             Adapter::Legacy { renderer, .. } => renderer.poll_events().map_err(Into::into),
         }
     }
+    #[cfg(feature = "legacy-gl")]
+    pub fn set_native_pointer_mode(
+        &mut self,
+        mode: horizon_render_api::platform_contract::PointerMode,
+    ) -> Result<()> {
+        match &mut self.inner {
+            Adapter::Modern(_) => Err("modern pointer belongs to winit".into()),
+            Adapter::Legacy { renderer, .. } => renderer.set_pointer_mode(mode).map_err(Into::into),
+        }
+    }
     pub fn size(&self) -> [u32; 2] {
         match &self.inner {
             Adapter::Modern(renderer) => [renderer.config.width, renderer.config.height],

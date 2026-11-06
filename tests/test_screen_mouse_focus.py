@@ -66,7 +66,7 @@ fn accepted_and_ignored_presses() {
     game.key_focus_mouse_press(&press);
     assert_eq!(game.pad.menu.origin, None);
 }
-""".replace("METHOD", method(source, "key_focus_mouse_press"))
+""".replace("METHOD", method(source, "key_focus_mouse_press").replace("&super::input_event::Event", "&WindowEvent").replace("        use super::input_event::Event as WindowEvent;", ""))
         with tempfile.TemporaryDirectory() as folder:
             src = Path(folder) / "focus.rs"
             exe = Path(folder) / "focus.exe"

@@ -3,6 +3,7 @@
 //! pixels, 1024 characters, 100 pages), signing it into a written book,
 //! reading written books, and lecterns (placing a book, turning its pages
 //! with a redstone pulse, the comparator output and taking the book).
+use super::input_event::KeyEvent;
 use super::{Game, lan::LanHost, screen_info};
 use horizon_client::{
     containers::{BlockEntity, Lectern},
@@ -19,7 +20,7 @@ use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use horizon_world::level::flags as level_flags;
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 

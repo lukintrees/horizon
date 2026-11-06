@@ -415,7 +415,7 @@ fn main() {
 }
 '''
         fixture = fixture.replace("MOUSE_PATH", (ROOT / "crates/horizon-client-input/src/mouse.rs").as_posix())
-        fixture = fixture.replace("METHOD", method(source, "device_event"))
+        fixture = fixture.replace("METHOD", method(source, "device_event") + "\n" + method(source, "relative_motion"))
         self.run_fixture(fixture, "native-mouse")
 
     @unittest.skipUnless(shutil.which("rustc"), "requires Rust")

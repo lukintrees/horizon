@@ -1,6 +1,8 @@
 //! One visible Linux path: a private Xlib window + legacy GLX desktop context.
 //! No winit, EGL pbuffer, foreign window IDs, newer GL requirement or fallback.
 mod abi;
+mod keyboard;
+mod raw_input;
 use crate::{
     egl::Library,
     window::{MouseButton, State, WindowEvent, WindowEvents},
@@ -52,6 +54,7 @@ pub struct Context {
     _keyboard: Library,
     display: Display,
     window: Xid,
+    root: Xid,
     colormap: Xid,
     context: *mut c_void,
     protocols: Xid,
@@ -60,6 +63,9 @@ pub struct Context {
     mapped: Cell<bool>,
     state: State,
     keys: RefCell<[bool; 256]>,
+    usages: RefCell<[u16; 256]>,
+    relative: RefCell<Option<raw_input::Input>>,
+    keyboard_error: RefCell<Option<String>>,
     description: String,
     _thread: PhantomData<Rc<()>>,
 }
@@ -118,6 +124,7 @@ impl Context {
             _keyboard: keyboard,
             display: ptr::null_mut(),
             window: 0,
+            root: 0,
             colormap: 0,
             context: ptr::null_mut(),
             protocols: 0,
@@ -126,6 +133,9 @@ impl Context {
             mapped: Cell::new(true),
             state: State::new(size),
             keys: RefCell::new([false; 256]),
+            usages: RefCell::new([0; 256]),
+            relative: RefCell::new(None),
+            keyboard_error: RefCell::new(None),
             description: String::new(),
             _thread: PhantomData,
         };
@@ -141,6 +151,7 @@ impl Context {
                 return Err("X11 display has no GLX extension".into());
             }
             let screen = screen(this.display);
+            this.root = (this.calls.root)(this.display, screen);
             let mut attributes = [4, 5, 8, 8, 9, 8, 10, 8, 11, 8, 12, 24, 0];
             let visual = choose(this.display, screen, attributes.as_mut_ptr());
             if visual.is_null() {
@@ -206,6 +217,7 @@ impl Context {
             (this.calls.map)(this.display, this.window);
             (this.calls.sync)(this.display, 0);
         }
+        *this.usages.borrow_mut() = keyboard::read(&this._x11, this.display)?;
         crate::ContextImpl::make_current(&this)?;
         Ok(this)
     }
@@ -232,6 +244,9 @@ impl Context {
         Ok([w, h])
     }
     fn focus_lost(&self) {
+        if let Some(input) = self.relative.borrow().as_ref() {
+            let _ = input.set(false);
+        }
         self.keys.borrow_mut().fill(false);
         self.state.buttons.set(0);
         self.state.push(WindowEvent::Focused(false));
@@ -240,8 +255,24 @@ impl Context {
     fn event(&self, event: &mut Event) {
         // SAFETY: Event is filled by XNextEvent; type determines the ABI member.
         unsafe {
+            if event.kind == 35 {
+                if let Some(input) = self.relative.borrow().as_ref() {
+                    match input.event((event as *mut Event).cast()) {
+                        Ok(Some(motion)) => self.state.push(motion),
+                        Ok(None) => {}
+                        Err(error) => *self.keyboard_error.borrow_mut() = Some(error),
+                    }
+                }
+                return;
+            }
             if event.kind == 34 {
                 (self.calls.refresh_keyboard)(event);
+                self.keys.borrow_mut().fill(false);
+                self.state.push(WindowEvent::PointerCaptureLost);
+                match keyboard::read(&self._x11, self.display) {
+                    Ok(usages) => *self.usages.borrow_mut() = usages,
+                    Err(error) => *self.keyboard_error.borrow_mut() = Some(error),
+                }
                 return;
             }
             if event.any.window != self.window {
@@ -277,6 +308,18 @@ impl Context {
                         pressed,
                         repeat,
                     });
+                    let usage = match base {
+                        0xff1b => 0x29,
+                        0xffe5 => 0x39, // follow explicit escape/caps keymap swaps
+                        _ => self.usages.borrow()[key.code as usize],
+                    };
+                    if usage != 0 {
+                        self.state.push(WindowEvent::PhysicalKey {
+                            usage,
+                            pressed,
+                            repeat,
+                        });
+                    }
                     if pressed {
                         let mut symbol = 0;
                         let mut bytes = [0 as c_char; 64];
@@ -452,6 +495,29 @@ impl crate::ContextImpl for Context {
     fn drawable_size(&self) -> Option<[u32; 2]> {
         Some(self.state.size.get())
     }
+    fn set_pointer_mode(
+        &self,
+        mode: horizon_render_api::platform_contract::PointerMode,
+    ) -> Result<(), String> {
+        let relative = mode == horizon_render_api::platform_contract::PointerMode::Relative;
+        let mut input = self.relative.borrow_mut();
+        if input.is_none() && relative {
+            if self.destroyed.get() || self.state.size.get().contains(&0) {
+                return Err("native drawable cannot capture pointer".into());
+            }
+            let root = self.root;
+            *input = Some(raw_input::Input::new(
+                &self._x11,
+                self.display,
+                root,
+                self.window,
+            )?);
+        }
+        if let Some(input) = input.as_ref() {
+            input.set(relative)?;
+        }
+        Ok(())
+    }
     fn poll_events(&self) -> Result<WindowEvents, String> {
         for _ in 0..256 {
             // SAFETY: XPending is nonblocking; XNextEvent called only with a
@@ -464,6 +530,9 @@ impl crate::ContextImpl for Context {
                 (self.calls.next)(self.display, &mut event);
                 self.event(&mut event);
             }
+        }
+        if let Some(error) = self.keyboard_error.borrow_mut().take() {
+            return Err(error);
         }
         // SAFETY: live owned display. Remaining messages are never discarded.
         Ok(self
@@ -487,6 +556,7 @@ impl Drop for Context {
         // unbind a different context belonging to another owner on this thread.
         unsafe {
             if !self.display.is_null() {
+                drop(self.relative.get_mut().take());
                 if !self.context.is_null() {
                     if (self.calls.get_current)() == self.context {
                         (self.calls.current)(self.display, 0, ptr::null_mut());

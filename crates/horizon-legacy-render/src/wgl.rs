@@ -1,6 +1,7 @@
 //! Native desktop WGL bootstrap, using APIs available on Windows 7.
 //! Bounded event pumping and resizable drawable ownership. Raw Win32 ABI
 //! declarations avoid pulling modern window/runtime dependencies into the probe.
+mod input;
 use crate::window::State;
 use std::ffi::{CStr, c_void};
 use std::marker::PhantomData;
@@ -112,11 +113,16 @@ unsafe extern "system" fn window_proc(
             if message == 0x0046 && state.programmatic_resize.get() {
                 return 0;
             }
+            if let Some(result) = input::message(window, state, message, lparam) {
+                return result;
+            }
             let result = state.message(message, wparam, lparam);
             if matches!(message, 0x0201 | 0x0204 | 0x0207 | 0x020b) {
                 SetCapture(window);
             }
-            if ((matches!(message, 0x0202 | 0x0205 | 0x0208 | 0x020c) && state.buttons.get() == 0)
+            if ((matches!(message, 0x0202 | 0x0205 | 0x0208 | 0x020c)
+                && state.buttons.get() == 0
+                && !state.relative.get())
                 || message == 8)
                 && GetCapture() == window
             {
@@ -461,6 +467,16 @@ impl crate::ContextImpl for Context {
         }
         self.refresh_size()
     }
+    fn set_pointer_mode(
+        &self,
+        mode: horizon_render_api::platform_contract::PointerMode,
+    ) -> Result<(), String> {
+        input::set(
+            self.window,
+            &self.state,
+            mode == horizon_render_api::platform_contract::PointerMode::Relative,
+        )
+    }
     fn poll_events(&self) -> Result<crate::WindowEvents, String> {
         let mut message = Message::default();
         // SAFETY: thread-confined window, correctly laid out writable MSG storage.
@@ -527,6 +543,7 @@ impl Drop for Context {
         // SAFETY: reverse teardown of uniquely owned handles, on their creating
         // thread; WM_CLOSE only requested closure and left the drawable alive.
         unsafe {
+            input::release(self.window, &self.state);
             if !self.context.is_null() {
                 wglMakeCurrent(ptr::null_mut(), ptr::null_mut());
                 wglDeleteContext(self.context);

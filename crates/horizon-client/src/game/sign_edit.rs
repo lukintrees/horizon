@@ -1,6 +1,7 @@
 //! The sign editing screen (`SignEditScreen` / `HangingSignEditScreen`):
 //! opened when a sign is placed, four lines limited to the sign's line
 //! width, Up/Down/Enter move between lines, Escape or Done closes.
+use super::input_event::KeyEvent;
 use super::{
     Game,
     commands::{Target, execute::Source},
@@ -15,7 +16,7 @@ use horizon_client::{
 };
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 
