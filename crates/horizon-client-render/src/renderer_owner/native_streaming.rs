@@ -39,6 +39,7 @@ pub struct NativeStream {
     generation: u64,
     tickets: FxHashMap<SectionKey, SectionStamp>,
     error: Option<String>,
+    membership: u64,
 }
 pub struct Update {
     /// Never lose unloaded modified chunks on a later GPU error: Game must
@@ -52,14 +53,14 @@ impl NativeStream {
         renderer: &mut TerrainHudRenderer,
         epoch: Arc<()>,
         layout: ColumnLayout,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let resources = renderer
             .resource_generation()
             .ok_or("native streaming requires committed assets")?;
         if self.binding.as_ref().is_some_and(|(old, shape, assets)| {
             Arc::ptr_eq(old, &epoch) && *shape == layout && *assets == resources
         }) {
-            return Ok(());
+            return Ok(false);
         }
         let next = self
             .generation
@@ -69,7 +70,8 @@ impl NativeStream {
         self.tickets.clear();
         self.binding = Some((epoch, layout, resources));
         self.generation = next;
-        Ok(())
+        self.membership = 0;
+        Ok(true)
     }
     pub fn update(
         &mut self,
@@ -86,9 +88,19 @@ impl NativeStream {
             };
         };
         if self.error.is_none() {
-            self.error = self
-                .bind(renderer, streamer.mesh_epoch(), world.layout())
-                .err();
+            match self.bind(renderer, streamer.mesh_epoch(), world.layout()) {
+                Ok(true) => {
+                    // A new GPU epoch has no residents, even if the existing
+                    // CPU world was already meshed before it was attached.
+                    for &(x, z) in world.chunks.keys() {
+                        for y in 0..world.layout().sections() as i32 {
+                            world.dirty_sections.insert((x, y, z));
+                        }
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => self.error = Some(error),
+            }
         }
         if self.error.is_none() {
             let mut hook = Hook {
@@ -96,6 +108,7 @@ impl NativeStream {
                 renderer,
                 budget,
             };
+            hook.synchronize_membership(world);
             hook.prune(world, streamer.center, streamer.radius);
             if hook.state.error.is_none() {
                 let (unexpected, removed) = streamer.update_admitted(world, &mut hook);
@@ -106,6 +119,7 @@ impl NativeStream {
                     streamer.free(unexpected);
                     hook.fail("native admission produced unstamped uploads".into());
                 }
+                hook.synchronize_membership(world);
                 hook.prune(world, streamer.center, streamer.radius);
                 if hook.state.error.is_none() {
                     if let Err(error) = hook.renderer.drain_streaming(budget.jobs, budget.bytes) {
@@ -131,8 +145,71 @@ impl Hook<'_> {
             self.state.error = Some(error);
         }
     }
-    fn prune(&mut self, world: &World, center: (i32, i32), radius: i32) {
-        let gone: Vec<_> = self
+    fn revoke(&mut self, keys: Vec<(SectionKey, SectionStamp)>, world: &mut World) {
+        for (key, stamp) in keys {
+            if self.state.error.is_some() {
+                break;
+            }
+            match self.renderer.unload_stream_section(key, stamp) {
+                Ok(true) => {
+                    self.state.tickets.remove(&key);
+                    // A CPU column can remain in the generation margin after
+                    // leaving the draw area. It MUST remesh on readmission.
+                    if world.chunks.contains_key(&(key[0], key[2])) {
+                        world.dirty_sections.insert((key[0], key[1], key[2]));
+                    }
+                }
+                Ok(false) => self.fail("native interest ticket is no longer current".into()),
+                Err(error) => self.fail(error),
+            }
+        }
+    }
+    fn synchronize_membership(&mut self, world: &mut World) {
+        use crate::chunk_map::ChunkMembershipDelta;
+        if self.state.error.is_some() {
+            return;
+        }
+        let revision = world.chunks.membership_revision();
+        if revision == self.state.membership {
+            return;
+        }
+        if self.state.membership != 0 {
+            // Removed/re-added at the SAME coordinates is not the old column.
+            // A lost delta ring/map replacement invalidates all interests;
+            // re-dirtying loaded keys makes this conservative rebuild complete.
+            let removed = world
+                .chunks
+                .deltas_since(self.state.membership)
+                .map(|deltas| {
+                    deltas
+                        .filter_map(|(_, change)| match change {
+                            ChunkMembershipDelta::Removed(key) => Some(key),
+                            _ => None,
+                        })
+                        .collect::<std::collections::HashSet<_>>()
+                });
+            let keys = self
+                .state
+                .tickets
+                .iter()
+                .filter(|(key, _)| {
+                    removed
+                        .as_ref()
+                        .is_none_or(|gone| gone.contains(&(key[0], key[2])))
+                })
+                .map(|(&key, &stamp)| (key, stamp))
+                .collect();
+            self.revoke(keys, world);
+        }
+        if self.state.error.is_none() {
+            self.state.membership = revision;
+        }
+    }
+    fn prune(&mut self, world: &mut World, center: (i32, i32), radius: i32) {
+        if self.state.error.is_some() {
+            return;
+        }
+        let gone = self
             .state
             .tickets
             .iter()
@@ -142,15 +219,7 @@ impl Hook<'_> {
             })
             .map(|(&key, &stamp)| (key, stamp))
             .collect();
-        for (key, stamp) in gone {
-            match self.renderer.unload_stream_section(key, stamp) {
-                Ok(true) => {
-                    self.state.tickets.remove(&key);
-                }
-                Ok(false) => self.fail("native interest ticket is no longer current".into()),
-                Err(error) => self.fail(error),
-            }
-        }
+        self.revoke(gone, world);
     }
 }
 fn within_view(center: (i32, i32), radius: i32, x: i32, z: i32) -> bool {
@@ -288,6 +357,72 @@ mod gpu_tests {
     }
     #[test]
     #[ignore = "requires OSMesa and explicit GL2 environment"]
+    fn view_readmission_and_same_coordinate_column_replacement_never_reuse_residency() {
+        let mut renderer = renderer();
+        let mut state = NativeStream::default();
+        let mut world = World::new(BlockStateId(0), 0);
+        world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
+        state
+            .bind(&mut renderer, Arc::new(()), world.layout())
+            .unwrap();
+        let mut hook = Hook {
+            state: &mut state,
+            renderer: &mut renderer,
+            budget: UploadBudget::default(),
+        };
+        let key = [0, 0, 0];
+        hook.synchronize_membership(&mut world);
+        let first = ticket(&mut hook, key);
+        assert!(matches!(
+            hook.complete(key, Some(first), mesh()),
+            Delivery::Queued
+        ));
+        hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        hook.prune(&mut world, (20, 20), 2);
+        assert_eq!(hook.renderer.section_keys().unwrap().count(), 0);
+        assert!(
+            world
+                .dirty_sections
+                .columns()
+                .any(|(column, sections)| column == (0, 0) && sections.contains(0))
+        );
+        let second = ticket(&mut hook, key);
+        assert_ne!(first, second);
+        assert!(matches!(
+            hook.complete(key, Some(second), mesh()),
+            Delivery::Queued
+        ));
+        hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        // A forget+reload between polls still revokes the previous GPU section.
+        world.chunks.remove(&(0, 0));
+        world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
+        hook.synchronize_membership(&mut world);
+        assert_eq!(hook.renderer.section_keys().unwrap().count(), 0);
+        assert!(matches!(
+            hook.complete(key, Some(second), mesh()),
+            Delivery::Discard(_)
+        ));
+        let third = ticket(&mut hook, key);
+        assert!(matches!(
+            hook.complete(key, Some(third), mesh()),
+            Delivery::Queued
+        ));
+        hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        // New map/evicted delta history: conservatively rebuild all interests.
+        world.chunks = Default::default();
+        world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
+        hook.synchronize_membership(&mut world);
+        assert_eq!(hook.renderer.stream_usage().unwrap().slots, 0);
+        assert_eq!(hook.renderer.section_keys().unwrap().count(), 0);
+        assert!(matches!(
+            hook.complete(key, Some(third), mesh()),
+            Delivery::Discard(_)
+        ));
+        assert!(hook.state.error.is_none());
+    }
+
+    #[test]
+    #[ignore = "requires OSMesa and explicit GL2 environment"]
     fn admission_retries_same_ticket_rejects_edits_and_revokes_pending_before_unload() {
         let mut renderer = renderer();
         let mut state = NativeStream::default();
@@ -352,7 +487,7 @@ mod gpu_tests {
             Delivery::Queued
         ));
         world.chunks.clear();
-        hook.prune(&world, (0, 0), 2);
+        hook.prune(&mut world, (0, 0), 2);
         let usage = hook.renderer.stream_usage().unwrap();
         assert_eq!(
             (usage.slots, usage.pending, usage.bytes, usage.removals),

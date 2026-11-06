@@ -1688,18 +1688,24 @@ impl Streaming {
                     }
                 }
                 Done::Meshed(x, sy, z, mesh, seq, stamp) => {
-                    if self.meshing.get(&(x, sy, z)) != Some(&seq) {
-                        stale.push(((x, sy, z), mesh));
-                        continue;
-                    }
-                    // Its column unloaded while it was meshed: nothing would
-                    // ever remove the uploaded section.
-                    if !world.chunks.contains_key(&(x, z)) {
-                        self.meshing.remove(&(x, sy, z));
-                        stale.push(((x, sy, z), mesh));
-                        continue;
-                    }
-                    match admission.complete([x, sy, z], stamp, mesh) {
+                    let current = self.meshing.get(&(x, sy, z)).copied();
+                    let loaded = world.chunks.contains_key(&(x, z));
+                    match admission::deliver_current(
+                        admission,
+                        [x, sy, z],
+                        stamp,
+                        mesh,
+                        current,
+                        seq,
+                        loaded,
+                    ) {
+                        Delivery::Obsolete(mesh) => {
+                            if current == Some(seq) {
+                                self.meshing.remove(&(x, sy, z));
+                            }
+                            stale.push(((x, sy, z), mesh));
+                            continue;
+                        }
                         Delivery::Retry(mesh) => {
                             self.deferred.push(Done::Meshed(x, sy, z, mesh, seq, stamp));
                             continue;
