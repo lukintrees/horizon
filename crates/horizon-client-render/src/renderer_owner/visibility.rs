@@ -354,6 +354,7 @@ mod gpu_tests {
         source.camera = DVec3::splat(8.);
         source.pitch = 0.;
         source.fov_degrees = 90.;
+        source.distance = 512.; // isolate lightmap/clock from distance fog
         source.sky.ambient_light_color = [0.25; 3];
         // Initialized streaming is required even for an empty resident world.
         assert!(

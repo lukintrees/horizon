@@ -9,8 +9,8 @@
 
 ## Текущий прогресс — контрольная точка 2026-11-06
 
-Все проектные правки этого среза закоммичены и отправлены в integration branch.
-Последний проверенный **кодовый** head: `de84398c74c2d5cb7b6b579fb3cf85800b0b90c4`.
+Предыдущий проверенный срез 3c закоммичен и отправлен в integration branch.
+Его **кодовый** head: `de84398c74c2d5cb7b6b579fb3cf85800b0b90c4`.
 `7a9c2deff` добавил native resident visibility/order и scope protection;
 `de84398c7` исправил YAML запуска новой CPU-проверки. Это ещё **не playable MVP**.
 
@@ -20,9 +20,10 @@
 | MVP 2a–2c | Visible GLX/WGL owner, native menu input, настоящее static-menu/HUD; окно до joined/cancellable resource worker, same-context checkpointed staging и atomic owner publication |
 | MVP 3a/3b | Shared frustum, общие `Game::idle`/`frame_tick`, existing closing-save/progress routing; cadence 16/32 ms с минимумом 4 ms для save deadline, focus/lost-event reset |
 | MVP 3c | `RendererOwner::native_visible_sections` и caller-owned `SectionOrder`: committed membership/Y origin, full 16³ AABB, f64 subtraction, solid nearest-first/key ties и обратный translucent order; pending GPU removal блокирует список |
+| MVP 3d | Game world `Frame` caller → native resident visibility/facade; тот же camera frustum, Game tick animations, live lightmap/gamma/fullbright, existing CPU pose path; world-entry остаётся закрыт до streaming/input |
 | Scope/CI | `renderer_owner/**` защищён от task edits; CPU default/native и actual-Frame/facade OSMesa regressions включены в focused matrix |
 
-**Проверки кодового head:** [aggregate 42088555293](https://github.com/lukintrees/horizon/actions/runs/42088555293),
+**Исторические проверки среза 3c:** [aggregate 42088555293](https://github.com/lukintrees/horizon/actions/runs/42088555293),
 [PR 42088565354](https://github.com/lukintrees/horizon/actions/runs/42088565354) и
 [PR после body refresh 42089916894](https://github.com/lukintrees/horizon/actions/runs/42089916894)
 завершились SUCCESS, все семь jobs. Новая OSMesa fixture действительно исполнилась и прошла;
@@ -33,9 +34,10 @@ Windows `pr_ready --quick --base 1a12a2d51` остаётся **не green** то
 vendor-security symlink privilege error `WinError 1314` (689 Python tests, 15 skipped).
 Crash source-location tests прошли с line tables; assertions/security tests не ослаблялись.
 
-**Остаток:** native Game всё ещё menu/progress-only. Visibility не имеет Game world caller;
-existing world `Frame`/live camera/lightmap/animations/CPU poses, stamped Game worker dispatch
-и upload/unload в `update_world`, затем gameplay input ещё не подключены. World-entry,
+**Остаток:** native Game всё ещё menu/progress-only в normal startup. В 3d добавлен
+Game world Frame caller через existing facade; runtime открытия мира не разрешён.
+Stamped Game worker dispatch и upload/unload в `update_world`, затем gameplay input
+ещё не подключены. World-entry,
 options/reconnect/deferred-entry guards остаются до working native world submission;
 controller polling отложен до adapter без fabricated winit IDs. Продолжать с seam'ов §3 ниже,
 не повторять resident-order patch. Actual Game с normal prepared resources здесь не запускался:
@@ -93,8 +95,8 @@ resource profile и factory связаны с существующим `Game::ne
 MVP 2a ниже добавляет visible menu-only route без этого flag, но не playable startup.
 [Команда и ограничения](legacy-gl-native-bootstrap.md). Full Game runtime с normal prepared
 resources здесь ещё не проверен, поэтому gate 1 **не закрыт**. Код native window/event loop/
-loading menu добавлен в 2a–2c ниже; world Frame/live CPU poses и Game caller visibility
-ещё не подключены.
+loading menu добавлен в 2a–2c ниже; world Frame caller/CPU poses/visibility wiring
+добавлены в 3d, но world entry/streaming/input runtime ещё не подключён.
 
 
 ## 2. Видимое окно, загрузка и настоящее меню — ОЖИДАЕТ 1
@@ -173,14 +175,33 @@ Shared camera frustum / distance predicate, полные 16³ AABB и f64 subtra
 removal запрещает публикацию списка. Это ещё не Game caller: world-entry guard
 остаётся, а synthetic actual-Frame readback не закрывает runtime gate.
 
+Продолжение 3d: `Game::render` сохраняет отдельный native Title/progress путь,
+но world frame строится существующим producer и подаётся через
+`RendererOwner::render_native_world`. Caller-owned order использует committed residency,
+shared camera frustum и radius. Animation tick берётся из `Frame.ticks` с опубликованной
+resource generation; live lightmap, gamma/fullbright, sky/fog и CPU geometry проходят
+existing facade/coordinator. `near_plane` тоже получает aspect через owner, не wgpu.
+Empty/non-native owner, title panorama и неинициализированный world streaming — ошибки,
+а не fallback/поддельный empty world. Ошибки не обходят восстановление Game frame buffers;
+ошибочный visibility scratch очищается, minimized drawable откладывается. Modern route
+сохранён. CPU skinning следует уже существующему `modern_ref`-gated GPU/CPU выбору;
+запрошенный GPU SkinFrame явно отвергается native coordinator, не теряется молча.
+
+Новая OSMesa regression подаёт реальный Frame/SectionMesh contract: terrain camera/order,
+clock-driven red/blue animation, изменяемый lightmap/gamma/fullbright, CPU entity quad,
+refusal GPU poses/panorama/invalid camera с сохранением предыдущего framebuffer.
+Это fixture и compile wiring, **не actual normal-resource Game world**. Cave graph
+modern owner в этот conservative frustum/distance walk не перенесён.
+
 Следующие seam'ы по порядку:
-1. Existing world `Frame` → facade с уже добавленным resident visibility/order,
-   live camera/lightmap/animations и CPU poses;
-   снять world-entry guard только вместе с working native world submission.
-   Без resident visibility такой кадр нарисовал бы небо/entities без terrain.
-2. Streaming: upload/unload в `update_world` через facade для legacy owner
-    (сейчас весь блок под `modern_mut()`); tickets W01a уже в ветке.
-3. Gameplay input (WASD/jump/capture/Escape) на native pump.
+1. Streaming: stamped dispatch/completions и upload/unload в `update_world` через facade
+   для legacy owner (сейчас весь блок под `modern_mut()`); tickets W01a уже в ветке.
+   Снять world-entry guard только вместе с working Game world residency/input, не ради
+   sky-only кадра. Native world submission требует initialized streaming identity.
+2. Gameplay input (WASD/jump/capture/Escape) на native pump.
+3. Actual normal-resource Game runtime и оставшиеся конкретные producers сценарием §3/4.
+
+Exact-head проверки 3d публикуются в draft PR #4 отдельно от исторических результатов 3c.
 
 **Выход:** игрок ходит по настоящему миру; chunks появляются и выгружаются в движении.
 Только конкретные unsupported producers этого сценария становятся blockers следующего patch.

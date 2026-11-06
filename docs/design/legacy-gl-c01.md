@@ -558,3 +558,23 @@ fmt/Clippy/doc checks и 1308 Rust tests, но **не green**: Python — 689 ru
 debug=0: frozen-source A/B дважды воспроизвёл failure и дважды прошёл с render-package
 line tables, без правок tests/production code. Новый OSMesa fixture локально только
 compiled/ignored; actual execution требует собственного exact-head Linux CI.
+
+
+## MVP 3d: existing Game world Frame caller (2026-11-06)
+
+`Game::render` retains native Title/progress submission but no longer unconditionally sends
+all native frames into the menu-only producer. Existing world camera/environment/CPU pose/
+HUD geometry builds one common Frame. Native submission uses `render_native_world` on the
+existing RendererOwner: shared frustum, caller-owned SectionOrder, committed native residency
+and published asset generation, Game tick animation updates, existing facade live lightmap.
+Gamma/fullbright are producer settings, not hidden adapter overrides. Camera near-plane
+aspect also comes from the owner size. Modern submission and frame-storage restoration
+remain unchanged; no native owner is converted into a modern renderer.
+
+The helper refuses non-native/empty owners, title panorama and missing streaming identity;
+minimized frames defer, errors clear visibility scratch. Unsupported GPU poses/materials
+still fail explicitly. Native residency is conservative frustum/distance visibility, not a
+new cave graph. Game world-entry guards remain: update_world upload/unload/dispatch and
+native gameplay input are not connected. OSMesa real-Frame readbacks (animation, lighting,
+CPU geometry, rejection preserving framebuffer) are regressions, not normal-assets Game,
+playable/save/reopen or Win7/X1650 evidence.
