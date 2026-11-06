@@ -32,6 +32,7 @@ mod screen;
 mod screenshot;
 mod streaming;
 pub use streaming::Drain as StreamDrain;
+pub(crate) use streaming::retained as retained_stream_mesh;
 mod sky;
 mod weather;
 

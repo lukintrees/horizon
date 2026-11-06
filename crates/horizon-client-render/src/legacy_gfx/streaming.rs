@@ -14,7 +14,7 @@ pub struct Drain {
     pub removals: usize,
     pub bytes: usize,
 }
-fn retained(mesh: &SectionMesh) -> Result<usize, String> {
+pub(crate) fn retained(mesh: &SectionMesh) -> Result<usize, String> {
     fn vector<T>(v: &Vec<T>) -> Option<usize> {
         v.capacity().checked_mul(std::mem::size_of::<T>())
     }
@@ -35,6 +35,13 @@ fn retained(mesh: &SectionMesh) -> Result<usize, String> {
     .ok_or_else(|| "stream mesh retained-byte overflow".into())
 }
 impl TerrainHudRenderer {
+    pub(crate) fn stream_limits(&self) -> streaming::Limits {
+        streaming::Limits {
+            slots: self.limits.stream_slots,
+            pending: self.limits.stream_pending,
+            bytes: self.limits.stream_bytes,
+        }
+    }
     pub(super) fn streaming_ready(&self) -> Result<(), String> {
         if self
             .streaming

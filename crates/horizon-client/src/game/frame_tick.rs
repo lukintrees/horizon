@@ -40,6 +40,11 @@ impl Game<'_> {
         }
         if self.title.is_none() {
             horizon_client::spans::time("update_world", || self.update_world());
+            if self.options.renderer.is_native()
+                && let Some(error) = self.error.take()
+            {
+                return Err(error);
+            }
             horizon_client::spans::time("spawn_player", || self.spawn_player())?;
         }
         let updated = Instant::now();

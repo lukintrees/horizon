@@ -21,6 +21,10 @@ use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, TryLockError},
 };
 
+pub mod admission;
+use admission::{Admission, Delivery, MeshAdmission};
+use horizon_render_api::render_contract::SectionStamp;
+
 /// How long a worker waits with nothing to do before it gives back its
 /// generator's scratch buffers ([`ChunkGenerator::idle`]).
 pub const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -260,6 +264,7 @@ impl<G: ChunkGenerator> Saves for G {
 /// Per-job mesher inputs that change with the dimension or the options.
 #[derive(Clone)]
 struct MeshSettings {
+    stamp: Option<SectionStamp>,
     nether: bool,
     shader_pack_lighting: bool,
     separate_ao: bool,
@@ -302,7 +307,7 @@ pub enum Done {
     /// decoration wrote into them.
     Decorated(i32, i32, Box<[Proto; 9]>, Vec<usize>, FinalWrites),
     Lit(i32, i32, Vec<crate::chunk::Light>, u64),
-    Meshed(i32, i32, i32, SectionMesh, u64),
+    Meshed(i32, i32, i32, SectionMesh, u64, Option<SectionStamp>),
     Saved(Vec<((i32, i32), Proto)>),
     /// A proto chunk back from `Job::LightView`, with its view.
     LightView(i32, i32, Proto, Option<Chunk>),
@@ -429,6 +434,8 @@ pub struct ProtoCensus {
 }
 pub struct Streaming {
     shared: Arc<Shared>,
+    /// Retained identity token prevents pointer ABA without keeping workers alive.
+    mesh_epoch: Arc<()>,
     /// Columns generated and saved as they were left behind: new when they
     /// next arrive, though read from the save (`World::loaded_chunks`).
     dropped_new: FxHashSet<(i32, i32)>,
@@ -972,7 +979,7 @@ impl<G: ChunkGenerator> Jobs<G> {
                 let mut mesh = mesher.mesh_reusing(&borrow(&region), sy, recycled, mesh_scratch);
                 mesh.sort_solid();
                 *faces = Some((context.tables.clone(), mesher.visibility));
-                Done::Meshed(x, sy, z, mesh, seq)
+                Done::Meshed(x, sy, z, mesh, seq, settings.stamp)
             }
         };
         Some(done)
@@ -1025,6 +1032,7 @@ impl Streaming {
         };
         Self {
             shared,
+            mesh_epoch: Arc::new(()),
             non_air_sections,
             proto_bytes,
             caches,
@@ -1588,6 +1596,21 @@ impl Streaming {
         &mut self,
         world: &mut World,
     ) -> (Vec<((i32, i32, i32), SectionMesh)>, Vec<Arc<Chunk>>) {
+        self.update_admitted(world, &mut admission::Modern)
+    }
+    /// Stable across moves, fresh for a replaced streamer. Keeping the empty
+    /// tag alive prevents address reuse without retaining the old worker pool.
+    pub fn mesh_epoch(&self) -> Arc<()> {
+        self.mesh_epoch.clone()
+    }
+
+    /// Same scheduler/mesher as update; admission runs BEFORE dispatch, and
+    /// delivery runs only AFTER existing sequence/column validation.
+    pub fn update_admitted(
+        &mut self,
+        world: &mut World,
+        admission: &mut impl MeshAdmission,
+    ) -> (Vec<((i32, i32, i32), SectionMesh)>, Vec<Arc<Chunk>>) {
         let mut uploads = Vec::new();
         if self.paused {
             return (uploads, Vec::new());
@@ -1664,7 +1687,7 @@ impl Streaming {
                         self.replay_light_edits(world, x, z, snapshot);
                     }
                 }
-                Done::Meshed(x, sy, z, mesh, seq) => {
+                Done::Meshed(x, sy, z, mesh, seq, stamp) => {
                     if self.meshing.get(&(x, sy, z)) != Some(&seq) {
                         stale.push(((x, sy, z), mesh));
                         continue;
@@ -1676,10 +1699,23 @@ impl Streaming {
                         stale.push(((x, sy, z), mesh));
                         continue;
                     }
+                    match admission.complete([x, sy, z], stamp, mesh) {
+                        Delivery::Retry(mesh) => {
+                            self.deferred.push(Done::Meshed(x, sy, z, mesh, seq, stamp));
+                            continue;
+                        }
+                        Delivery::Discard(mesh) => {
+                            self.meshing.remove(&(x, sy, z));
+                            world.dirty_sections.insert((x, sy, z));
+                            stale.push(((x, sy, z), mesh));
+                            continue;
+                        }
+                        Delivery::Upload(mesh) => uploads.push(((x, sy, z), mesh)),
+                        Delivery::Queued => {}
+                    }
                     self.meshing.remove(&(x, sy, z));
                     self.compile_started.insert((x, sy, z), seq);
                     self.meshed_total += 1;
-                    uploads.push(((x, sy, z), mesh));
                 }
             }
         }
@@ -2033,6 +2069,14 @@ impl Streaming {
             };
             world.dirty_sections.take_column(x, z);
             for sy in sections.iter().map(|sy| sy as i32) {
+                let stamp = match admission.request([x, sy, z]) {
+                    Admission::Unstamped => None,
+                    Admission::Stamped(stamp) => Some(stamp),
+                    Admission::Defer => {
+                        world.dirty_sections.insert((x, sy, z));
+                        continue;
+                    }
+                };
                 let first = self.meshed.insert((x, z));
                 self.sequence += 1;
                 self.meshing.insert((x, sy, z), self.sequence);
@@ -2046,6 +2090,7 @@ impl Streaming {
                         region.clone(),
                         self.sequence,
                         MeshSettings {
+                            stamp,
                             nether: self.nether_shading,
                             shader_pack_lighting: self.shader_pack_lighting,
                             separate_ao: self.separate_ao,

@@ -3,6 +3,11 @@
 use crate::{gfx, renderer_facade::RendererFacade};
 use horizon_render_api::render_contract::{Backend, FrameOptions, VisibleSections};
 
+#[cfg(feature = "legacy-gl")]
+mod native_streaming;
+#[cfg(feature = "legacy-gl")]
+pub use native_streaming::{NativeStream, UploadBudget as NativeUploadBudget};
+
 mod visibility;
 pub use visibility::SectionOrder;
 

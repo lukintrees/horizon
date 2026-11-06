@@ -2963,6 +2963,8 @@ struct Game<'a> {
     /// Scratch only; committed native residency remains in the renderer owner.
     #[cfg(feature = "legacy-gl")]
     native_section_order: horizon_client::renderer_owner::SectionOrder,
+    #[cfg(feature = "legacy-gl")]
+    native_streaming: horizon_client::renderer_owner::NativeStream,
     entity_culler: Option<horizon_client::entity_culling::Culler>,
     async_entity_culler: Option<entity_culling::AsyncCuller>,
     async_entity_culling_failed: bool,
@@ -16876,8 +16878,38 @@ impl Game<'_> {
         self.streaming
             .extra
             .extend(waiting.into_iter().map(|chunk| (chunk, 0)));
-        let (uploads, unloaded) =
-            horizon_client::spans::time("streaming", || self.streaming.update(&mut self.world));
+        let (uploads, unloaded) = horizon_client::spans::time("streaming", || {
+            #[cfg(feature = "legacy-gl")]
+            if self.options.renderer.is_native() {
+                let graphics = &self.settings.horizon;
+                let defaults = horizon_client::renderer_owner::NativeUploadBudget::default();
+                let update = self.native_streaming.update(
+                    &mut self.renderer,
+                    &mut self.streaming,
+                    &mut self.world,
+                    horizon_client::renderer_owner::NativeUploadBudget {
+                        jobs: if graphics.chunk_updates == 0 {
+                            defaults.jobs
+                        } else {
+                            (graphics.chunk_updates as usize).min(64)
+                        },
+                        bytes: if graphics.upload_budget_kib == 0 {
+                            defaults.bytes
+                        } else {
+                            usize::try_from(u64::from(graphics.upload_budget_kib) * 1024)
+                                .unwrap_or(usize::MAX)
+                        },
+                    },
+                );
+                if let Some(error) = update.error {
+                    self.error = Some(error.into());
+                }
+                // Do not return early on GPU errors: unloaded modified columns
+                // still take the existing entity/save cleanup below.
+                return (Vec::new(), update.unloaded);
+            }
+            self.streaming.update(&mut self.world)
+        });
         self.streaming.extra.truncate(areas);
         self.spawn_fresh_chunks();
         // Before the unloaded chunks' block entities are written and dropped.
@@ -19011,6 +19043,8 @@ impl<'a> Game<'a> {
             view_frustum: None,
             #[cfg(feature = "legacy-gl")]
             native_section_order: Default::default(),
+            #[cfg(feature = "legacy-gl")]
+            native_streaming: Default::default(),
             entity_culler: None,
             async_entity_culler: None,
             async_entity_culling_failed: false,
