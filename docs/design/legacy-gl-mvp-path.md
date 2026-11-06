@@ -21,6 +21,7 @@
 | MVP 3a/3b | Shared frustum, общие `Game::idle`/`frame_tick`, existing closing-save/progress routing; cadence 16/32 ms с минимумом 4 ms для save deadline, focus/lost-event reset |
 | MVP 3c | `RendererOwner::native_visible_sections` и caller-owned `SectionOrder`: committed membership/Y origin, full 16³ AABB, f64 subtraction, solid nearest-first/key ties и обратный translucent order; pending GPU removal блокирует список |
 | MVP 3d | Game world `Frame` caller → native resident visibility/facade; тот же camera frustum, Game tick animations, live lightmap/gamma/fullbright, existing CPU pose path; world-entry остаётся закрыт до streaming/input |
+| MVP 3e | Existing Game mesher получает owner-issued stamp до dispatch; bounded native upload/unload и admission; modern API/default сохранён. Membership/view/epoch invalidation и explicit capacity/oversize errors; world-entry по-прежнему закрыт |
 | Scope/CI | `renderer_owner/**` защищён от task edits; CPU default/native и actual-Frame/facade OSMesa regressions включены в focused matrix |
 
 **Исторические проверки среза 3c:** [aggregate 42088555293](https://github.com/lukintrees/horizon/actions/runs/42088555293),
@@ -36,8 +37,9 @@ Crash source-location tests прошли с line tables; assertions/security tes
 
 **Остаток:** native Game всё ещё menu/progress-only в normal startup. В 3d добавлен
 Game world Frame caller через existing facade; runtime открытия мира не разрешён.
-Stamped Game worker dispatch и upload/unload в `update_world`, затем gameplay input
-ещё не подключены. World-entry,
+В 3e подключены stamped Game worker dispatch и upload/unload в `update_world`.
+Gameplay input ещё не подключён. Проверки 3e — CPU protocol и direct native-hook OSMesa;
+это не real-worker/normal-resource end-to-end запуск Game. World-entry,
 options/reconnect/deferred-entry guards остаются до working native world submission;
 controller polling отложен до adapter без fabricated winit IDs. Продолжать с seam'ов §3 ниже,
 не повторять resident-order patch. Actual Game с normal prepared resources здесь не запускался:
@@ -241,3 +243,38 @@ Exact-head проверки 3d публикуются в draft PR #4 отдел�
 - Прогоны только в fresh scratch HORIZON_HOME/game/config/data folders; не трогать реальные saves.
 - Никаких B1–B4/playable/Win7 claims до соответствующего runtime evidence. Main merge/release не
   разрешены этим планом. Изменения shared contracts/manifests делает только текущий интегратор.
+
+## MVP 3e — stamped dispatch и bounded native delivery
+
+`streaming/admission.rs` расширяет existing CPU scheduler, не создаёт новый worker pool.
+До `Job::Mesh` native owner выдаёт `SectionStamp`; `MeshSettings` → `Done::Meshed`
+переносят его неизменным. Existing latest-sequence/loaded-column checks выполняются
+до native sink. Backpressure сохраняет тот же mesh/stamp/sequence в existing deferred
+set; admission defer возвращает dirty bit. Payload передаётся через `Arc`, без clone
+vertex vectors. Modern `Streaming::update` оставляет прежний upload-list API.
+
+`renderer_owner/native_streaming.rs` принадлежит Game и owner thread. Rebind CPU
+streamer identity/layout/resource generation очищает native epoch и redirties loaded
+CPU sections. `ChunkMap::deltas_since` отзывает tickets даже при remove+insert тех же
+координат; потеря ring history/замена map консервативно отзывает все интересы. Выход
+из draw radius отзывает GPU resident и redirties ещё загруженную CPU column для
+возвращения. Возвращённые unloaded modified chunks идут в общий Game entity/save
+cleanup даже при последующей GPU ошибке; ошибка прерывает frame до spawn/render.
+
+Bounded defaults: 4096 section interests, 64 pending, 8 MiB retained payload;
+обычный drain — 4 jobs/8 MiB за update (configured jobs capped at 64). Mesh больше
+queue/per-drain byte capacity — явная ошибка, не вечная голова очереди. Admission
+также проверяет, что **все sections** полного CPU draw radius помещаются в slots:
+permanent metadata starvation нельзя выдавать за transient backpressure. Радиус
+не clamp'ится молча; неподдерживаемый view получает ошибку. Для vanilla 24 sections
+и 4096 slots CPU test принимает radius 6 и отклоняет 7. Это metadata bound, **не**
+обещание общего VRAM бюджета/жёсткой длительности GL upload.
+
+Проверки: actual production CPU delivery helper фильтрует stale sequence/unloaded
+column до sink и сохраняет retry stamp. Direct-hook OSMesa fixtures проверяют actual
+native queue/residency: pending backpressure, air replacement, revoke/unload, old
+world ticket, oversize error, view reentry, same-coordinate reload, map replacement,
+lost delta history и epoch redirty. Эти fixtures **не запускают реальный worker** и
+не доказывают normal-resource Game/gameplay. Entry/input/save-reopen/hardware gates
+остаются открыты; следующий блок — native gameplay input и real-worker integration
+перед снятием world-entry guards.

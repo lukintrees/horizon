@@ -40,6 +40,7 @@ pub struct NativeStream {
     tickets: FxHashMap<SectionKey, SectionStamp>,
     error: Option<String>,
     membership: u64,
+    interest_radius: Option<i32>,
 }
 pub struct Update {
     /// Never lose unloaded modified chunks on a later GPU error: Game must
@@ -52,15 +53,16 @@ impl NativeStream {
         &mut self,
         renderer: &mut TerrainHudRenderer,
         epoch: Arc<()>,
-        layout: ColumnLayout,
-    ) -> Result<bool, String> {
+        world: &mut World,
+    ) -> Result<(), String> {
+        let layout = world.layout();
         let resources = renderer
             .resource_generation()
             .ok_or("native streaming requires committed assets")?;
         if self.binding.as_ref().is_some_and(|(old, shape, assets)| {
             Arc::ptr_eq(old, &epoch) && *shape == layout && *assets == resources
         }) {
-            return Ok(false);
+            return Ok(());
         }
         let next = self
             .generation
@@ -71,7 +73,14 @@ impl NativeStream {
         self.binding = Some((epoch, layout, resources));
         self.generation = next;
         self.membership = 0;
-        Ok(true)
+        self.interest_radius = None;
+        // New GPU epoch has no residents, even for a previously meshed CPU world.
+        for &(x, z) in world.chunks.keys() {
+            for y in 0..layout.sections() as i32 {
+                world.dirty_sections.insert((x, y, z));
+            }
+        }
+        Ok(())
     }
     pub fn update(
         &mut self,
@@ -88,18 +97,19 @@ impl NativeStream {
             };
         };
         if self.error.is_none() {
-            match self.bind(renderer, streamer.mesh_epoch(), world.layout()) {
-                Ok(true) => {
-                    // A new GPU epoch has no residents, even if the existing
-                    // CPU world was already meshed before it was attached.
-                    for &(x, z) in world.chunks.keys() {
-                        for y in 0..world.layout().sections() as i32 {
-                            world.dirty_sections.insert((x, y, z));
-                        }
-                    }
-                }
-                Ok(false) => {}
-                Err(error) => self.error = Some(error),
+            if let Err(error) = self.bind(renderer, streamer.mesh_epoch(), world) {
+                self.error = Some(error);
+            }
+        }
+        if self.error.is_none() && self.interest_radius != Some(streamer.radius) {
+            if interest_fits(
+                streamer.radius,
+                world.layout().sections(),
+                renderer.stream_limits().slots,
+            ) {
+                self.interest_radius = Some(streamer.radius);
+            } else {
+                self.error = Some("native view exceeds section interest capacity; select a smaller render distance before world entry".into());
             }
         }
         if self.error.is_none() {
@@ -222,6 +232,30 @@ impl Hook<'_> {
         self.revoke(gone, world);
     }
 }
+fn interest_fits(radius: i32, sections: usize, slots: usize) -> bool {
+    if radius == 0 {
+        return true;
+    }
+    if !(1..=256).contains(&radius) || sections == 0 {
+        return false;
+    }
+    let columns = slots / sections;
+    if (radius as usize * 2 + 1) > columns {
+        return false;
+    }
+    let mut count = 0;
+    for x in -radius..=radius {
+        for z in -radius..=radius {
+            if in_view_distance((0, 0), radius, x, z) {
+                count += 1;
+                if count > columns {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
 fn within_view(center: (i32, i32), radius: i32, x: i32, z: i32) -> bool {
     radius > 0
         && (i64::from(x) - i64::from(center.0)).abs() <= i64::from(radius)
@@ -296,6 +330,15 @@ impl MeshAdmission for Hook<'_> {
 mod tests {
     use super::*;
     #[test]
+    fn impossible_static_views_fail_instead_of_starving_dirty_sections_forever() {
+        assert!(interest_fits(6, 24, 4096));
+        assert!(!interest_fits(7, 24, 4096));
+        assert!(interest_fits(0, 24, 4096));
+        assert!(!interest_fits(i32::MAX, 1, usize::MAX));
+        assert!(!interest_fits(2, 0, 4096));
+        assert!(!interest_fits(2, 24, 24));
+    }
+    #[test]
     fn interest_distance_is_shared_and_overflow_safe_on_teleports() {
         assert!(!within_view((i32::MAX, 0), 16, i32::MIN, 0));
         assert!(!within_view((0, 0), 0, 0, 0));
@@ -362,9 +405,7 @@ mod gpu_tests {
         let mut state = NativeStream::default();
         let mut world = World::new(BlockStateId(0), 0);
         world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
-        state
-            .bind(&mut renderer, Arc::new(()), world.layout())
-            .unwrap();
+        state.bind(&mut renderer, Arc::new(()), &mut world).unwrap();
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,
@@ -378,6 +419,7 @@ mod gpu_tests {
             Delivery::Queued
         ));
         hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        world.dirty_sections = Default::default();
         hook.prune(&mut world, (20, 20), 2);
         assert_eq!(hook.renderer.section_keys().unwrap().count(), 0);
         assert!(
@@ -393,6 +435,7 @@ mod gpu_tests {
             Delivery::Queued
         ));
         hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        world.dirty_sections = Default::default();
         // A forget+reload between polls still revokes the previous GPU section.
         world.chunks.remove(&(0, 0));
         world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
@@ -408,6 +451,13 @@ mod gpu_tests {
             Delivery::Queued
         ));
         hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        assert!(
+            world
+                .dirty_sections
+                .columns()
+                .any(|(column, sections)| column == (0, 0) && sections.contains(0))
+        );
+        world.dirty_sections = Default::default();
         // New map/evicted delta history: conservatively rebuild all interests.
         world.chunks = Default::default();
         world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
@@ -418,6 +468,36 @@ mod gpu_tests {
             hook.complete(key, Some(third), mesh()),
             Delivery::Discard(_)
         ));
+        assert!(
+            world
+                .dirty_sections
+                .columns()
+                .any(|(column, sections)| column == (0, 0) && sections.contains(0))
+        );
+        let fourth = ticket(&mut hook, key);
+        assert!(matches!(
+            hook.complete(key, Some(fourth), mesh()),
+            Delivery::Queued
+        ));
+        hook.renderer.drain_streaming(1, hook.budget.bytes).unwrap();
+        world.dirty_sections = Default::default();
+        let fixture = Arc::new(Chunk::empty(100, 100));
+        for _ in 0..300 {
+            world.chunks.insert((100, 100), fixture.clone());
+            world.chunks.remove(&(100, 100));
+        }
+        hook.synchronize_membership(&mut world);
+        assert_eq!(hook.renderer.section_keys().unwrap().count(), 0);
+        assert!(matches!(
+            hook.complete(key, Some(fourth), mesh()),
+            Delivery::Discard(_)
+        ));
+        assert!(
+            world
+                .dirty_sections
+                .columns()
+                .any(|(column, sections)| column == (0, 0) && sections.contains(0))
+        );
         assert!(hook.state.error.is_none());
     }
 
@@ -430,7 +510,7 @@ mod gpu_tests {
         world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
         let epoch = Arc::new(());
         state
-            .bind(&mut renderer, epoch.clone(), world.layout())
+            .bind(&mut renderer, epoch.clone(), &mut world)
             .unwrap();
         let mut hook = Hook {
             state: &mut state,
@@ -499,13 +579,20 @@ mod gpu_tests {
             Delivery::Discard(_)
         ));
         assert!(hook.state.error.is_none());
-        state.bind(&mut renderer, epoch, world.layout()).unwrap();
+        world.chunks.insert((0, 0), Arc::new(Chunk::empty(0, 0)));
+        world.dirty_sections = Default::default();
+        state.bind(&mut renderer, epoch, &mut world).unwrap();
+        assert!(world.dirty_sections.columns().next().is_none());
         assert_eq!(state.generation, 1);
         // New streamer identity cannot ABA-reuse the first world stamp.
-        state
-            .bind(&mut renderer, Arc::new(()), world.layout())
-            .unwrap();
+        state.bind(&mut renderer, Arc::new(()), &mut world).unwrap();
         assert_eq!(state.generation, 2);
+        assert!(
+            world
+                .dirty_sections
+                .columns()
+                .any(|(column, sections)| column == (0, 0) && sections.contains(0))
+        );
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,
@@ -529,9 +616,8 @@ mod gpu_tests {
     fn oversized_completion_is_a_reported_error_not_an_immortal_pending_head() {
         let mut renderer = renderer();
         let mut state = NativeStream::default();
-        state
-            .bind(&mut renderer, Arc::new(()), ColumnLayout::VANILLA)
-            .unwrap();
+        let mut world = World::new(BlockStateId(0), 0);
+        state.bind(&mut renderer, Arc::new(()), &mut world).unwrap();
         let mut hook = Hook {
             state: &mut state,
             renderer: &mut renderer,

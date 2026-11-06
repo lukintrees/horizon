@@ -578,3 +578,24 @@ new cave graph. Game world-entry guards remain: update_world upload/unload/dispa
 native gameplay input are not connected. OSMesa real-Frame readbacks (animation, lighting,
 CPU geometry, rejection preserving framebuffer) are regressions, not normal-assets Game,
 playable/save/reopen or Win7/X1650 evidence.
+
+## MVP 3e: existing Game stamped mesher bridge (2026-11-06)
+
+`Streaming::update` remains the modern wrapper; `update_admitted` uses the integrator-owned
+`streaming/admission.rs` hook. Native admission mints a CPU `SectionStamp` before mesh job
+submission; settings/completion carry it unchanged. Sequence and loaded-column rejection
+precedes the sink. Retry retains the exact payload/stamp in the existing in-flight set;
+deferred admission restores dirty work, never relabels an old completion.
+
+`Game::native_streaming` owns binding/tickets/error and consumes existing CPU completions
+into `TerrainHudRenderer`'s bounded queue. No GL handles enter workers. Native epoch,
+column membership (including remove/reinsert and lost delta history) and view exits revoke
+residency; loaded revoked CPU sections become dirty for readmission. Modified unloaded
+columns still reach common Game save cleanup on a native error, propagated before rendering.
+An oversize payload or impossible full-view interest capacity is an explicit error, not a
+silent omission or an immortal backpressured head. No automatic view-distance clamp.
+
+The direct-hook OSMesa tests exercise actual queue/residency, not a real mesher worker or
+normal-resource Game startup. World-entry guard remains: native gameplay input, real-worker
+integration and full launch/menu/world/edit/inventory/save/reopen acceptance are still OPEN;
+llvmpipe evidence is not Win7 SP1 x86 / X1650 qualification.

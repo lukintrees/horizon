@@ -58,6 +58,8 @@ class ScopeTests(unittest.TestCase):
                      ".github/workflows/fake.yml", ".github/legacy-gl-policy.json",
                        "tools/ci/legacy_scope.py", "AGENTS.md",
                        "crates/horizon-client-render/src/renderer_facade.rs",
+                       "crates/horizon-client-render/src/streaming.rs",
+                       "crates/horizon-client-render/src/streaming/admission.rs",
                        "crates/horizon-client-render/src/renderer_owner/visibility.rs",
                        "crates/horizon-client-render/src/legacy_gfx/asset_snapshot.rs",
                       "crates/horizon-client-render/src/legacy_gfx/resources.rs",
