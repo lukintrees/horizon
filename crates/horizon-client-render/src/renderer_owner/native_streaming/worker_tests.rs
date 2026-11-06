@@ -68,7 +68,7 @@ fn settle(
             && world.dirty_sections.is_empty()
             && usage.pending == 0
             && usage.removals == 0
-            && stream.obsolete_mesh_completions >= obsolete_at_least
+            && stream.obsolete_mesh_completions + stream.retired_mesh_jobs >= obsolete_at_least
         {
             return;
         }
@@ -192,6 +192,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     );
     let before = stream.meshed_total;
     let stale_before = stream.obsolete_mesh_completions;
+    let retired_before = stream.retired_mesh_jobs;
 
     world.dirty_sections.insert((key[0], key[1], key[2]));
     let result = state.update(&mut owner, &mut stream, &mut world, UploadBudget::default());
@@ -213,7 +214,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         &mut owner,
         &mut stream,
         &mut world,
-        stale_before + 1,
+        stale_before + retired_before + 1,
     );
     let current = state.tickets[&key];
     assert_ne!(
@@ -241,7 +242,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         &mut owner,
         &mut stream,
         &mut world,
-        stale_before + 1,
+        stale_before + retired_before + 1,
     );
     assert!(!native(&mut owner).has_section(key));
     let empty_image = image(&mut owner);
@@ -257,6 +258,7 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         let report = serde_json::json!({
             "scenario": "native-prepared-real-mesher",
             "obsolete_completions": stream.obsolete_mesh_completions - stale_before,
+            "retired_queued_meshes": stream.retired_mesh_jobs - retired_before,
             "normal_resources": true, "worker_completions": stream.meshed_total,
             "received_columns": stream.generated_total, "pending_limit": 1,
             "old_revision": obsolete.revision, "new_revision": current.revision,

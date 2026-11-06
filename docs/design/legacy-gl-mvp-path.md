@@ -327,9 +327,10 @@ acceptance-сценарии, walk/look/break/place/inventory/save/reopen и Win7
 `NativeStream::update`, который вызывает Game. Mesh и SectionStamp не подставляются.
 Колонки подаются через existing remote-column API: это изолированная проверка
 mesher delivery, **не vanilla terrain generation, не Game/world/save E2E**.
-Boot HUD не используется для проверки world pixels. Test-only counter в actual
-`Delivery::Obsolete` требует дождаться и действительно отвергнуть старый completion;
-одного завершения до возврата старого job недостаточно.
+Boot HUD не используется для проверки world pixels. Test-only counters требуют
+реального terminal outcome старого job: retirement ещё queued snapshot либо actual
+`Delivery::Obsolete` для уже начавшейся работы. Одного завершения до возврата старого
+job недостаточно.
 
 Сценарий требует: реальный stone mesh в GPU/readback → dispatch старого snapshot →
 forget/reinsert того же coordinate с gold block до сбора completion → новый issued
@@ -365,3 +366,34 @@ control socket. Missing prerequisites дают exit 2 / `blocked`, а не PASS.
 unit tests прошли CI. Для исполнения нужен normal prepared resource directory.
 World-entry guards и все acceptance gates из предыдущего раздела остаются закрыты.
 Fullscreen/F2 в минимальном menu profile отказывают до записи settings/screenshots.
+
+
+## Native queued mesh retirement — CI/local Rust без prepared resources
+
+Native `update_admitted` до нового dispatch удаляет из actual job heap только
+`Job::Mesh`, если sequence уже не current или колонка отсутствует. `forget_columns`
+раньше очищал meshing map, но оставлял queued Arc region snapshots до будущего pop
+worker'ом: повторные перемещения могли удерживать старые колонки вне текущей quota.
+Новый retirement не меняет modern scheduling (тот же opt-in admission flag), не
+удаляет Save/Free/Light/Generate и сохраняет priority/order оставшейся работы.
+
+Payloads возвращаются из helper и уничтожаются **после** освобождения queue mutex;
+fast path без obsolete jobs сохраняет allocation heap. Работа, уже взятая worker'ом,
+не считается canceled и проходит прежний sequence/column gate при completion.
+Это не preemption CPU calls, общий heap budget или hard frame latency guarantee.
+
+Ресурс-независимые проверки:
+
+- Actual `streaming/retirement.rs` исполняется напрямую локальным rustc через
+  `python3 -m unittest discover -s tests -p test_streaming_retirement.py`: сохранение
+  priority/order, fast-path allocation и отсутствие premature payload destruction.
+- CI исполняет actual `Queued`/`Job::Mesh` tests: superseded sequence, unloaded column,
+  сохранение Save/Free/Light/Generate, 64 repeated forget cycles с Weak-проверкой
+  освобождения snapshots, а также реальный scoped thread → actual Mailbox → actual
+  `deliver_current` после forget. Последний использует **mesh transport fixture**,
+  не resource-dependent Mesher, и не считается normal-resource worker acceptance.
+- Prepared-resource runner различает retired queued jobs и obsolete completions;
+  оба нуля — провал. Это не позволяет принять старую работу, ещё не получившую
+  terminal outcome, за успешно проверенную отмену.
+
+Prepared-resource scenario по-прежнему не исполнялся; world/save/Win7 gates не сняты.

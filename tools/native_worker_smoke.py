@@ -30,9 +30,14 @@ def validate_report(report: dict) -> None:
     for key, value in expected.items():
         if type(report.get(key)) is not type(value) or report[key] != value:
             raise ValueError(f"not an observed real-worker regression: {key}={report.get(key)!r}")
-    for key in ("worker_completions", "obsolete_completions", "received_columns", "old_revision", "new_revision", "resource_generation"):
+    for key in ("worker_completions", "received_columns", "old_revision", "new_revision", "resource_generation"):
         if type(report.get(key)) is not int or report[key] < 1:
             raise ValueError(f"invalid observed {key}: {report.get(key)!r}")
+    for key in ("obsolete_completions", "retired_queued_meshes"):
+        if type(report.get(key)) is not int or report[key] < 0:
+            raise ValueError(f"invalid observed {key}: {report.get(key)!r}")
+    if report["obsolete_completions"] + report["retired_queued_meshes"] < 1:
+        raise ValueError("old work was neither retired nor observed obsolete")
     if report["old_revision"] == report["new_revision"]:
         raise ValueError("replacement reused an obsolete owner ticket")
 

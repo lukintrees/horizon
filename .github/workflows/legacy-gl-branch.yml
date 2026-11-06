@@ -150,7 +150,7 @@ jobs:
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
-          for filter in streaming::admission::tests:: renderer_owner::native_streaming::tests:: renderer_owner::bootstrap_tests:: renderer_owner::tests:: renderer_owner::visibility::tests:: legacy_gfx::streaming::tests:: legacy_gfx::reload::tests:: legacy_gfx::animation::tests:: hud::tests::checked_pixels_ font::tests::renderer_commit_ legacy_gfx::asset_snapshot::tests:: legacy_gfx::resources::tests:: legacy_gfx::screenshot::tests:: frame::menu:: legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: renderer_facade::tests:: lightmap::tests:: gfx::tests::flat_screen_frustum_; do
+          for filter in streaming::admission::tests:: streaming::retirement::tests:: streaming::tests::native_queue_ streaming::tests::the_frame_takes_finished_jobs_without_waiting renderer_owner::native_streaming::tests:: renderer_owner::bootstrap_tests:: renderer_owner::tests:: renderer_owner::visibility::tests:: legacy_gfx::streaming::tests:: legacy_gfx::reload::tests:: legacy_gfx::animation::tests:: hud::tests::checked_pixels_ font::tests::renderer_commit_ legacy_gfx::asset_snapshot::tests:: legacy_gfx::resources::tests:: legacy_gfx::screenshot::tests:: frame::menu:: legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: renderer_facade::tests:: lightmap::tests:: gfx::tests::flat_screen_frustum_; do
             if [ "$status" -eq 0 ]; then
               cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
               status=$?
@@ -305,6 +305,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_cargo_github_vendor.py'
           python3 -m unittest discover -s tests -p 'test_native_game_menu_smoke.py'
           python3 -m unittest discover -s tests -p 'test_native_worker_smoke.py'
+          python3 -m unittest discover -s tests -p 'test_streaming_retirement.py'
       - name: Exercise real GLX window and native lifecycle on Xvfb
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
