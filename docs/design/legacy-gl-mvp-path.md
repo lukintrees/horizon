@@ -317,3 +317,49 @@ World-entry guard и minimal menu-only policy сохранены (включая
 до записи settings). Нормальный prepared-resource Game, настоящий worker в
 acceptance-сценарии, walk/look/break/place/inventory/save/reopen и Win7/X1650 ещё
 не проверены. Этот срез не снимает ни один из этих runtime gates.
+
+
+## Real mesher worker — подготовленный regression, runtime BLOCKED без ресурсов
+
+Добавлен opt-in `renderer_owner::native_streaming::worker_tests::prepared_resources_real_mesher_rejects_inflight_replaced_columns`.
+Он загружает настоящие prepared `Assets`/models/sprites/facts/biomes/occlusion,
+запускает существующий shared jobs pool и Mesher через `Streaming` и тот же
+`NativeStream::update`, который вызывает Game. Mesh и SectionStamp не подставляются.
+Колонки подаются через existing remote-column API: это изолированная проверка
+mesher delivery, **не vanilla terrain generation, не Game/world/save E2E**.
+Boot HUD не используется для проверки world pixels.
+
+Сценарий требует: реальный stone mesh в GPU/readback → dispatch старого snapshot →
+forget/reinsert того же coordinate с gold block до сбора completion → новый issued
+ticket и отличающийся readback → forget с чёрным framebuffer. Native pending queue
+ограничена одним payload/drain; текущий meshing set — 32 sections для одного worker.
+Текстуры stone/gold в normal pack должны различаться. При провале нет фиктивного
+успешного отчёта; ignored/zero matching tests не считаются исполнением.
+
+При подготовке этого сценария обнаружен конкретный native admission blocker:
+старый `room = workers * 32 - meshing.len()` ограничивал **число columns**, после
+чего dispatch отправлял все их sections. Native-only `DispatchQuota` теперь
+проверяет section room **до** выдачи ticket/sequence, а Defer не расходует quota и
+оставляет section dirty. Modern admission сохраняет прежний путь/default behavior.
+Это ограничение текущего accepted meshing set, **не** гарантия общего CPU heap,
+отмены уже исполняющегося старого job или hard frame latency.
+
+Сборка/запуск на Linux с OSMesa и подготовленными ресурсами:
+
+```sh
+cargo test --locked -p horizon-client-render --no-default-features --features legacy-gl --lib --no-run
+# --tests: путь к test executable, напечатанному Cargo (не Game binary).
+python3 tools/native_worker_smoke.py --tests "$RENDER_TEST_EXECUTABLE" \
+  --resources "$RESOURCE_DIR" --report .local/legacy-gl/native-worker.json
+```
+
+Runner запускает ровно этот ignored test в отдельном temporary home, принудительно
+на Mesa GL 2.0/GLSL 120, сохраняет binary/manifest SHA256, реальные counters и
+результат assertions. Нет загрузки assets, автогенерации resource fixtures или
+control socket. Missing prerequisites дают exit 2 / `blocked`, а не PASS.
+
+В текущем workspace prepared `horizon-resources.json` не найден. Поэтому этот
+**real-worker runtime ещё НЕ исполнен**, даже если его компиляция/CPU quota/runner
+unit tests прошли CI. Для исполнения нужен normal prepared resource directory.
+World-entry guards и все acceptance gates из предыдущего раздела остаются закрыты.
+Fullscreen/F2 в минимальном menu profile отказывают до записи settings/screenshots.

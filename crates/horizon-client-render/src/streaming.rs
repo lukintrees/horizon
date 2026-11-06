@@ -2068,6 +2068,7 @@ impl Streaming {
         // stays dirty is asked for again, from the current centre, as
         // capacity frees; `requeue` then has a small queue to keep close.
         let room = (self.workers * 32).saturating_sub(self.meshing.len());
+        let mut quota = admission::DispatchQuota::new(admission, room);
         nearest_first(&mut candidates, room);
         for (_, x, z, sections) in candidates {
             let Some(region) = Self::region(world, x, z) else {
@@ -2075,7 +2076,7 @@ impl Streaming {
             };
             world.dirty_sections.take_column(x, z);
             for sy in sections.iter().map(|sy| sy as i32) {
-                let stamp = match admission.request([x, sy, z]) {
+                let stamp = match quota.request(admission, [x, sy, z]) {
                     Admission::Unstamped => None,
                     Admission::Stamped(stamp) => Some(stamp),
                     Admission::Defer => {

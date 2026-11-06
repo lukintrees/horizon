@@ -20,6 +20,11 @@ pub enum Delivery {
     Discard(SectionMesh),
 }
 pub trait MeshAdmission {
+    /// Native caps current in-flight sections, not merely candidate columns.
+    /// Default false preserves the existing modern scheduling behavior.
+    fn bounded_section_dispatch(&self) -> bool {
+        false
+    }
     fn request(&mut self, key: SectionKey) -> Admission;
     fn complete(
         &mut self,
@@ -28,6 +33,27 @@ pub trait MeshAdmission {
         mesh: SectionMesh,
     ) -> Delivery;
 }
+/// A column may contain many dirty sections. Charge the native worker room
+/// before minting a ticket, and only for an actually admitted dispatch.
+pub(super) struct DispatchQuota(Option<usize>);
+impl DispatchQuota {
+    pub fn new(admission: &impl MeshAdmission, room: usize) -> Self {
+        Self(admission.bounded_section_dispatch().then_some(room))
+    }
+    pub fn request(&mut self, admission: &mut impl MeshAdmission, key: SectionKey) -> Admission {
+        if self.0 == Some(0) {
+            return Admission::Defer;
+        }
+        let result = admission.request(key);
+        if !matches!(result, Admission::Defer)
+            && let Some(left) = self.0.as_mut()
+        {
+            *left -= 1;
+        }
+        result
+    }
+}
+
 pub(super) fn deliver_current(
     admission: &mut impl MeshAdmission,
     key: SectionKey,
@@ -67,6 +93,61 @@ impl MeshAdmission for Modern {
 mod tests {
     use super::*;
     use horizon_render_api::render_contract::{ResourceGeneration, WorldGeneration};
+    #[test]
+    fn section_quota_never_mints_after_capacity_and_defer_does_not_charge() {
+        struct Counting {
+            bounded: bool,
+            defer: bool,
+            calls: usize,
+        }
+        impl MeshAdmission for Counting {
+            fn bounded_section_dispatch(&self) -> bool {
+                self.bounded
+            }
+            fn request(&mut self, _: SectionKey) -> Admission {
+                self.calls += 1;
+                if self.defer {
+                    Admission::Defer
+                } else {
+                    Admission::Unstamped
+                }
+            }
+            fn complete(
+                &mut self,
+                _: SectionKey,
+                _: Option<SectionStamp>,
+                _: SectionMesh,
+            ) -> Delivery {
+                panic!("dispatch only")
+            }
+        }
+        let mut sink = Counting {
+            bounded: true,
+            defer: true,
+            calls: 0,
+        };
+        let mut quota = DispatchQuota::new(&sink, 1);
+        assert!(matches!(quota.request(&mut sink, [0; 3]), Admission::Defer));
+        sink.defer = false;
+        assert!(matches!(
+            quota.request(&mut sink, [0; 3]),
+            Admission::Unstamped
+        ));
+        assert!(matches!(quota.request(&mut sink, [1; 3]), Admission::Defer));
+        assert_eq!(sink.calls, 2, "full capacity must not mint a ticket");
+        let mut quota = DispatchQuota::new(&sink, 0);
+        assert!(matches!(quota.request(&mut sink, [0; 3]), Admission::Defer));
+        assert_eq!(sink.calls, 2);
+        // Existing modern scheduling is not changed by this native fix.
+        let mut modern = Modern;
+        let mut quota = DispatchQuota::new(&modern, 0);
+        for _ in 0..64 {
+            assert!(matches!(
+                quota.request(&mut modern, [0; 3]),
+                Admission::Unstamped
+            ));
+        }
+    }
     #[test]
     fn delivery_filters_obsolete_work_before_sink_and_preserves_retry_stamp() {
         struct Sink {

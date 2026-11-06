@@ -1438,7 +1438,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/chat.rs",
-      "sha256": "605f97f9f7a22a5b39779778f2e2ced3b2f48433c1dc375cb870b0871c20a30e",
+      "sha256": "e237c48ea998db0432f2ea3d72fde84eb39b2da81e83fcdbfc8178de8940707f",
       "references": [
         {
           "line": 687,
@@ -1497,14 +1497,21 @@
           "code": "HudBatch::new([r.config.width, r.config.height]).width"
         },
         {
-          "line": 1493,
+          "line": 1491,
+          "kinds": [
+            "owner/factory/reference"
+          ],
+          "code": "if self.options.renderer.is_native() {"
+        },
+        {
+          "line": 1502,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "let Some(renderer) = self.renderer.modern_mut() else {"
         },
         {
-          "line": 1497,
+          "line": 1506,
           "kinds": [
             "owner/factory/reference"
           ],

@@ -1485,6 +1485,15 @@ impl Game<'_> {
     }
     /// F2: ScreenShot.grab into `screenshots/` with vanilla's file name.
     pub(super) fn take_screenshot(&mut self) {
+        // The native menu profile rejects screenshots before filesystem work,
+        // just as startup rejects --screenshot-after. Do not silently create a
+        // directory and return for lack of a modern renderer.
+        if self.options.renderer.is_native() {
+            if let Err(error) = self.native_menu_only() {
+                self.error = Some(error);
+            }
+            return;
+        }
         let dir = horizon_client::logging::player_dir().join("screenshots");
         if std::fs::create_dir_all(&dir).is_err() {
             return;

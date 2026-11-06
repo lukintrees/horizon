@@ -263,6 +263,9 @@ fn within_view(center: (i32, i32), radius: i32, x: i32, z: i32) -> bool {
         && in_view_distance(center, radius, x, z)
 }
 impl MeshAdmission for Hook<'_> {
+    fn bounded_section_dispatch(&self) -> bool {
+        true
+    }
     fn request(&mut self, key: SectionKey) -> Admission {
         if self.state.error.is_some() {
             return Admission::Defer;
@@ -633,3 +636,6 @@ mod gpu_tests {
         assert!(matches!(hook.request([0, 1, 0]), Admission::Defer));
     }
 }
+
+#[cfg(test)]
+mod worker_tests;
