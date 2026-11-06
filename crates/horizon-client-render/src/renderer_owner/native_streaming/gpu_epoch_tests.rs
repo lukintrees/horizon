@@ -17,6 +17,12 @@ fn coloured_mesh(layer: u16) -> SectionMesh {
     mesh
 }
 fn pixel(renderer: &mut TerrainHudRenderer, key: SectionKey) -> Vec<u8> {
+    // Keep renderer preflight strict: an unloaded key is NOT a drawable section.
+    let visible: Vec<_> = renderer
+        .section_keys()
+        .unwrap()
+        .filter(|k| *k == key)
+        .collect();
     renderer
         .render(
             &SceneFrame {
@@ -24,7 +30,7 @@ fn pixel(renderer: &mut TerrainHudRenderer, key: SectionKey) -> Vec<u8> {
                 camera: [0., -64., 0.],
                 clear: [0., 0., 0., 1.],
                 fog: None,
-                solid: &[key],
+                solid: &visible,
                 translucent: &[],
             },
             &HudBatch::new([64; 2]),

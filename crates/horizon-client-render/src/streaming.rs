@@ -3209,7 +3209,7 @@ mod tests {
                     at: None,
                     bias: 0,
                     order,
-                    job: Job::Save(vec![Box::new(marker)]),
+                    job: Job::Save(vec![((marker as i32, 0), Box::new(marker))]),
                 });
             }
             heap.push(queued_mesh(0, 2, snapshot.clone()));
@@ -3254,13 +3254,16 @@ mod tests {
                     let Job::Save(protos) = q.job else {
                         panic!("non-save survived abort")
                     };
-                    for p in protos {
-                        markers.push(*p.downcast::<u32>().unwrap());
+                    for (column, p) in protos {
+                        markers.push((column, *p.downcast::<u32>().unwrap()));
                     }
                 }
                 markers
             });
-            assert_eq!(worker.join().unwrap(), [10, 20, 30]);
+            assert_eq!(
+                worker.join().unwrap(),
+                [((10, 0), 10), ((20, 0), 20), ((30, 0), 30)]
+            );
             assert!(weak.upgrade().is_some());
         });
         assert!(queue.lock().unwrap().is_empty());

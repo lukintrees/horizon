@@ -32,7 +32,7 @@ fn bounded_payload_ownership_survives_retries_revocation_and_resource_churn() {
             0 | 1 => {
                 if let Ok(Some(stamp)) = stream.request(key) {
                     assert!(
-                        seen.insert((key, stamp.world.0, stamp.resources.0, stamp.revision)),
+                        seen.insert((stamp.world.0, stamp.resources.0, stamp.revision)),
                         "ticket reused across removal/rebase"
                     );
                     issued.push((key, stamp));
@@ -42,7 +42,11 @@ fn bounded_payload_ownership_survives_retries_revocation_and_resource_churn() {
                 }
             }
             2 | 3 if !issued.is_empty() => {
-                let (key, stamp) = issued[choice % issued.len()];
+                let (mut key, stamp) = issued[choice % issued.len()];
+                if step % 5 == 0 {
+                    // A genuine issued stamp from another key is also stale.
+                    key[0] += 100;
+                }
                 let payload = Arc::new(vec![step as u8; (choice % 256) + 1]);
                 let weak = Arc::downgrade(&payload);
                 // Declared retained input charge, not a process allocator budget.
