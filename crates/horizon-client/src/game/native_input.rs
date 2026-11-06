@@ -95,7 +95,41 @@ fn button(button: Button) -> MouseButton {
         Button::X2 => MouseButton::Forward,
     }
 }
-pub(super) fn dispatch(game: &mut Game<'_>, ctl: &dyn EventLoopCtl, event: Event) -> Result<()> {
+/// Characters are a separate native callback. Do not type the key that
+/// just opened a text field (T/slash/chat), unlike an ordinary typing key.
+#[derive(Default)]
+pub(super) struct Router {
+    suppress_text: bool,
+}
+impl Router {
+    pub fn clear(&mut self) {
+        self.suppress_text = false;
+    }
+    fn key_finished(&mut self, was_typing: bool, is_typing: bool) {
+        self.suppress_text = !was_typing && is_typing;
+    }
+    pub fn dispatch(
+        &mut self,
+        game: &mut Game<'_>,
+        ctl: &dyn EventLoopCtl,
+        event: Event,
+    ) -> Result<()> {
+        let key = matches!(event, Event::PhysicalKey { pressed: true, .. });
+        if key || matches!(event, Event::MouseButton { pressed: true, .. }) {
+            self.clear();
+        }
+        if matches!(event, Event::Text { .. }) && self.suppress_text {
+            return Ok(());
+        }
+        let was_typing = key && game.text_field_focused();
+        dispatch_event(game, ctl, event)?;
+        if key {
+            self.key_finished(was_typing, game.text_field_focused());
+        }
+        Ok(())
+    }
+}
+fn dispatch_event(game: &mut Game<'_>, ctl: &dyn EventLoopCtl, event: Event) -> Result<()> {
     let input = match event {
         Event::PhysicalKey {
             usage,
@@ -182,6 +216,19 @@ pub(super) fn dispatch(game: &mut Game<'_>, ctl: &dyn EventLoopCtl, event: Event
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn opening_key_characters_do_not_leak_into_chat_and_reset_releases_the_gate() {
+        let mut router = Router::default();
+        router.key_finished(false, true);
+        assert!(router.suppress_text);
+        router.key_finished(true, true);
+        assert!(!router.suppress_text);
+        router.key_finished(false, true);
+        router.clear();
+        assert!(!router.suppress_text);
+        router.key_finished(false, false);
+        assert!(!router.suppress_text);
+    }
     #[test]
     fn hid_keys_cover_gameplay_rebinding_and_distinct_release_namespaces() {
         for (usage, code) in [

@@ -139,7 +139,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native build headers
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6 libgl1-mesa-dri libglx-mesa0 libxkbcommon0 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev libosmesa6 libgl1-mesa-dri libglx-mesa0 libxkbcommon0 libxi6 libxtst6 xvfb xauth
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: legacy-gl-branch
@@ -291,7 +291,7 @@ jobs:
           toolchain: '1.88.0'
           components: rustfmt, clippy
       - name: Install Mesa and visible X11 test display
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 libgl1-mesa-dri libglx-mesa0 libx11-6 libxkbcommon0 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 libgl1-mesa-dri libglx-mesa0 libx11-6 libxkbcommon0 libxi6 libxtst6 xvfb xauth
       - name: Check independent renderer and run real GL2 readbacks
         env:
           HORIZON_OSMESA_LIBRARY: libOSMesa.so.8

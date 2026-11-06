@@ -1,5 +1,6 @@
 use super::*;
 use crate::ContextImpl;
+static DISPLAY_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
 use std::ffi::{c_long, c_uint, c_ulong};
 type SendEvent = unsafe extern "C" fn(Display, Xid, c_int, c_long, *mut Event) -> c_int;
 type QueryTree =
@@ -107,6 +108,7 @@ fn xlib_event_storage_covers_native_records_and_unicode_is_not_a_win32_key() {
 #[test]
 #[ignore = "requires X11/GLX display (xvfb-run), Mesa llvmpipe and GL2 overrides"]
 fn visible_glx_window_draws_resizes_pumps_bounded_input_and_reclaims_native_windows() {
+    let _guard = DISPLAY_TEST.lock().unwrap();
     let context = Context::new([64; 2]).unwrap();
     assert!(context.is_windowed());
     context.make_current().unwrap();
@@ -311,4 +313,107 @@ fn visible_glx_window_draws_resizes_pumps_bounded_input_and_reclaims_native_wind
     assert!(context.resize([32; 2]).is_err());
     assert!(context.set_title("already closed").is_err());
     assert!(!context.present().unwrap());
+}
+
+#[test]
+#[ignore = "requires Xvfb GLX, XI2 and libXtst; real server input, not framebuffer-only"]
+fn visible_glx_physical_keys_and_unbounded_raw_motion_release_on_focus_and_drop() {
+    let _guard = DISPLAY_TEST.lock().unwrap();
+    use horizon_render_api::platform_contract::PointerMode;
+    let context = Context::new([64; 2]).unwrap();
+    type Focus = unsafe extern "C" fn(Display, Xid, c_int, c_ulong) -> c_int;
+    type FakeMotion = unsafe extern "C" fn(Display, c_int, c_int, c_ulong) -> c_int;
+    type FakeKey = unsafe extern "C" fn(Display, c_uint, c_int, c_ulong) -> c_int;
+    let xtest = Library::open(c"libXtst.so.6").unwrap();
+    // SAFETY: documented Xlib/XTest ABI, same owned display/window. XTest
+    // injects real server device events; no synthetic winit IDs or raw cookie.
+    unsafe {
+        let focus = std::mem::transmute::<*const c_void, Focus>(
+            context._x11.symbol(c"XSetInputFocus").unwrap(),
+        );
+        let motion = std::mem::transmute::<*const c_void, FakeMotion>(
+            xtest.symbol(c"XTestFakeRelativeMotionEvent").unwrap(),
+        );
+        let key = std::mem::transmute::<*const c_void, FakeKey>(
+            xtest.symbol(c"XTestFakeKeyEvent").unwrap(),
+        );
+        focus(context.display, context.window, 1, 0);
+        (context.calls.sync)(context.display, 0);
+        context.poll_events().unwrap();
+        let w = context
+            .usages
+            .borrow()
+            .iter()
+            .position(|&u| u == 0x1a)
+            .unwrap() as c_uint;
+        assert_ne!(key(context.display, w, 1, 0), 0);
+        assert_ne!(key(context.display, w, 0, 0), 0);
+        (context.calls.sync)(context.display, 0);
+        let events = context.poll_events().unwrap();
+        for pressed in [true, false] {
+            assert!(
+                events.events.contains(&WindowEvent::PhysicalKey {
+                    usage: 0x1a,
+                    pressed,
+                    repeat: false
+                }),
+                "{events:?}"
+            );
+        }
+        context.set_pointer_mode(PointerMode::Relative).unwrap();
+        for _ in 0..3 {
+            assert_ne!(motion(context.display, 1024, -1024, 0), 0);
+        }
+        (context.calls.sync)(context.display, 0);
+        let events = context.poll_events().unwrap();
+        let (mut x, mut y) = (0., 0.);
+        for event in &events.events {
+            if let WindowEvent::RelativeMotion { x: dx, y: dy } = event {
+                x += dx;
+                y += dy;
+            }
+        }
+        assert!(
+            x >= 3072. && y <= -3072.,
+            "raw motion must not clamp at the 64px cursor edge: {events:?}"
+        );
+        context.set_pointer_mode(PointerMode::Free).unwrap();
+        assert_ne!(motion(context.display, 8, 8, 0), 0);
+        (context.calls.sync)(context.display, 0);
+        assert!(
+            !context
+                .poll_events()
+                .unwrap()
+                .events
+                .iter()
+                .any(|e| matches!(e, WindowEvent::RelativeMotion { .. }))
+        );
+        context.set_pointer_mode(PointerMode::Relative).unwrap();
+        focus(context.display, context.root, 1, 0);
+        (context.calls.sync)(context.display, 0);
+        let events = context.poll_events().unwrap();
+        assert!(events.events.contains(&WindowEvent::PointerCaptureLost));
+        assert!(
+            context.set_pointer_mode(PointerMode::Relative).is_err(),
+            "an inactive window must not steal capture"
+        );
+        focus(context.display, context.window, 1, 0);
+        (context.calls.sync)(context.display, 0);
+        context.poll_events().unwrap();
+        context.set_pointer_mode(PointerMode::Relative).unwrap();
+    }
+    drop(context); // must release an active grab before closing its Display
+    let next = Context::new([64; 2]).unwrap();
+    // SAFETY: real second window; successful grab proves previous teardown did
+    // not leave a process-global pointer lock behind.
+    unsafe {
+        let focus = std::mem::transmute::<*const c_void, Focus>(
+            next._x11.symbol(c"XSetInputFocus").unwrap(),
+        );
+        focus(next.display, next.window, 1, 0);
+        (next.calls.sync)(next.display, 0);
+    }
+    next.poll_events().unwrap();
+    next.set_pointer_mode(PointerMode::Relative).unwrap();
+    next.set_pointer_mode(PointerMode::Free).unwrap();
 }

@@ -2,6 +2,7 @@
 //! the first time (`EndPortalBlock.entityInside` -> `ServerPlayer.showEndCredits`,
 //! or a server's `WIN_GAME` event), and the credits from Credits &
 //! Attribution.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     Result,
@@ -10,7 +11,7 @@ use horizon_client::{
 };
 use std::time::Instant;
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 

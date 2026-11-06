@@ -941,7 +941,11 @@ impl Loading {
         let f11 = matches!(&event, WindowEvent::KeyboardInput { event, .. }
             if event.physical_key == PhysicalKey::Code(KeyCode::F11));
         if !f11 && !synthetic {
-            super::narrator::narrate_input(&mut self.menu.narration, &event, self.menu.cursor);
+            super::narrator::narrate_input(
+                &mut self.menu.narration,
+                &event.clone().into(),
+                self.menu.cursor,
+            );
         }
         // Screen.keyPressed: Tab, the arrows and Enter move and press the
         // focus, unless the focused widget or the screen keeps them.

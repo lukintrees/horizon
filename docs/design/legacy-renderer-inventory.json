@@ -2602,10 +2602,10 @@
     },
     {
       "path": "crates/horizon-client/src/game/native_menu.rs",
-      "sha256": "b7294dc31a40f43299f751eb75b8ec708777eb430453abae3c3965ed1262ce3e",
+      "sha256": "b70883130daa3c2c4d154a0c4808ca6dd78d293dbf85eda8d17ee071294943c7",
       "references": [
         {
-          "line": 93,
+          "line": 96,
           "kinds": [
             "owner/factory/reference"
           ],
@@ -3957,7 +3957,7 @@
     },
     {
       "path": "crates/horizon-client/src/game/startup_menu.rs",
-      "sha256": "d546ee17f0b5e2a1854666f13751c83cdcef56ef90048fa993cce40f4f996bec",
+      "sha256": "a31e42b82ad0f14410674b72e8713d1f8857d7d19ea71303d74884ceb0b1b949",
       "references": [
         {
           "line": 352,
@@ -4018,28 +4018,28 @@
           "code": ".map_or([1280, 720], |r| [r.config.width, r.config.height])"
         },
         {
-          "line": 971,
+          "line": 975,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": "if let Some(r) = &mut self.renderer {"
         },
         {
-          "line": 1027,
+          "line": 1031,
           "kinds": [
             "owner/factory/reference"
           ],
           "code": ".renderer"
         },
         {
-          "line": 1029,
+          "line": 1033,
           "kinds": [
             "candidate-member-access"
           ],
           "code": ".map_or([1280, 720], |r| [r.config.width, r.config.height]);"
         },
         {
-          "line": 1285,
+          "line": 1289,
           "kinds": [
             "owner/factory/reference"
           ],

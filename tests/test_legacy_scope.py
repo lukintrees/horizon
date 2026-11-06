@@ -60,6 +60,8 @@ class ScopeTests(unittest.TestCase):
                        "crates/horizon-client-render/src/renderer_facade.rs",
                        "crates/horizon-client-render/src/streaming.rs",
                        "crates/horizon-client-render/src/streaming/admission.rs",
+                       "crates/horizon-client/src/game/input_event.rs",
+                       "crates/horizon-client/src/game/native_input.rs",
                        "crates/horizon-client-render/src/renderer_owner/visibility.rs",
                        "crates/horizon-client-render/src/legacy_gfx/asset_snapshot.rs",
                       "crates/horizon-client-render/src/legacy_gfx/resources.rs",

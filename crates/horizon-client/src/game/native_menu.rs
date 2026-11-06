@@ -48,9 +48,11 @@ impl LoopCtl {
 #[derive(Default)]
 struct Input {
     focused: bool,
+    router: native_input::Router,
 }
 impl Input {
     fn reset(&mut self, game: &mut Game<'_>) {
+        self.router.clear();
         game.capture(false);
         game.keys.clear();
         game.physical_keys.clear();
@@ -83,6 +85,7 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
     let ctl = LoopCtl::default();
     let mut input = Input {
         focused: game.focused,
+        ..Default::default()
     };
     game.previous = Instant::now();
     let mut last = FrameOutcome::Deferred;
@@ -105,7 +108,7 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
         for event in events.events {
             if let Event::Focused(focused) = event {
                 input.focused = focused;
-                native_input::dispatch(game, &ctl, event)?;
+                input.router.dispatch(game, &ctl, event)?;
                 if !focused {
                     input.reset(game);
                 }
@@ -120,7 +123,7 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
                 if size.contains(&0) {
                     input.reset(game);
                 }
-                native_input::dispatch(game, &ctl, event)?;
+                input.router.dispatch(game, &ctl, event)?;
                 continue;
             }
             if events.lost_events > 0
@@ -131,7 +134,7 @@ pub(super) fn run(game: &mut Game<'_>) -> Result<FrameOutcome> {
             {
                 continue;
             }
-            native_input::dispatch(game, &ctl, event)?;
+            input.router.dispatch(game, &ctl, event)?;
         }
         if ctl.exit.get() {
             break;
