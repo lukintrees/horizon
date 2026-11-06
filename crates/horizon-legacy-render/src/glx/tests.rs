@@ -320,12 +320,14 @@ fn visible_glx_window_draws_resizes_pumps_bounded_input_and_reclaims_native_wind
 fn visible_glx_physical_keys_and_unbounded_raw_motion_release_on_focus_and_drop() {
     let _guard = DISPLAY_TEST.lock().unwrap();
     use horizon_render_api::platform_contract::PointerMode;
+    // XTest installs Display close callbacks. Keep its library alive through
+    // context teardown on assertion failure as well as the success path.
+    let xtest = Library::open(c"libXtst.so.6").unwrap();
     eprintln!("native input test: create context");
     let context = Context::new([64; 2]).unwrap();
     type Focus = unsafe extern "C" fn(Display, Xid, c_int, c_ulong) -> c_int;
     type FakeMotion = unsafe extern "C" fn(Display, c_int, c_int, c_ulong) -> c_int;
     type FakeKey = unsafe extern "C" fn(Display, c_uint, c_int, c_ulong) -> c_int;
-    let xtest = Library::open(c"libXtst.so.6").unwrap();
     // SAFETY: documented Xlib/XTest ABI, same owned display/window. XTest
     // injects real server device events; no synthetic winit IDs or raw cookie.
     unsafe {

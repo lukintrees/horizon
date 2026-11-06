@@ -9,9 +9,9 @@
 
 ## Текущий прогресс — контрольная точка 2026-11-06
 
-Проверенный baseline 3d: `137d56bacce0d585c3645d00a685b3fe36db267b`
-([evidence](https://github.com/lukintrees/horizon/pull/4#issuecomment-6682711599)).
-Текущий кодовый срез 3e добавляет stamped dispatch/delivery (§MVP 3e ниже);
+Проверенный baseline 3e: `2bd8d3b1e523b04047607affab1284e681a8eb36`
+([evidence](https://github.com/lukintrees/horizon/pull/4#issuecomment-6683256849)).
+Текущий кодовый срез добавляет shared native gameplay input (§Native input ниже);
 его exact-head проверки фиксируются отдельным комментарием в draft PR #4.
 Это ещё **не playable MVP**.
 
@@ -23,6 +23,7 @@
 | MVP 3c | `RendererOwner::native_visible_sections` и caller-owned `SectionOrder`: committed membership/Y origin, full 16³ AABB, f64 subtraction, solid nearest-first/key ties и обратный translucent order; pending GPU removal блокирует список |
 | MVP 3d | Game world `Frame` caller → native resident visibility/facade; тот же camera frustum, Game tick animations, live lightmap/gamma/fullbright, existing CPU pose path; world-entry остаётся закрыт до streaming/input |
 | MVP 3e | Existing Game mesher получает owner-issued stamp до dispatch; bounded native upload/unload и admission; modern API/default сохранён. Membership/view/epoch invalidation и explicit capacity/oversize errors; world-entry по-прежнему закрыт |
+| Native input | Game-owned CPU input DTO, общие Game handlers/MouseHandler; XKB/Win32 physical HID, XI2/WGL raw relative capture, focus/keymap/drop reset. Normal-resource gameplay и WGL runtime ещё не квалифицированы |
 | Scope/CI | `renderer_owner/**` защищён от task edits; CPU default/native и actual-Frame/facade OSMesa regressions включены в focused matrix |
 
 **Исторические проверки среза 3c:** [aggregate 42088555293](https://github.com/lukintrees/horizon/actions/runs/42088555293),
@@ -279,3 +280,40 @@ lost delta history и epoch redirty. Эти fixtures **не запускают �
 не доказывают normal-resource Game/gameplay. Entry/input/save-reopen/hardware gates
 остаются открыты; следующий блок — native gameplay input и real-worker integration
 перед снятием world-entry guards.
+
+
+## Native input — общий Game путь, до real-worker acceptance
+
+`game/input_event.rs` отделяет CPU payload от winit producer: modern сохраняет
+реальные window/device identity, layout learning и raw mod hook, а затем преобразует
+payload. Native передаёт physical HID, Unicode, кнопки, колесо и resize/focus в те же
+`Game::handle_input_event`/screen handlers. Нет изготовленных WindowId/DeviceId,
+приватного winit KeyEvent или отдельной реализации movement/inventory. Native
+logical key пока явно `Unidentified`; locale-specific logical shortcuts и native
+mod input ABI не квалифицированы. Normal native bootstrap по-прежнему не запускает mods.
+
+Обзор использует общий `Game::relative_motion`/MouseHandler с прежними sensitivity,
+smoothing, GUI gates и finite check, но native delta производится настоящим
+XI2 RawMotion / Win7 RawInput. Это не разность ограниченной позиции курсора и не
+recenter loop. Capture требует активного окна; release/focus/minimize/keymap reset
+сбрасывают удержания, modifiers, drag, mouse accumulator и text-opening gate.
+Символ открывающей чат клавиши не попадает в только что открытое поле.
+
+На GLX libXi удерживается до XCloseDisplay, включая отказ настройки capture:
+расширение регистрирует callback в Display. В интеграционном тесте libXtst также
+живёт дольше Display даже при panic, иначе callback исполняется после dlclose и
+маскирует реальную причину assertion через SIGSEGV. XI2 version negotiation
+объявляет 2.2, сохраняя использование только RawMotion полей 2.0.
+
+Real-X-server regression использует XTest physical W press/release и три движения
+(+1024, −1024) при размере окна 64×64: требует суммарный raw delta не меньше
+(+3072, −3072), затем проверяет free mode, focus loss, отказ захвата чужого focus,
+закрытие с активным захватом и повторный захват новым owner. ASSERT не заменён
+ограниченной позицией курсора. Fmt/Clippy, default modern/native CPU game и x86
+Windows compile входят в branch CI; exact-head результаты фиксируются в PR, а не
+считаются пройденными по наличию теста. Windows compile не доказывает WGL runtime.
+
+World-entry guard и minimal menu-only policy сохранены (включая fullscreen shortcut
+до записи settings). Нормальный prepared-resource Game, настоящий worker в
+acceptance-сценарии, walk/look/break/place/inventory/save/reopen и Win7/X1650 ещё
+не проверены. Этот срез не снимает ни один из этих runtime gates.

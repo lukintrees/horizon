@@ -145,7 +145,10 @@ impl Input {
             focus: load!(x11, c"XGetInputFocus", Focus),
             active: Cell::new(false),
         };
-        let (mut event, mut error, mut major, mut minor) = (0, 0, 2, 0);
+        // Announce XI2.2: XI2.0 compatibility suppresses raw events during
+        // grabs on some servers. The reply can negotiate an older XI2 server;
+        // we still select only the original RawMotion event and fields.
+        let (mut event, mut error, mut major, mut minor) = (0, 0, 2, 2);
         // SAFETY: owned live display, valid C output storage. Cursor pixmap is
         // zero/transparent and is freed on both success and cursor failure.
         unsafe {
