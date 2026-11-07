@@ -150,7 +150,7 @@ jobs:
           set +e
           cargo test --locked -p horizon-client-render --features legacy-gl --lib bridge::tests:: --message-format=json > target/legacy-branch/compiler.jsonl 2> target/legacy-branch/cargo.stderr
           status=$?
-          for filter in streaming::admission::tests:: streaming::retirement::tests:: streaming::tests::native_queue_ streaming::tests::the_frame_takes_finished_jobs_without_waiting renderer_owner::native_streaming::tests:: renderer_owner::bootstrap_tests:: renderer_owner::tests:: renderer_owner::visibility::tests:: legacy_gfx::streaming::tests:: legacy_gfx::reload::tests:: legacy_gfx::animation::tests:: hud::tests::checked_pixels_ font::tests::renderer_commit_ legacy_gfx::asset_snapshot::tests:: legacy_gfx::resources::tests:: legacy_gfx::screenshot::tests:: frame::menu:: legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: legacy_gfx::outline::tests:: renderer_facade::tests:: lightmap::tests:: gfx::tests::flat_screen_frustum_; do
+          for filter in streaming::admission::tests:: streaming::retirement::tests:: streaming::tests::native_queue_ streaming::tests::the_frame_takes_finished_jobs_without_waiting renderer_owner::native_streaming::tests:: renderer_owner::bootstrap_tests:: renderer_owner::tests:: renderer_owner::visibility::tests:: legacy_gfx::streaming::tests:: legacy_gfx::reload::tests:: legacy_gfx::animation::tests:: hud::tests::checked_pixels_ font::tests::renderer_commit_ legacy_gfx::asset_snapshot::tests:: legacy_gfx::resources::tests:: legacy_gfx::screenshot::tests:: frame::menu:: legacy_gfx::frame::tests:: legacy_gfx::screen::tests:: legacy_gfx::weather::tests:: legacy_gfx::sky::tests:: legacy_gfx::outline::tests:: legacy_gfx::crumbling::tests:: renderer_facade::tests:: lightmap::tests:: gfx::tests::flat_screen_frustum_; do
             if [ "$status" -eq 0 ]; then
               cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" --message-format=json >> target/legacy-branch/compiler.jsonl 2>> target/legacy-branch/cargo.stderr
               status=$?
@@ -210,11 +210,13 @@ jobs:
           MESA_GLSL_VERSION_OVERRIDE: '120'
         run: |
           cargo test --locked -p horizon-client-render --features legacy-gl --lib paged_hud::tests::
-          for filter in legacy_gfx::outline::tests:: native_loading::checked_stage_tests::boot_resources_ native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests:: renderer_owner::visibility::gpu_tests:: renderer_owner::native_streaming::gpu_tests:: renderer_owner::native_streaming::gpu_epoch_tests::; do
+          for filter in legacy_gfx::crumbling::tests:: legacy_gfx::outline::tests:: native_loading::checked_stage_tests::boot_resources_ native_loading::tests::boot_resources_ gui_bridge:: legacy_gfx::tests:: legacy_gfx::animation::gpu_tests:: legacy_gfx::reload::gpu_tests:: legacy_gfx::streaming::gpu_tests:: renderer_facade::tests:: renderer_owner::tests:: renderer_owner::bootstrap_tests:: renderer_owner::visibility::gpu_tests:: renderer_owner::native_streaming::gpu_tests:: renderer_owner::native_streaming::gpu_epoch_tests::; do
             if cargo test --locked -p horizon-client-render --features legacy-gl --lib "$filter" -- --ignored > target/legacy-branch/gpu-tests.log 2>&1; then
               cat target/legacy-branch/gpu-tests.log
               observed=''
               case "$filter" in
+                legacy_gfx::crumbling::tests::)
+                  observed='legacy_gfx::crumbling::tests::actual_frame_cracks_multiply_cutout_order_and_reclaim_without_clearing_on_failure' ;;
                 legacy_gfx::outline::tests::)
                   observed='legacy_gfx::outline::tests::actual_frame_outline_draws_both_modes_without_leaks_and_rejects_before_clear' ;;
                 renderer_owner::native_streaming::gpu_epoch_tests::)
@@ -236,6 +238,8 @@ jobs:
           title = 'Observed GL2 resource epoch regression' if 'gpu_epoch_tests::' in name else 'Observed GL2 native admission scope regression'
           if 'legacy_gfx::outline::' in name:
               title = 'Observed GL2 actual Frame outline regression'
+          if 'legacy_gfx::crumbling::' in name:
+              title = 'Observed GL2 actual Frame crumbling regression'
           print('::notice title=' + title + '::' + name + ' passed (transport geometry, not Game acceptance)')
           PYOBSERVED
               fi

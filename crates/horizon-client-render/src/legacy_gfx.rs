@@ -20,6 +20,7 @@ use horizon_render_api::{
 
 mod animation;
 mod asset_snapshot;
+mod crumbling;
 mod outline;
 #[cfg(test)]
 pub(crate) use asset_snapshot::tests::assets as test_assets;
@@ -63,6 +64,8 @@ pub struct Limits {
     pub screen_quads: usize,
     pub lightning_bolts: usize,
     pub sky_vertices: usize,
+    pub crumbling_quads: usize,
+    pub crumbling_bytes: usize,
     pub weather_quads: usize,
     pub weather_bytes: usize,
     /// Extracted sprite bytes plus one decoded virtual-atlas page.
@@ -92,6 +95,8 @@ impl Default for Limits {
             screen_quads: 256,
             lightning_bolts: 64,
             sky_vertices: 32768,
+            crumbling_quads: 4096,
+            crumbling_bytes: 8 << 20,
             weather_quads: 4096,
             weather_bytes: 8 << 20,
             screen_bytes: 8 << 20,
@@ -503,7 +508,21 @@ impl TerrainHudRenderer {
         {
             return Err("invalid hand projection".into());
         }
-        let geometry_limit = self.limits.entity_vertices - precipitation.0.len();
+        let changed = self
+            .hud
+            .patch(&hud.patches, self.limits.glyph_patch_bytes)?;
+        self.cache.invalidate(&changed);
+        let crumbling = crumbling::Prepared::new(
+            geometry.entities,
+            game_source.map(|f| f.crumbling_sprite),
+            &self.hud,
+            geometry.nether_lighting,
+            self.limits.crumbling_quads,
+            self.limits.crumbling_bytes,
+            self.world.backend_mut().max_texture_size(),
+        )?;
+        let geometry_limit =
+            self.limits.entity_vertices - precipitation.0.len() - crumbling.vertex_count();
         let mut hand = entity_bridge::prepare_with(
             geometry.hand,
             &self.lightmap,
@@ -560,7 +579,7 @@ impl TerrainHudRenderer {
                 .map(|r| r.geometry.vertices.len())
                 .sum::<usize>();
         let entity = entity_bridge::prepare_with(
-            geometry.entities,
+            &crumbling.ordinary,
             &self.lightmap,
             options,
             self.hud.layout(),
@@ -579,6 +598,8 @@ impl TerrainHudRenderer {
             _ => unreachable!(),
         });
 
+        let (body, water_masks): (Vec<_>,Vec<_>) = body.into_iter().partition(
+            |r| !matches!(r.geometry.pass, horizon_render_api::Pass::Entity(m) if m.kind == Kind::WaterMask));
         let runs = {
             let source = gui_bridge::glint_runs(
                 hud,
@@ -591,10 +612,6 @@ impl TerrainHudRenderer {
             paged_gui::split_gui(self.hud.layout(), &source, self.limits.gui_vertices)
                 .map_err(diagnostic)?
         };
-        let changed = self
-            .hud
-            .patch(&hud.patches, self.limits.glyph_patch_bytes)?;
-        self.cache.invalidate(&changed);
         let screens = screen::Prepared::new(
             screen_quads,
             &self.hud,
@@ -618,7 +635,7 @@ impl TerrainHudRenderer {
         self.collect_glint()?;
         // Screen sprites and virtual GUI pages never coexist on the GPU. Empty
         // the cache before sizing, and again between the hand and overlays.
-        if !screens.is_empty() || !weather.is_empty() {
+        if !screens.is_empty() || !weather.is_empty() || !crumbling.is_empty() {
             self.cache.release(self.world.backend_mut())?;
         }
         let remaining = self.world.backend_mut().remaining();
@@ -628,7 +645,8 @@ impl TerrainHudRenderer {
             || !hand.is_empty()
             || !see_through.is_empty()
             || !additive.is_empty()
-            || !celestial.is_empty();
+            || !celestial.is_empty()
+            || !water_masks.is_empty();
         if !screens.is_empty()
             && (remaining.textures == 0
                 || remaining.meshes == 0
@@ -655,6 +673,19 @@ impl TerrainHudRenderer {
         {
             return Err("no transient weather texture/mesh capacity".into());
         }
+        if !crumbling.is_empty()
+            && (remaining.textures == 0
+                || remaining.meshes == 0
+                || remaining.mesh_bytes < 348
+                || remaining.texture_bytes
+                    < crumbling.largest_texture().max(if paged {
+                        self.hud.layout().page_bytes()
+                    } else {
+                        0
+                    }))
+        {
+            return Err("no transient crumbling texture/mesh capacity".into());
+        }
         if sky.as_ref().is_some_and(|s| {
             s.largest_mesh() > remaining.mesh_bytes
                 || (s.basic_vertices > 0 && remaining.meshes == 0)
@@ -668,6 +699,7 @@ impl TerrainHudRenderer {
         }) || body
             .iter()
             .chain(&particles)
+            .chain(&water_masks)
             .chain(&hand)
             .chain(&see_through)
             .chain(&additive)
@@ -683,7 +715,8 @@ impl TerrainHudRenderer {
                 || !hand.is_empty()
                 || !see_through.is_empty()
                 || !additive.is_empty()
-                || !celestial.is_empty())
+                || !celestial.is_empty()
+                || !water_masks.is_empty())
                 && remaining.meshes == 0)
         {
             return Err("no transient mesh capacity for legacy frame".into());
@@ -752,6 +785,16 @@ impl TerrainHudRenderer {
                 backing.load(page)
             })
             .map_err(diagnostic)?;
+        if !crumbling.is_empty() {
+            self.cache.release(self.world.backend_mut())?;
+            self.screen
+                .render_crumbling(self.world.backend_mut(), &crumbling, &view, false)?;
+        }
+        self.cache
+            .render_world(self.world.backend_mut(), &water_masks, &view, |page| {
+                backing.load(page)
+            })
+            .map_err(diagnostic)?;
         // The classic game draws lightning, then source-ordered additive runs
         // after body/water-mask, BEFORE translucent terrain and particles.
         self.cache
@@ -774,6 +817,11 @@ impl TerrainHudRenderer {
         if let Some(outline) = outline.as_ref().filter(|o| o.after_terrain) {
             self.screen
                 .render_outline(self.world.backend_mut(), outline, self.white, world.fog)?;
+        }
+        if !crumbling.is_empty() {
+            self.cache.release(self.world.backend_mut())?;
+            self.screen
+                .render_crumbling(self.world.backend_mut(), &crumbling, &view, true)?;
         }
         if !weather.is_empty() {
             self.cache.release(self.world.backend_mut())?;

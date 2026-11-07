@@ -490,3 +490,25 @@ actual Frame adapter, оба режима, позицию относительн
 launch: world-entry guard сохранён. Для следующего runtime gate всё ещё нужны
 собственные pinned 26.3 prepared resources; Game/menu/world/save/reopen и
 Win7 SP1 x86/X1650 acceptance остаются OPEN. Modern default не изменён.
+
+## Breaking cracks: actual Frame destroy-stage decals
+
+Native world entity quads с overlays 11/12 теперь отделяются от ordinary entity
+bridge, включая уже объединённые visible static snapshots. Stage origin
+восстанавливается из `breaking::stage_light`, размер — из `Frame::crumbling_sprite.zw`.
+После HUD patches извлекаются stage images, с bounded deduplication; UV остаются
+необёрнутыми до fragment shader. GLSL повторяет crumbling_uv: fract/floor/min в
+локальных texels после интерполяции, без повторения всего atlas или stage jitter.
+
+Typed `Kind::Crumbling`: DST_COLOR/SRC_COLOR, alpha replacement, back-face culling,
+LEQUAL, polygon offset (-1,-10), no depth writes. Исходные vertex tint/cardinal
+shade и world fog сохранены; destroy stages unlit. Overlay 11 рисуется после
+body/text/shadows/items перед water mask/additive/translucent terrain; 12 — после
+translucent terrain/particles/outline перед weather/hand/HUD. Hand/see-through и
+неполный/mixed stream не получают случайного fallback в breaking pass.
+
+Предел по умолчанию — 4096 crack quads, 8 MiB stage images + один decoded atlas
+page; transient GPU usage — один stage texture и один 348-byte mesh. Existing
+entity input/expanded-vertex budget учитывает decals; preflight до clear проверяет
+capacity, cleanup сохраняет failed IDs для retry. Game world-entry guard остаётся.
+CPU/OSMesa fixtures не заменяют normal-resource Game или Win7/X1650 acceptance.
