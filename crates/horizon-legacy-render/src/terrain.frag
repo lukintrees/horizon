@@ -7,6 +7,7 @@ uniform float gui_glint;
 uniform float screen_mode;
 uniform float additive_mode;
 uniform float weather_mode;
+uniform vec3 sprite_size;
 uniform float stroke_mode;
 varying vec2 foil_uv;
 uniform float entity_mode;
@@ -37,7 +38,11 @@ void main() {
     // Repeat AFTER interpolation within the extracted sprite. NEAREST/CLAMP
     // yields the same clamped integer texel as weather_texel, including NPOT.
     vec2 image_uv = uv;
-    if (weather_mode > 0.5) image_uv = fract(uv);
+    if (weather_mode > 1.5) {
+        // crumbling_uv: snap local texels AFTER interpolation. Extracted stage
+        // images avoid packed atlas origins changing nearest-boundary rounding.
+        image_uv = (min(floor(fract(uv) * sprite_size.xy), sprite_size.xy - vec2(1.0)) + vec2(0.5)) / sprite_size.xy;
+    } else if (weather_mode > 0.5) image_uv = fract(uv);
     vec4 sample_color = vec4(1.0);
     if (stroke_mode < 0.5) sample_color = texture2D(image, image_uv);
     if (screen_mode > 0.5) {

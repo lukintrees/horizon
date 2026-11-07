@@ -87,6 +87,7 @@ struct Uniforms {
     weather: i32,
     background_depth: i32,
     stroke: i32,
+    sprite_size: i32,
 }
 
 pub struct Renderer<'a> {
@@ -223,6 +224,7 @@ impl<'a> Renderer<'a> {
                 weather: -1,
                 background_depth: -1,
                 stroke: -1,
+                sprite_size: -1,
             },
             textures: HashMap::new(),
             meshes: HashMap::new(),
@@ -259,6 +261,7 @@ impl<'a> Renderer<'a> {
                 weather: location(c"weather_mode")?,
                 background_depth: location(c"background_depth")?,
                 stroke: location(c"stroke_mode")?,
+                sprite_size: location(c"sprite_size")?,
             };
             (this.gl.use_program)(program);
             (this.gl.uniform1i)(location(c"image")?, 0);
@@ -708,7 +711,9 @@ impl RenderBackend for Renderer<'_> {
                 (self.gl.uniform1f)(self.uniforms.additive, additive);
                 (self.gl.uniform1f)(
                     self.uniforms.weather,
-                    if matches!(pass, Pass::Entity(m) if m.kind == Kind::Weather) {
+                    if matches!(pass, Pass::Entity(m) if m.kind == Kind::Crumbling) {
+                        2.
+                    } else if matches!(pass, Pass::Entity(m) if m.kind == Kind::Weather) {
                         1.
                     } else {
                         0.
@@ -727,6 +732,13 @@ impl RenderBackend for Renderer<'_> {
                     } else {
                         0.
                     },
+                );
+                let dimensions = self.textures[&draw.texture].size;
+                (self.gl.uniform3f)(
+                    self.uniforms.sprite_size,
+                    dimensions[0] as f32,
+                    dimensions[1] as f32,
+                    0.,
                 );
                 let mesh = &self.meshes[&draw.mesh];
                 let offset = self.validate_draw(draw, frame)?;
@@ -787,6 +799,7 @@ impl RenderBackend for Renderer<'_> {
                     Kind::Body => Some((0., -128.)),
                     Kind::Text => Some((-1., -10.)),
                     Kind::Shadow => Some((-0.015, -128.)),
+                    Kind::Crumbling => Some((-1., -10.)),
                     _ => None,
                 });
                 if let Some((slope, units)) = bias {
@@ -839,9 +852,10 @@ impl RenderBackend for Renderer<'_> {
                     },
                 );
                 let depth_write = matches!(pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
-                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::SkyCelestial));
+                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::Crumbling | Kind::SkyCelestial));
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match pass {
+                    Pass::Entity(m) if m.kind == Kind::Crumbling => Some((0x0306, 0x0300, 1, 0)),
                     Pass::Sky { additive: true, .. } => Some((0x0302, 1, 0x0302, 1)),
                     Pass::Sky {
                         additive: false, ..

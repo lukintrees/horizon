@@ -66,6 +66,8 @@ pub enum Kind {
     DragonRays,
     /// Extracted-sprite repeating weather; alpha blend, LEQUAL, no depth writes.
     Weather,
+    /// Destroy-stage decal: DST_COLOR/SRC_COLOR, LEQUAL, no depth writes.
+    Crumbling,
     /// Unlit/lightmapped celestial additive view, no depth test or writes.
     SkyCelestial,
     Particle,
@@ -120,7 +122,7 @@ pub enum Error {
     InvalidViewMaterial,
     VertexBudget,
 }
-fn shade(normal: [f32; 3], nether: bool) -> f32 {
+pub fn shade(normal: [f32; 3], nether: bool) -> f32 {
     let length = 1.53f32.sqrt();
     let dot = |v: [f32; 3]| {
         normal
