@@ -369,7 +369,7 @@ impl Game<'_> {
             }
         }
         state.hdr_tier = self.luminance().hdr_tier(&stack.item);
-        if state.hdr_tier > 0 && self.renderer.as_ref().is_some_and(|r| r.hdr_on()) {
+        if state.hdr_tier > 0 && self.renderer.modern_ref().is_some_and(|r| r.hdr_on()) {
             state.hdr_light = self.luminance().of(&stack.item);
         }
         state

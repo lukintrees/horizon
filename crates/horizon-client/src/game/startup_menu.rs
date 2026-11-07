@@ -349,6 +349,10 @@ pub(super) fn spawn_loader(
     started: Instant,
     progress: &Progress,
 ) -> Result<(Receiver<LoaderMsg>, JoinHandle<()>)> {
+    if options.renderer.is_native() {
+        return Err("native loading window/handoff is not connected; modern Loading cannot own native startup".into());
+    }
+    let renderer = options.renderer;
     let (sender, receiver) = std::sync::mpsc::channel();
     let settings = settings.clone();
     let vanilla_root = vanilla_root.to_path_buf();
@@ -373,6 +377,7 @@ pub(super) fn spawn_loader(
                 started,
                 true,
                 false,
+                renderer,
                 &progress,
                 &mut |gui, root| {
                     let _ = sender.send(LoaderMsg::Ui(gui, root.to_path_buf()));
@@ -936,7 +941,11 @@ impl Loading {
         let f11 = matches!(&event, WindowEvent::KeyboardInput { event, .. }
             if event.physical_key == PhysicalKey::Code(KeyCode::F11));
         if !f11 && !synthetic {
-            super::narrator::narrate_input(&mut self.menu.narration, &event, self.menu.cursor);
+            super::narrator::narrate_input(
+                &mut self.menu.narration,
+                &event.clone().into(),
+                self.menu.cursor,
+            );
         }
         // Screen.keyPressed: Tab, the arrows and Enter move and press the
         // focus, unless the focused widget or the screen keeps them.
@@ -964,7 +973,8 @@ impl Loading {
             }
             WindowEvent::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
-                    r.resize(size.width, size.height);
+                    horizon_client::renderer_facade::RendererFacade::modern(r)
+                        .resize([size.width, size.height])?;
                 }
                 self.apply_menu_settings();
             }

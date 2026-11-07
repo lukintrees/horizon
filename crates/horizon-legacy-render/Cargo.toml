@@ -1,0 +1,16 @@
+[package]
+name = "horizon-legacy-render"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+# Independently testable bootstrap workspace, also usable as a game path dependency.
+[workspace]
+members = ["../horizon-render-api"]
+
+[dependencies]
+horizon-render-api = { path = "../horizon-render-api" }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

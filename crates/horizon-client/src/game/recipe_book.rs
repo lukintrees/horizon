@@ -4,6 +4,7 @@
 //! alternatives overlay, ghost recipes, and placing a recipe in the grid
 //! (`ServerPlaceRecipe`). Which recipes are known comes from the advancement
 //! rewards; the open and filter settings are saved with the player.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     containers::{BlockEntity, FurnaceKind},
@@ -185,7 +186,7 @@ impl Game<'_> {
         }
     }
     /// A key press while the search box has focus.
-    pub(super) fn recipe_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn recipe_key(&mut self, event: &super::input_event::KeyEvent) {
         use winit::keyboard::PhysicalKey;
         if let Some(shortcut) = self.edit_shortcut(event) {
             self.recipe_shortcut(shortcut);
@@ -601,7 +602,7 @@ impl Game<'_> {
         (self.recipe_ui.time / SWAP_TICKS).floor() as usize
     }
     fn batch_for_size(&self) -> Option<HudBatch> {
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         Some(HudBatch::new([r.config.width, r.config.height]))
     }
 

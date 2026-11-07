@@ -1471,10 +1471,12 @@ dependencies = [
  "horizon-cosmetics",
  "horizon-hdr",
  "horizon-items",
+ "horizon-legacy-render",
  "horizon-mod-api-gen",
  "horizon-narrator",
  "horizon-optifine",
  "horizon-protocol",
+ "horizon-render-api",
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-telemetry",
@@ -1577,6 +1579,13 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "horizon-legacy-render"
+version = "0.1.0"
+dependencies = [
+ "horizon-render-api",
 ]
 
 [[package]]
@@ -1699,6 +1708,10 @@ dependencies = [
  "base64",
  "ring",
 ]
+
+[[package]]
+name = "horizon-render-api"
+version = "0.1.0"
 
 [[package]]
 name = "horizon-server"

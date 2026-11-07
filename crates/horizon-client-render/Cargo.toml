@@ -7,6 +7,8 @@ rust-version = "1.90"
 description = "The client's world data, rendering and screens: chunks, meshing, light, streaming, the renderer, the HUD, menus and settings; no gameplay"
 
 [dependencies]
+horizon-render-api = { path = "../horizon-render-api" }
+horizon-legacy-render = { path = "../horizon-legacy-render", optional = true }
 horizon-cosmetics = { path = "../horizon-cosmetics" }
 # The GUI atlas's pixels, kept compressed once uploaded (hud.rs `pack_pixels`).
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
@@ -70,6 +72,8 @@ wgpu = { version = "30.0.1", default-features = false, features = ["dx12"] }
 wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 
 [features]
+# Native GL2 terrain/HUD coordinator, not yet normal Game startup.
+legacy-gl = ["dep:horizon-legacy-render"]
 # Sound output: horizon-client's `audio` feature.
 audio = ["dep:cpal"]
 # Helpers horizon-client's tests build their fixtures with.
@@ -82,5 +86,6 @@ horizon-mod-api-gen = { path = "../horizon-mod-api-gen" }
 workspace = true
 
 [dev-dependencies]
+horizon-legacy-render = { path = "../horizon-legacy-render" }
 horizon-items = { path = "../horizon-items", features = ["test-support"] }
 naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out", "glsl-out", "msl-out", "spv-out"] }

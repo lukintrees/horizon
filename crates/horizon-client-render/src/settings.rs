@@ -332,10 +332,21 @@ impl Settings {
             .map_or(-1, |i| i as i32)
     }
     pub fn load(path: &Path) -> Self {
-        let horizon = path
-            .parent()
-            .map(crate::graphics::Graphics::load)
-            .unwrap_or_default();
+        Self::load_with_graphics(path, crate::graphics::Graphics::load)
+    }
+    /// Read for an explicit non-modern startup without consuming the saved
+    /// modern HDR recovery marker or resetting its requested HDR setting.
+    pub fn load_preserving_startup_marker(path: &Path) -> Self {
+        Self::load_with_graphics(
+            path,
+            crate::graphics::Graphics::load_preserving_startup_marker,
+        )
+    }
+    fn load_with_graphics(
+        path: &Path,
+        graphics: impl FnOnce(&Path) -> crate::graphics::Graphics,
+    ) -> Self {
+        let horizon = path.parent().map(graphics).unwrap_or_default();
         crate::mipmap::set_dither_cutouts(horizon.dither_cutout_mips);
         let controller = path
             .parent()

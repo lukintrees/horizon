@@ -1,4 +1,5 @@
 {
+  "horizon.renderer.native_menu_only": "Native GL2 пока поддерживает только меню. Вход в мир, настройки, наборы ресурсов и внешние действия ещё не подключены; мир не был открыт.",
   "horizon.options.controller": "Геймпад",
   "horizon.options.vibration": "Вибрация",
   "horizon.options.adaptive_triggers": "Адаптивные триггеры",

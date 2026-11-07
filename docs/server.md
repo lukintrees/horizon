@@ -152,9 +152,9 @@ game built in `Game::new`, the integrated server on its own thread. On that base
    entity models, panorama, fog, music, and mesh tables (perf-ticks-2 already stops server-side meshing).
    This is the RAM and start-time item.
 2. The game moves into a library crate, with the window parts behind a `client` feature, so
-   `horizon-engine` links no wgpu or winit either. Sound and controllers are already optional (the
-   `audio` and `controllers` features, on by default): `horizon-engine` today is the game built without
-   them (section 3).
+   `horizon-engine` then links no wgpu or winit either. Today it still links both: only `audio` and
+   `controllers` are optional (`cargo tree -p horizon-client --no-default-features -i wgpu` shows the
+   direct edges), and `horizon-engine` is the game built without them (section 3).
 
 ## 3. Packaging
 

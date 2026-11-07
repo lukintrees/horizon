@@ -788,6 +788,9 @@ impl Game<'_> {
         cookies: Option<horizon_client::net::Cookies>,
         lan: bool,
     ) -> Result<()> {
+        if self.options.renderer.is_native() {
+            return self.native_menu_only();
+        }
         super::world_loading::preload_server_loot(&self.options.resources);
         if self.defer_world_entry(super::PendingWorldEntry::Server {
             address: address.to_owned(),
@@ -960,8 +963,11 @@ impl Game<'_> {
         self.dim = Dim::Overworld;
         self.clear_lod();
         self.pending_uploads.clear();
-        if let Some(r) = self.renderer.as_mut() {
-            r.clear_sections(self.world.layout());
+        if let Some(r) = self.renderer.modern_mut()
+            && let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(r)
+                .clear_sections(self.world.layout())
+        {
+            log::warn!("Horizon: cannot clear terrain sections: {error}");
         }
         self.apply_settings();
         self.clear_waypoints();
@@ -1196,8 +1202,11 @@ impl Game<'_> {
         self.container = None;
         self.clear_lod();
         self.pending_uploads.clear();
-        if let Some(r) = self.renderer.as_mut() {
-            r.clear_sections(self.world.layout());
+        if let Some(r) = self.renderer.modern_mut()
+            && let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(r)
+                .clear_sections(self.world.layout())
+        {
+            log::warn!("Horizon: cannot clear terrain sections: {error}");
         }
         let saves = std::env::current_dir()?.join("saves");
         let mut title = horizon_client::title::Title::new(saves.clone(), &self.options.resources)
@@ -2185,8 +2194,12 @@ impl Game<'_> {
             }
             self.clear_lod();
             self.pending_uploads.clear();
-            if let Some(renderer) = self.renderer.as_mut() {
-                renderer.clear_sections(self.world.layout());
+            if let Some(renderer) = self.renderer.modern_mut()
+                && let Err(error) =
+                    horizon_client::renderer_facade::RendererFacade::modern(renderer)
+                        .clear_sections(self.world.layout())
+            {
+                log::warn!("Horizon: cannot clear terrain sections: {error}");
             }
             // The new ClientLevel is told before setLevel drops the old one.
             let old = self
@@ -2250,8 +2263,11 @@ impl Game<'_> {
                 lod.observe(chunk.clone(), self.res.facts());
             }
         }
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.remove_columns(gone.iter().copied());
+        if let Some(renderer) = self.renderer.modern_mut()
+            && let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)
+                .remove_columns(gone.iter().copied())
+        {
+            log::warn!("Horizon: cannot unload terrain columns: {error}");
         }
         horizon_client::chunk::free_columns(freed, gone.len());
         self.world
@@ -9038,7 +9054,7 @@ impl Game<'_> {
     pub(super) fn remote_click(&mut self, right: bool) {
         let Some(size) = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
         else {
             return;

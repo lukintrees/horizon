@@ -153,7 +153,7 @@ impl Game<'_> {
         let mut summary = self.frame_stats.summary();
         let passes = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| r.own_pass_times())
             .unwrap_or_default();
         if !passes.is_empty() {
@@ -387,7 +387,7 @@ impl Game<'_> {
                 .collect::<Vec<_>>() }))),
             "setblock" | "fill" | "particle" | "signedit" => self.render_command(&words),
             "section-draws" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("flat") => r.set_flat_draws(true)?,
@@ -397,7 +397,7 @@ impl Game<'_> {
                 Ok(Some(json!({ "ok": true, "flat": r.flat_draws() })))
             }
             "section-cull" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("on") => r.set_section_cull(true)?,
@@ -417,13 +417,13 @@ impl Game<'_> {
             }
             "render-capture" => match words.get(1).copied() {
                 None => {
-                    let r = self.renderer.as_ref().ok_or("no renderer")?;
+                    let r = self.renderer.modern_ref().ok_or("no renderer")?;
                     Ok(Some(
                         json!({ "ok": true, "keeping": r.keeps_capture_copies() }),
                     ))
                 }
                 Some("on") => {
-                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    let r = self.renderer.modern_mut().ok_or("no renderer")?;
                     if !r.keeps_capture_copies() {
                         r.keep_capture_copies(true);
                         // The copies start empty: every section and far tile is meshed
@@ -434,7 +434,7 @@ impl Game<'_> {
                     Ok(Some(json!({ "ok": true, "keeping": true })))
                 }
                 Some("off") => {
-                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    let r = self.renderer.modern_mut().ok_or("no renderer")?;
                     r.keep_capture_copies(false);
                     Ok(Some(json!({ "ok": true, "keeping": false })))
                 }
@@ -448,7 +448,7 @@ impl Game<'_> {
                         .strip_prefix("render-capture")
                         .unwrap_or("");
                     let settings = self.render_capture_settings();
-                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    let r = self.renderer.modern_mut().ok_or("no renderer")?;
                     if !r.keeps_capture_copies() {
                         return Err("no mesh copies kept: run render-capture on (or start with \
                             HORIZON_RENDER_CAPTURE=1) and let the terrain settle first"
@@ -463,7 +463,7 @@ impl Game<'_> {
                 }
             },
             "section-sides" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("on") => r.set_section_sides(true),
@@ -473,7 +473,7 @@ impl Game<'_> {
                 Ok(Some(json!({ "ok": true, "sides": r.section_sides() })))
             }
             "gpu-culling" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("on") => r.set_gpu_culling(true)?,
@@ -877,18 +877,19 @@ impl Game<'_> {
                 ok()
             }
             "screenshot" => {
-                let renderer = self.renderer.as_mut().ok_or("no renderer yet")?;
+                let renderer = self.renderer.modern_mut().ok_or("no renderer yet")?;
                 if self.pending_screenshot.is_some() {
                     return Err("a screenshot is already pending".into());
                 }
                 arg(1)?;
                 // The rest of the line: a path may hold spaces.
                 let path = line.trim_start().strip_prefix("screenshot").unwrap_or("");
-                renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
-                    path: path.trim().into(),
-                    size: None,
-                    scaled: false,
-                });
+                horizon_client::renderer_facade::RendererFacade::modern(renderer)
+                    .request_screenshot(horizon_client::gfx::ScreenshotRequest {
+                        path: path.trim().into(),
+                        size: None,
+                        scaled: false,
+                    })?;
                 self.pending_screenshot = Some(reply.clone());
                 Ok(None)
             }
@@ -1279,23 +1280,19 @@ impl Game<'_> {
             let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
             json!({ "pos": hit.pos, "block": &*self.res.facts().get(state).name })
         });
-        let renderer = self.renderer.as_ref().map(|r| {
+        let renderer = self.renderer.modern_ref().map(|r| {
             let [arena_bytes, section_vertex_bytes] = r.section_vertex_bytes();
+            let gpu = horizon_client::renderer_facade::gpu_info(r);
+            let [width, height] = horizon_client::renderer_facade::drawable_size(r);
             // Device memory by the backend's allocator (Vulkan; absent elsewhere).
             let memory = r.device.generate_allocator_report();
             json!({
-                "gpu": r.info.name,
-                "vendor": vendor_name(r.info.vendor),
-                "driver": format!("{} {}", r.info.driver, r.info.driver_info).trim(),
-                "device_type": match r.info.device_type {
-                    wgpu::DeviceType::IntegratedGpu => "integrated",
-                    wgpu::DeviceType::DiscreteGpu => "discrete",
-                    wgpu::DeviceType::VirtualGpu => "virtual",
-                    wgpu::DeviceType::Cpu => "cpu",
-                    wgpu::DeviceType::Other => "other",
-                },
-                "backend": format!("{:?}", r.info.backend),
-                "size": [r.config.width, r.config.height],
+                "gpu": gpu.name,
+                "vendor": vendor_name(gpu.vendor),
+                "driver": gpu.driver,
+                "device_type": gpu.device_class.as_str(),
+                "backend": gpu.backend,
+                "size": [width, height],
                 "present_mode": format!("{:?}", r.config.present_mode),
                 "drawn_sections": r.drawn_sections,
                 "section_draws": r.section_draws,
@@ -1327,8 +1324,8 @@ impl Game<'_> {
             "active_tiles": self.lod.as_ref().map_or(0, |lod| lod.stats().0),
             "cached_tiles": self.lod.as_ref().map_or(0, |lod| lod.stats().1),
             "far_detail": self.settings.horizon.far_detail.name(),
-            "resident_quads": self.renderer.as_ref().map_or(0, |r| r.lod_quads()),
-            "levels": self.renderer.as_ref().map_or_else(Vec::new, |r| r.lod_levels()),
+            "resident_quads": self.renderer.modern_ref().map_or(0, |r| r.lod_quads()),
+            "levels": self.renderer.modern_ref().map_or_else(Vec::new, |r| r.lod_levels()),
             "pending_observations": self.lod_observe.len(),
             "refined_samples": self.lod.as_ref().map_or(0, |lod| lod.refined_samples()),
         });
@@ -1409,6 +1406,20 @@ impl Game<'_> {
         status["lod"]["detail_target_columns"] = wanted.into();
         status["lod"]["refined_target_columns"] = refined.into();
         status["pending_uploads"] = self.pending_uploads.len().into();
+        // The legacy GL2 launch hook (T01a; docs/design/legacy-gl-launch-plan.md):
+        // the E2E runner demands an explicit legacy confirmation instead of
+        // inferring the backend from a probe or a log. While the modern wgpu
+        // renderer still owns the window this honestly reports `confirmed=false`
+        // with no GL strings; the legacy wiring (G01) fills them from the real
+        // context and flips the flag.
+        status["legacy"] = json!({
+            "confirmed": false,
+            "backend": null,
+            "gl_version": null,
+            "glsl_version": null,
+            "vendor": null,
+            "renderer": null,
+        });
         status["destroying"] = json!(destroying);
         status["physical_keys"] = json!(physical_keys);
         status["heard"] = json!(self.audio.heard);

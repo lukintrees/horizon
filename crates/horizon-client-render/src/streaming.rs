@@ -21,6 +21,11 @@ use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, TryLockError},
 };
 
+pub mod admission;
+mod retirement;
+use admission::{Admission, Delivery, MeshAdmission};
+use horizon_render_api::render_contract::SectionStamp;
+
 /// How long a worker waits with nothing to do before it gives back its
 /// generator's scratch buffers ([`ChunkGenerator::idle`]).
 pub const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(5);
@@ -260,6 +265,7 @@ impl<G: ChunkGenerator> Saves for G {
 /// Per-job mesher inputs that change with the dimension or the options.
 #[derive(Clone)]
 struct MeshSettings {
+    stamp: Option<SectionStamp>,
     nether: bool,
     shader_pack_lighting: bool,
     separate_ao: bool,
@@ -302,7 +308,7 @@ pub enum Done {
     /// decoration wrote into them.
     Decorated(i32, i32, Box<[Proto; 9]>, Vec<usize>, FinalWrites),
     Lit(i32, i32, Vec<crate::chunk::Light>, u64),
-    Meshed(i32, i32, i32, SectionMesh, u64),
+    Meshed(i32, i32, i32, SectionMesh, u64, Option<SectionStamp>),
     Saved(Vec<((i32, i32), Proto)>),
     /// A proto chunk back from `Job::LightView`, with its view.
     LightView(i32, i32, Proto, Option<Chunk>),
@@ -429,6 +435,8 @@ pub struct ProtoCensus {
 }
 pub struct Streaming {
     shared: Arc<Shared>,
+    /// Retained identity token prevents pointer ABA without keeping workers alive.
+    mesh_epoch: Arc<()>,
     /// Columns generated and saved as they were left behind: new when they
     /// next arrive, though read from the save (`World::loaded_chunks`).
     dropped_new: FxHashSet<(i32, i32)>,
@@ -533,6 +541,12 @@ pub struct Streaming {
     light_snapshots: FxHashMap<(i32, i32), u64>,
     pub generated_total: u64,
     pub meshed_total: u64,
+    /// Observation only: opt-in real-worker tests must see stale delivery, not
+    /// merely finish before an old job has returned. No production API/state.
+    #[cfg(test)]
+    pub(crate) obsolete_mesh_completions: u64,
+    #[cfg(test)]
+    pub(crate) retired_mesh_jobs: u64,
     /// Chunks come from a server (`insert_remote`/`forget`): nothing is
     /// generated and columns are only unloaded when the server says so.
     pub remote: bool,
@@ -972,7 +986,7 @@ impl<G: ChunkGenerator> Jobs<G> {
                 let mut mesh = mesher.mesh_reusing(&borrow(&region), sy, recycled, mesh_scratch);
                 mesh.sort_solid();
                 *faces = Some((context.tables.clone(), mesher.visibility));
-                Done::Meshed(x, sy, z, mesh, seq)
+                Done::Meshed(x, sy, z, mesh, seq, settings.stamp)
             }
         };
         Some(done)
@@ -1025,6 +1039,7 @@ impl Streaming {
         };
         Self {
             shared,
+            mesh_epoch: Arc::new(()),
             non_air_sections,
             proto_bytes,
             caches,
@@ -1080,6 +1095,10 @@ impl Streaming {
             light_snapshots: Default::default(),
             generated_total: 0,
             meshed_total: 0,
+            #[cfg(test)]
+            obsolete_mesh_completions: 0,
+            #[cfg(test)]
+            retired_mesh_jobs: 0,
             remote: false,
             extra: Vec::new(),
             cover: None,
@@ -1588,9 +1607,41 @@ impl Streaming {
         &mut self,
         world: &mut World,
     ) -> (Vec<((i32, i32, i32), SectionMesh)>, Vec<Arc<Chunk>>) {
+        self.update_admitted(world, &mut admission::Modern)
+    }
+    /// Stable across moves, fresh for a replaced streamer. Keeping the empty
+    /// tag alive prevents address reuse without retaining the old worker pool.
+    pub fn mesh_epoch(&self) -> Arc<()> {
+        self.mesh_epoch.clone()
+    }
+
+    /// Same scheduler/mesher as update; admission runs BEFORE dispatch, and
+    /// delivery runs only AFTER existing sequence/column validation.
+    pub fn update_admitted(
+        &mut self,
+        world: &mut World,
+        admission: &mut impl MeshAdmission,
+    ) -> (Vec<((i32, i32, i32), SectionMesh)>, Vec<Arc<Chunk>>) {
         let mut uploads = Vec::new();
         if self.paused {
             return (uploads, Vec::new());
+        }
+        if admission.bounded_section_dispatch() {
+            // forget_columns invalidates sequences, but its queued region
+            // snapshots otherwise survive until a worker eventually pops them.
+            // Retire native stale/off-view jobs before spending fresh capacity.
+            // Never drop potentially large last Arc snapshots under queue lock.
+            let retired = {
+                let mut queue = self.shared.queue.lock().unwrap();
+                retire_mesh_jobs(&mut queue, &mut self.meshing, |x, z| {
+                    world.chunks.contains_key(&(x, z)) && admission.wants_column(x, z)
+                })
+            };
+            #[cfg(test)]
+            {
+                self.retired_mesh_jobs += retired.len() as u64;
+            }
+            drop(retired);
         }
         ExtraCover::refresh(&mut self.cover, &self.extra);
         // The sweeps below walk every loaded column and proto chunk. Run them
@@ -1664,22 +1715,45 @@ impl Streaming {
                         self.replay_light_edits(world, x, z, snapshot);
                     }
                 }
-                Done::Meshed(x, sy, z, mesh, seq) => {
-                    if self.meshing.get(&(x, sy, z)) != Some(&seq) {
-                        stale.push(((x, sy, z), mesh));
-                        continue;
-                    }
-                    // Its column unloaded while it was meshed: nothing would
-                    // ever remove the uploaded section.
-                    if !world.chunks.contains_key(&(x, z)) {
-                        self.meshing.remove(&(x, sy, z));
-                        stale.push(((x, sy, z), mesh));
-                        continue;
+                Done::Meshed(x, sy, z, mesh, seq, stamp) => {
+                    let current = self.meshing.get(&(x, sy, z)).copied();
+                    let loaded = world.chunks.contains_key(&(x, z));
+                    match admission::deliver_current(
+                        admission,
+                        [x, sy, z],
+                        stamp,
+                        mesh,
+                        current,
+                        seq,
+                        loaded,
+                    ) {
+                        Delivery::Obsolete(mesh) => {
+                            #[cfg(test)]
+                            {
+                                self.obsolete_mesh_completions += 1;
+                            }
+                            if current == Some(seq) {
+                                self.meshing.remove(&(x, sy, z));
+                            }
+                            stale.push(((x, sy, z), mesh));
+                            continue;
+                        }
+                        Delivery::Retry(mesh) => {
+                            self.deferred.push(Done::Meshed(x, sy, z, mesh, seq, stamp));
+                            continue;
+                        }
+                        Delivery::Discard(mesh) => {
+                            self.meshing.remove(&(x, sy, z));
+                            world.dirty_sections.insert((x, sy, z));
+                            stale.push(((x, sy, z), mesh));
+                            continue;
+                        }
+                        Delivery::Upload(mesh) => uploads.push(((x, sy, z), mesh)),
+                        Delivery::Queued => {}
                     }
                     self.meshing.remove(&(x, sy, z));
                     self.compile_started.insert((x, sy, z), seq);
                     self.meshed_total += 1;
-                    uploads.push(((x, sy, z), mesh));
                 }
             }
         }
@@ -2026,6 +2100,10 @@ impl Streaming {
         // stays dirty is asked for again, from the current centre, as
         // capacity frees; `requeue` then has a small queue to keep close.
         let room = (self.workers * 32).saturating_sub(self.meshing.len());
+        let mut quota = admission::DispatchQuota::new(admission, room);
+        // Keep unloaded-column cleanup and ordinary out-of-range waiting above.
+        // Forced generation interests must not consume a renderer's draw quota.
+        admission::scope_candidates(admission, &mut candidates);
         nearest_first(&mut candidates, room);
         for (_, x, z, sections) in candidates {
             let Some(region) = Self::region(world, x, z) else {
@@ -2033,6 +2111,14 @@ impl Streaming {
             };
             world.dirty_sections.take_column(x, z);
             for sy in sections.iter().map(|sy| sy as i32) {
+                let stamp = match quota.request(admission, [x, sy, z]) {
+                    Admission::Unstamped => None,
+                    Admission::Stamped(stamp) => Some(stamp),
+                    Admission::Defer => {
+                        world.dirty_sections.insert((x, sy, z));
+                        continue;
+                    }
+                };
                 let first = self.meshed.insert((x, z));
                 self.sequence += 1;
                 self.meshing.insert((x, sy, z), self.sequence);
@@ -2046,6 +2132,7 @@ impl Streaming {
                         region.clone(),
                         self.sequence,
                         MeshSettings {
+                            stamp,
                             nether: self.nether_shading,
                             shader_pack_lighting: self.shader_pack_lighting,
                             separate_ao: self.separate_ao,
@@ -2214,15 +2301,14 @@ impl Streaming {
         self.shared
             .aborted
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        if let Ok(mut queue) = self.shared.queue.lock() {
-            let mut saves = Vec::new();
-            for item in std::mem::take(&mut *queue).into_vec() {
-                if matches!(item.job, Job::Save(..)) {
-                    saves.push(item);
-                }
-            }
-            *queue = std::collections::BinaryHeap::from(saves);
-        }
+        // Last region/mesh/proto references may have expensive destructors.
+        // Keep pending saves runnable while those canceled payloads are freed.
+        let retired = self
+            .shared
+            .queue
+            .lock()
+            .map(|mut queue| retire_aborted_jobs(&mut queue))
+            .unwrap_or_default();
         self.generating.clear();
         self.decorating = 0;
         self.decorating_finals.clear();
@@ -2232,6 +2318,7 @@ impl Streaming {
         self.meshing.clear();
         self.lighting.clear();
         self.jobs.notify_all();
+        drop(retired); // outside the queue lock, after saves have been woken
     }
     /// Save what generation holds outside the world: the proto chunks
     /// decoration wrote to. With `wait`, the decorations, columns and saves
@@ -2867,6 +2954,36 @@ impl Drop for Streaming {
 }
 /// The queued jobs' priorities computed again from each one's column
 /// `distance` (`Streaming::submit`).
+/// World-exit cancellation preserves only persistence work. Return canceled
+/// payload ownership so destructors cannot serialize the pool behind its lock.
+fn retire_aborted_jobs(queue: &mut BinaryHeap<Queued>) -> Vec<Queued> {
+    retirement::retire_where(queue, |q| !matches!(&q.job, Job::Save(_)))
+}
+
+/// Only queued Mesh jobs are cancellable here. Running work has left the
+/// queue and will use normal sequence/column validation at completion. Save,
+/// light, generation and reclaim jobs retain their original scheduling.
+fn retire_mesh_jobs(
+    queue: &mut BinaryHeap<Queued>,
+    meshing: &mut FxHashMap<(i32, i32, i32), u64>,
+    wanted: impl Fn(i32, i32) -> bool,
+) -> Vec<Queued> {
+    let retired = retirement::retire_where(queue, |q| match &q.job {
+        Job::Mesh(x, sy, z, _, seq, _) => {
+            meshing.get(&(*x, *sy, *z)) != Some(seq) || !wanted(*x, *z)
+        }
+        _ => false,
+    });
+    for q in &retired {
+        if let Job::Mesh(x, sy, z, _, seq, _) = &q.job
+            && meshing.get(&(*x, *sy, *z)) == Some(seq)
+        {
+            meshing.remove(&(*x, *sy, *z));
+        }
+    }
+    retired
+}
+
 fn rank_again(queue: &mut BinaryHeap<Queued>, distance: impl Fn(i32, i32) -> i64) {
     if queue.is_empty() {
         return;
@@ -3051,6 +3168,371 @@ fn forget_pending_sections(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued_mesh(x: i32, sequence: u64, chunk: Arc<Chunk>) -> Queued {
+        let mut region: Region = Default::default();
+        region[1][1] = Some(chunk);
+        Queued {
+            priority: 3,
+            at: Some((x, 0)),
+            bias: 0,
+            order: sequence,
+            job: Job::Mesh(
+                x,
+                0,
+                0,
+                Box::new(region),
+                sequence,
+                MeshSettings {
+                    stamp: None,
+                    nether: false,
+                    shader_pack_lighting: false,
+                    separate_ao: false,
+                    zoom: BiomeZoom::new(0),
+                    blend_radius: 0,
+                    smooth_lighting: false,
+                    cutout_leaves: false,
+                    translucent_layers: Arc::from([]),
+                    leaf_culling: LeafCullingMode::Off,
+                },
+            ),
+        }
+    }
+    #[test]
+    fn native_queue_consumer_scope_precedes_nearest_and_keeps_forced_work_dirty() {
+        struct Scope {
+            column: (i32, i32),
+        }
+        impl MeshAdmission for Scope {
+            fn wants_column(&self, x: i32, z: i32) -> bool {
+                (x, z) == self.column
+            }
+            fn request(&mut self, _: [i32; 3]) -> Admission {
+                panic!("selection must not mint")
+            }
+            fn complete(
+                &mut self,
+                _: [i32; 3],
+                _: Option<SectionStamp>,
+                _: SectionMesh,
+            ) -> Delivery {
+                panic!("selection only")
+            }
+        }
+        let mut dirty = crate::world::DirtySections::default();
+        for sy in [0, 23, 63, 64, 130, 255] {
+            dirty.insert((1, sy, 0));
+        }
+        let forced: HashSet<_> = (100..228).map(|x| (x, 0)).collect();
+        let extra: Vec<_> = forced.iter().map(|&key| (key, 0)).collect();
+        for &(x, z) in &forced {
+            for sy in 0..24 {
+                dirty.insert((x, sy, z));
+            }
+        }
+        let ranges = Ranges {
+            center: (0, 0),
+            radius: 2,
+            extra: &extra,
+            forced: &forced,
+            cover: None,
+            band: None,
+        };
+        assert!(
+            ranges.in_view(100, 0),
+            "generation's forced view must stay unchanged"
+        );
+        let rank = |columns: Vec<((i32, i32), SectionMask)>| {
+            columns
+                .into_iter()
+                .map(|((x, z), mask)| (ranges.priority(x, z), x, z, mask))
+                .collect::<Vec<_>>()
+        };
+        let modern = admission::Modern;
+        let all = rank(dirty.columns().collect());
+        let mut baseline = all.clone();
+        admission::scope_candidates(&modern, &mut baseline);
+        assert_eq!(
+            baseline.len(),
+            129,
+            "default modern scope must include forced work"
+        );
+        nearest_first(&mut baseline, 1);
+        assert!(
+            forced.contains(&(baseline[0].1, baseline[0].2)),
+            "fixture must reproduce off-view priority starvation"
+        );
+        let scope = Scope { column: (1, 0) };
+        // The same interest predicate retires current-but-off-view queued
+        // snapshots BEFORE quota room is computed, not just at completion.
+        let snapshot = Arc::new(Chunk::empty(100, 0));
+        let weak = Arc::downgrade(&snapshot);
+        let mut queue = BinaryHeap::from([queued_mesh(100, 77, snapshot)]);
+        let mut current = [((100, 0, 0), 77)].into_iter().collect();
+        let retired = retire_mesh_jobs(&mut queue, &mut current, |x, z| scope.wants_column(x, z));
+        assert_eq!(retired.len(), 1);
+        assert!(
+            queue.is_empty() && current.is_empty(),
+            "off-view jobs consumed native quota"
+        );
+        assert!(weak.upgrade().is_some());
+        drop(retired);
+        assert!(weak.upgrade().is_none());
+        for _ in 0..256 {
+            let mut wanted = all.clone();
+            admission::scope_candidates(&scope, &mut wanted);
+            nearest_first(&mut wanted, 1);
+            assert_eq!(wanted.len(), 1);
+            assert_eq!((wanted[0].1, wanted[0].2), (1, 0));
+            assert_eq!(
+                wanted[0].3.iter().collect::<Vec<_>>(),
+                [0, 23, 63, 64, 130, 255]
+            );
+            assert_eq!(
+                dirty.len(),
+                128 * 24 + 6,
+                "consumer filtering lost future dirty work"
+            );
+        }
+        let moved = Scope { column: (100, 0) };
+        let mut wanted = all;
+        admission::scope_candidates(&moved, &mut wanted);
+        assert_eq!(wanted.len(), 1);
+        assert_eq!((wanted[0].1, wanted[0].2), (100, 0));
+        assert_eq!(
+            wanted[0].3,
+            SectionMask::below(24),
+            "readmission lost sections"
+        );
+        assert_eq!(forced.len(), 128);
+        assert_eq!(extra.len(), 128);
+    }
+
+    #[test]
+    fn native_queue_abort_preserves_save_payloads_and_worker_access() {
+        // Actual Queued/Job transport, not a generator or persistence fixture.
+        let snapshot = Arc::new(Chunk::empty(0, 0));
+        let weak = Arc::downgrade(&snapshot);
+        let queue = Arc::new(Mutex::new(BinaryHeap::new()));
+        {
+            let mut heap = queue.lock().unwrap();
+            for (order, marker) in [(1, 10_u32), (3, 20), (5, 30)] {
+                heap.push(Queued {
+                    priority: i64::MIN,
+                    at: None,
+                    bias: 0,
+                    order,
+                    job: Job::Save(vec![((marker as i32, 0), Box::new(marker))]),
+                });
+            }
+            heap.push(queued_mesh(0, 2, snapshot.clone()));
+            heap.push(Queued {
+                priority: i64::MIN,
+                at: None,
+                bias: 0,
+                order: 4,
+                job: Job::Free(Vec::new()),
+            });
+            heap.push(Queued {
+                priority: 0,
+                at: Some((0, 0)),
+                bias: 0,
+                order: 6,
+                job: Job::Light(0, 0, Box::default(), 1, false),
+            });
+            heap.push(Queued {
+                priority: 0,
+                at: Some((0, 0)),
+                bias: 0,
+                order: 7,
+                job: Job::Generate(0, 0),
+            });
+        }
+        drop(snapshot);
+        let retired = retire_aborted_jobs(&mut queue.lock().unwrap());
+        assert_eq!(retired.len(), 4);
+        assert!(
+            weak.upgrade().is_some(),
+            "retirement must transfer, not destroy payloads under lock"
+        );
+        // A worker must be able to pop every Save BEFORE retired snapshots are
+        // destroyed by the owner; joining also prevents a false scheduling pass.
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                let mut markers = Vec::new();
+                loop {
+                    let Some(q) = queue.lock().unwrap().pop() else {
+                        break;
+                    };
+                    let Job::Save(protos) = q.job else {
+                        panic!("non-save survived abort")
+                    };
+                    for (column, p) in protos {
+                        markers.push((column, *p.downcast::<u32>().unwrap()));
+                    }
+                }
+                markers
+            });
+            assert_eq!(
+                worker.join().unwrap(),
+                [((10, 0), 10), ((20, 0), 20), ((30, 0), 30)]
+            );
+            assert!(weak.upgrade().is_some());
+        });
+        assert!(queue.lock().unwrap().is_empty());
+        drop(retired);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn native_queue_retirement_preserves_current_sequence_and_non_mesh_work() {
+        let snapshot = Arc::new(Chunk::empty(0, 0));
+        let mut queue = BinaryHeap::new();
+        queue.push(queued_mesh(0, 1, snapshot.clone())); // superseded, same coordinate
+        queue.push(queued_mesh(0, 2, snapshot.clone())); // current
+        queue.push(queued_mesh(99, 3, snapshot.clone())); // unloaded without explicit forget
+        for (priority, job) in [
+            (-10, Job::Save(Vec::new())),
+            (-9, Job::Free(Vec::new())),
+            (1, Job::Light(99, 0, Box::default(), 3, false)),
+            (2, Job::Generate(99, 0)),
+        ] {
+            queue.push(Queued {
+                priority,
+                at: None,
+                bias: 0,
+                order: 0,
+                job,
+            });
+        }
+        let mut current = [((0, 0, 0), 2), ((99, 0, 0), 3)].into_iter().collect();
+        let retired = retire_mesh_jobs(&mut queue, &mut current, |x, _| x != 99);
+        assert_eq!(retired.len(), 2);
+        assert_eq!(current.get(&(0, 0, 0)), Some(&2));
+        assert!(!current.contains_key(&(99, 0, 0)));
+        assert_eq!(
+            Arc::strong_count(&snapshot),
+            4,
+            "filter must not destroy snapshots under lock"
+        );
+        drop(retired);
+        assert_eq!(Arc::strong_count(&snapshot), 2);
+        let order: Vec<_> = std::iter::from_fn(|| queue.pop())
+            .map(|q| match q.job {
+                Job::Save(_) => "save",
+                Job::Free(_) => "free",
+                Job::Light(..) => "light",
+                Job::Generate(..) => "generate",
+                Job::Mesh(_, _, _, _, 2, _) => "current",
+                _ => panic!("stale work survived"),
+            })
+            .collect();
+        assert_eq!(order, ["save", "free", "light", "generate", "current"]);
+        assert_eq!(Arc::strong_count(&snapshot), 1);
+    }
+    #[test]
+    fn native_queue_repeated_forget_releases_queued_snapshots() {
+        let mut queue = BinaryHeap::new();
+        queue.push(Queued {
+            priority: -10,
+            at: None,
+            bias: 0,
+            order: 0,
+            job: Job::Save(Vec::new()),
+        });
+        for cycle in 0..64 {
+            let snapshot = Arc::new(Chunk::empty(cycle, 0));
+            let weak = Arc::downgrade(&snapshot);
+            for seq in 1..=32 {
+                queue.push(queued_mesh(cycle, seq, snapshot.clone()));
+            }
+            drop(snapshot);
+            assert_eq!(queue.len(), 33);
+            let retired = retire_mesh_jobs(&mut queue, &mut FxHashMap::default(), |_, _| false);
+            assert_eq!(retired.len(), 32);
+            assert_eq!(queue.len(), 1, "old jobs accumulated after a forget");
+            assert!(weak.upgrade().is_some());
+            drop(retired);
+            assert!(
+                weak.upgrade().is_none(),
+                "canceled region snapshot retained"
+            );
+        }
+    }
+    #[test]
+    fn native_queue_running_completion_still_uses_the_real_mailbox_and_sequence_gate() {
+        // Queue/transport fixture, NOT the resource-dependent Mesher. The worker
+        // takes a real Job before retirement, so it cannot be canceled/preempted.
+        let snapshot = Arc::new(Chunk::empty(0, 0));
+        let queue = Arc::new(Mutex::new(BinaryHeap::from([queued_mesh(0, 1, snapshot)])));
+        let mailbox = Arc::new(Mailbox::default());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let worker_queue = queue.clone();
+            let worker_mailbox = mailbox.clone();
+            let worker = scope.spawn(move || {
+                let job = worker_queue.lock().unwrap().pop().unwrap();
+                started_tx.send(()).unwrap();
+                finish_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                let Job::Mesh(x, sy, z, _, seq, settings) = job.job else {
+                    panic!("not mesh")
+                };
+                worker_mailbox.send(Done::Meshed(
+                    x,
+                    sy,
+                    z,
+                    SectionMesh::default(),
+                    seq,
+                    settings.stamp,
+                ));
+            });
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            let mut current = FxHashMap::default(); // forget while the job runs
+            let retired = retire_mesh_jobs(&mut queue.lock().unwrap(), &mut current, |_, _| false);
+            assert!(
+                retired.is_empty(),
+                "running work must not be falsely reported canceled"
+            );
+            finish_tx.send(()).unwrap();
+            worker.join().unwrap();
+            let done = mailbox.try_recv().unwrap();
+            let Done::Meshed(x, sy, z, mesh, seq, stamp) = done else {
+                panic!("missing completion")
+            };
+            struct NeverDeliver;
+            impl MeshAdmission for NeverDeliver {
+                fn request(&mut self, _: [i32; 3]) -> Admission {
+                    panic!("no ticket at completion")
+                }
+                fn complete(
+                    &mut self,
+                    _: [i32; 3],
+                    _: Option<SectionStamp>,
+                    _: SectionMesh,
+                ) -> Delivery {
+                    panic!("obsolete completion reached the sink")
+                }
+            }
+            assert!(matches!(
+                admission::deliver_current(
+                    &mut NeverDeliver,
+                    [x, sy, z],
+                    stamp,
+                    mesh,
+                    current.get(&(x, sy, z)).copied(),
+                    seq,
+                    false
+                ),
+                Delivery::Obsolete(_)
+            ));
+            assert!(mailbox.take().is_empty());
+        });
+    }
 
     #[test]
     fn a_resent_column_keeps_its_sections_but_takes_new_biomes() {

@@ -1,8 +1,8 @@
 //! Copy and paste in the text fields: `KeyboardHandler`'s clipboard and the
 //! shortcuts of `EditBox`, `MultiLineEditBox` and `TextFieldHelper`.
+use super::input_event::KeyEvent;
 use super::*;
 use horizon_client::clipboard::{self, EditShortcut};
-use winit::event::KeyEvent;
 
 impl Game<'_> {
     /// `InputWithModifiers.isSelectAll`/`isCopy`/`isPaste`/`isCut` of a key

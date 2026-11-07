@@ -34,6 +34,21 @@ Feature → files → harness for the most-changed areas: [docs/architecture.md]
 - **Claim before you start**: comment `/claim` on the issue (no issue yet: open one, then claim it). An assigned
   issue is taken: pick another. `/unclaim` when you stop; a claim with no open PR linking it is released after 5 days.
 
+## Legacy GL launch integration (scoped workstream)
+
+For work on the OpenGL 2.0/2.1, Win7-x86/X1650 launch initiative, read
+[the integration protocol](docs/design/legacy-gl-integration.md) and
+[the launch/task plan](docs/design/legacy-gl-launch-plan.md) before editing.
+The user designated **the coordinating Arena.ai agent acting for `lukintrees` as lead integrator**.
+Only that integrator writes the common facade/frame/resource/platform contracts, central Game/GL
+wiring, and legacy-related Cargo manifests/lockfiles (including new ones). Other contributors work
+in agreed modules/adapters/tests and request central changes; they must not independently patch,
+clone or bypass those interfaces, even to fix a build. The protocol lists protected shared zones,
+base/merge rules and the CI01 plan. Existing maintainers/CODEOWNERS retain their authority.
+CI01 now has executable scope/matrix gates. Task PR metadata must include `Task-ID`, `Variant`,
+`Depends-on`, `Scope`, and `Contract-Version: 1`. Required branch protection is not installed;
+trusted-target bootstrap limitations and human review remain documented in the protocol.
+
 ## Crates
 
 Game workspace (root `Cargo.toml`); `launcher/` and `crates/horizon-telemetry-server` are separate workspaces.

@@ -81,6 +81,9 @@ struct HudBatch { scale: f32 }
 impl HudBatch { fn new(_size: [u32; 2]) -> Self { Self { scale: 2.0 } } }
 struct Config { width: u32, height: u32 }
 struct Renderer { config: Config }
+// Storage API stand-in: these extracted methods only exercise the modern path.
+trait ModernRef<T> { fn modern_ref(&self) -> Option<&T>; }
+impl<T> ModernRef<T> for Option<T> { fn modern_ref(&self) -> Option<&T> { self.as_ref() } }
 #[derive(Default)]
 struct Window { grabs: Cell<u32>, visible: Cell<bool>, fail: bool, warps: Cell<u32>, at: Cell<(f64, f64)> }
 impl Window {
@@ -400,7 +403,9 @@ fn main() {
             mouse: MouseLook::default(), last_input: Instant::now(),
         };
         game.device_event(&ActiveEventLoop, DeviceId, DeviceEvent::MouseMotion { delta: (0.0, 0.0) });
-        game.device_event(&ActiveEventLoop, DeviceId, DeviceEvent::MouseMotion { delta: (20.0, -10.0) });
+        game.relative_motion(20.0, -10.0);
+        game.relative_motion(f64::NAN, 1.0);
+        game.relative_motion(1.0, f64::INFINITY);
         let look = LookOptions { sensitivity: 0.5, smooth_camera: false, scoping: false, invert_x: false, invert_y: false };
         let (x, y) = game.mouse.handle_accumulated_movement(1.0, true, true, look).unwrap();
         let mut rotation = Rotation { x_rot: 0.0, y_rot: 0.0, x_rot_o: 0.0, y_rot_o: 0.0 };
@@ -412,7 +417,7 @@ fn main() {
 }
 '''
         fixture = fixture.replace("MOUSE_PATH", (ROOT / "crates/horizon-client-input/src/mouse.rs").as_posix())
-        fixture = fixture.replace("METHOD", method(source, "device_event"))
+        fixture = fixture.replace("METHOD", method(source, "device_event") + "\n" + method(source, "relative_motion"))
         self.run_fixture(fixture, "native-mouse")
 
     @unittest.skipUnless(shutil.which("rustc"), "requires Rust")

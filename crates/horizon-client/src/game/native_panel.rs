@@ -6,6 +6,7 @@
 //! the player clicked, typed, and which keys went down over an item
 //! (`native_panel_event`). With no mod showing a panel, each hook here
 //! returns after one check.
+use super::input_event::KeyEvent;
 use super::{
     Game, Screen,
     native_hooks::{NativePanelEvent as BrowserEvent, NativeStack as BrowserStack},
@@ -162,7 +163,7 @@ pub(super) fn inside(p: (f32, f32), [x, y, w, h]: [f32; 4]) -> bool {
 
 impl Game<'_> {
     fn browser_batch(&self) -> Option<HudBatch> {
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         Some(HudBatch::new([r.config.width, r.config.height]))
     }
     /// The mod showing a panel, with its items made into stacks once per
@@ -441,7 +442,7 @@ impl Game<'_> {
             && self.panel.search.as_ref().is_some_and(|s| s.focused)
     }
     /// A key press while the search box has focus.
-    pub(super) fn mod_browser_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn mod_browser_key(&mut self, event: &super::input_event::KeyEvent) {
         use winit::keyboard::PhysicalKey;
         let shortcut = self.edit_shortcut(event);
         let ctrl = self.has_control_down();

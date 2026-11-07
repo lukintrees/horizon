@@ -1,0 +1,1228 @@
+//! Resource-owning safe renderer; GL names never cross the API boundary.
+use crate::{
+    Context,
+    raw::{ContextHandle, Gl},
+};
+use horizon_render_api::entity::Kind;
+use horizon_render_api::{
+    Clear, Draw, Frame, Image, MeshId, Pass, RenderBackend, TextureId, Vertex, relative_origin,
+};
+use std::collections::HashMap;
+use std::ffi::{CStr, CString, c_void};
+use std::ptr;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Clone, Copy, Debug)]
+pub struct Budget {
+    pub texture_bytes: usize,
+    pub mesh_bytes: usize,
+}
+impl Default for Budget {
+    fn default() -> Self {
+        Self {
+            texture_bytes: 32 << 20,
+            mesh_bytes: 32 << 20,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    pub texture_bytes: usize,
+    pub mesh_bytes: usize,
+    pub textures: usize,
+    pub meshes: usize,
+}
+struct Texture {
+    name: u32,
+    size: [u32; 2],
+    bytes: usize,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MeshLayout {
+    Basic,
+    Entity,
+    Gui,
+    Stroke,
+}
+impl MeshLayout {
+    fn stride(self) -> i32 {
+        match self {
+            Self::Basic => 44,
+            Self::Entity => 84,
+            Self::Gui => 52,
+            Self::Stroke => 40,
+        }
+    }
+    fn pass(pass: Pass) -> Self {
+        match pass {
+            Pass::Entity(_) => Self::Entity,
+            Pass::Gui(_) => Self::Gui,
+            Pass::Stroke => Self::Stroke,
+            _ => Self::Basic,
+        }
+    }
+}
+struct Mesh {
+    buffers: [u32; 2],
+    count: i32,
+    bytes: usize,
+    layout: MeshLayout,
+}
+struct Uniforms {
+    matrix: i32,
+    origin: i32,
+    cutoff: i32,
+    fog: i32,
+    fog_end: i32,
+    game_fog: i32,
+    force_opaque: i32,
+    entity: i32,
+    overlay: i32,
+    mask: i32,
+    glint: i32,
+    gui_glint: i32,
+    screen: i32,
+    additive: i32,
+    weather: i32,
+    background_depth: i32,
+    stroke: i32,
+    sprite_size: i32,
+}
+
+pub struct Renderer<'a> {
+    gl: Gl<'a>,
+    program: u32,
+    uniforms: Uniforms,
+    textures: HashMap<TextureId, Texture>,
+    meshes: HashMap<MeshId, Mesh>,
+    budget: Budget,
+    object_limits: [usize; 2],
+    stats: Stats,
+    max_texture: u32,
+}
+static IDS: AtomicU64 = AtomicU64::new(1);
+fn reserved_capacity(free: Stats, reserve: Stats) -> Result<Stats, String> {
+    Ok(Stats {
+        texture_bytes: free
+            .texture_bytes
+            .checked_sub(reserve.texture_bytes)
+            .ok_or("reserved texture bytes exceed free capacity")?,
+        mesh_bytes: free
+            .mesh_bytes
+            .checked_sub(reserve.mesh_bytes)
+            .ok_or("reserved mesh bytes exceed free capacity")?,
+        textures: free
+            .textures
+            .checked_sub(reserve.textures)
+            .ok_or("reserved texture objects exceed free capacity")?,
+        meshes: free
+            .meshes
+            .checked_sub(reserve.meshes)
+            .ok_or("reserved mesh objects exceed free capacity")?,
+    })
+}
+
+fn id() -> Result<u64, String> {
+    IDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+        .map_err(|_| "resource ID space exhausted".into())
+}
+fn valid_vertex(v: &Vertex) -> bool {
+    v.pos
+        .iter()
+        .chain(&v.uv)
+        .chain(&v.light_uv)
+        .chain(&v.color)
+        .all(|v| v.is_finite())
+}
+fn charge(used: usize, bytes: usize, limit: usize) -> Result<(), String> {
+    if used.checked_add(bytes).is_none_or(|n| n > limit) {
+        Err("resource budget exceeded".into())
+    } else {
+        Ok(())
+    }
+}
+fn bytes(image: &Image<'_>) -> Result<usize, String> {
+    let size = (image.width as usize)
+        .checked_mul(image.height as usize)
+        .and_then(|n| n.checked_mul(4));
+    if image.width == 0 || image.height == 0 || size != Some(image.rgba.len()) {
+        Err("invalid RGBA8 image dimensions/length".into())
+    } else {
+        Ok(image.rgba.len())
+    }
+}
+fn rect_valid(rect: [u32; 4], size: [u32; 2]) -> bool {
+    rect[2] > 0
+        && rect[3] > 0
+        && rect[0].checked_add(rect[2]).is_some_and(|v| v <= size[0])
+        && rect[1].checked_add(rect[3]).is_some_and(|v| v <= size[1])
+}
+impl Renderer<'static> {
+    /// Own the native context rather than borrow it. This renderer can be moved
+    /// into the game/scene without a self-reference. Rc keeps it thread-confined.
+    pub fn owned(context: Context, budget: Budget) -> Result<Self, String> {
+        Self::from_context(ContextHandle::Owned(Rc::new(context)), budget)
+    }
+}
+impl<'a> Renderer<'a> {
+    pub fn new(context: &'a Context, budget: Budget) -> Result<Self, String> {
+        Self::from_context(ContextHandle::Borrowed(context), budget)
+    }
+    pub fn context(&self) -> &Context {
+        &self.gl.context
+    }
+    fn from_context(context: ContextHandle<'a>, budget: Budget) -> Result<Self, String> {
+        context.make_current()?;
+        // Qualify GL1 identity before requesting GL2 function pointers.
+        // SAFETY: fixed GL1 ABI and live current context; strings are borrowed until copied.
+        unsafe {
+            let get = std::mem::transmute::<
+                *const c_void,
+                unsafe extern "system" fn(u32) -> *const u8,
+            >(context.address(c"glGetString")?);
+            let (version, renderer) = (get(0x1F02), get(0x1F01));
+            if version.is_null() || renderer.is_null() {
+                return Err("null GL identity".into());
+            }
+            Context::qualify(
+                &CStr::from_ptr(version.cast()).to_string_lossy(),
+                &CStr::from_ptr(renderer.cast()).to_string_lossy(),
+            )?;
+        }
+        let gl = Gl::load(context)?;
+        // SAFETY: valid GL2 integer queries with writable outputs.
+        let (max_texture, attributes, units) = unsafe {
+            let (mut t, mut a, mut u) = (0, 0, 0);
+            (gl.get_integer)(0x0D33, &mut t);
+            (gl.get_integer)(0x8869, &mut a);
+            (gl.get_integer)(0x8872, &mut u);
+            (t, a, u)
+        };
+        if max_texture < 1 || attributes < 7 || units < 3 {
+            return Err("insufficient GL2 texture/attribute limits".into());
+        }
+        let program = program(&gl)?;
+        let mut this = Self {
+            gl,
+            program,
+            uniforms: Uniforms {
+                matrix: -1,
+                origin: -1,
+                cutoff: -1,
+                fog: -1,
+                fog_end: -1,
+                game_fog: -1,
+                force_opaque: -1,
+                entity: -1,
+                overlay: -1,
+                mask: -1,
+                glint: -1,
+                gui_glint: -1,
+                screen: -1,
+                additive: -1,
+                weather: -1,
+                background_depth: -1,
+                stroke: -1,
+                sprite_size: -1,
+            },
+            textures: HashMap::new(),
+            meshes: HashMap::new(),
+            budget,
+            object_limits: [4096, 65536],
+            stats: Stats::default(),
+            max_texture: max_texture as u32,
+        };
+        // SAFETY: live linked program, NUL-terminated names, scalar uniform writes.
+        unsafe {
+            let location = |name: &CStr| -> Result<i32, String> {
+                let at = (this.gl.uniform_location)(program, name.as_ptr());
+                if at < 0 {
+                    Err(format!("missing uniform {}", name.to_string_lossy()))
+                } else {
+                    Ok(at)
+                }
+            };
+            this.uniforms = Uniforms {
+                matrix: location(c"matrix")?,
+                origin: location(c"origin")?,
+                cutoff: location(c"cutoff")?,
+                fog: location(c"fog")?,
+                fog_end: location(c"fog_end")?,
+                game_fog: location(c"game_fog")?,
+                force_opaque: location(c"force_opaque")?,
+                entity: location(c"entity_mode")?,
+                overlay: location(c"overlay")?,
+                mask: location(c"mask_only")?,
+                glint: location(c"glint_strength")?,
+                gui_glint: location(c"gui_glint")?,
+                screen: location(c"screen_mode")?,
+                additive: location(c"additive_mode")?,
+                weather: location(c"weather_mode")?,
+                background_depth: location(c"background_depth")?,
+                stroke: location(c"stroke_mode")?,
+                sprite_size: location(c"sprite_size")?,
+            };
+            (this.gl.use_program)(program);
+            (this.gl.uniform1i)(location(c"image")?, 0);
+            (this.gl.uniform1i)(location(c"lightmap")?, 1);
+            (this.gl.uniform1i)(location(c"foil")?, 2);
+        }
+        this.check()?;
+        Ok(this)
+    }
+    pub fn max_texture_size(&self) -> u32 {
+        self.max_texture
+    }
+    pub fn stats(&self) -> Stats {
+        self.stats
+    }
+    /// Remaining tracked payload/object capacity, not actual driver VRAM. Owners
+    /// can reserve space for a streamed GUI before clearing a world frame.
+    pub fn remaining(&self) -> Stats {
+        Stats {
+            texture_bytes: self.budget.texture_bytes - self.stats.texture_bytes,
+            mesh_bytes: self.budget.mesh_bytes - self.stats.mesh_bytes,
+            textures: self.object_limits[0] - self.stats.textures,
+            meshes: self.object_limits[1] - self.stats.meshes,
+        }
+    }
+
+    /// A private object namespace on the SAME context/window, limited to this
+    /// owner's unoccupied payload/object capacity. The caller must freeze this
+    /// owner until the candidate is dropped or published (the client reload
+    /// guard enforces that with an exclusive borrow). Not a global GL ledger.
+    /// Shader/program/driver overhead is not part of the payload budget.
+    pub fn staging_replacement(&self) -> Result<Self, String> {
+        self.staging_replacement_reserving(Stats::default())
+    }
+    /// Same-context candidate leaving explicit transient capacity for the boot
+    /// HUD. The active owner must cap its allocations to resident + reserve;
+    /// callers may not create arbitrary other owners. This is not a global GL
+    /// ledger. Existing reloads use zero reserve and still freeze their owner.
+    pub fn staging_replacement_reserving(&self, reserve: Stats) -> Result<Self, String> {
+        let free = reserved_capacity(self.remaining(), reserve)?;
+        let mut candidate = Self::from_context(
+            self.gl.context.clone(),
+            Budget {
+                texture_bytes: free.texture_bytes,
+                mesh_bytes: free.mesh_bytes,
+            },
+        )?;
+        candidate.object_limits = [free.textures, free.meshes];
+        Ok(candidate)
+    }
+
+    /// Explicit owner budget policy, checked before mutation. Promotion after a
+    /// staged replacement is prepared must not allocate until the old owner has
+    /// been dropped. Object limits return to the normal backend hard caps.
+    pub fn set_budget(&mut self, budget: Budget) -> Result<(), String> {
+        if self.stats.texture_bytes > budget.texture_bytes
+            || self.stats.mesh_bytes > budget.mesh_bytes
+        {
+            return Err("new resource budget is below resident usage".into());
+        }
+        self.gl.context.make_current()?;
+        self.budget = budget;
+        self.object_limits = [4096, 65536];
+        Ok(())
+    }
+
+    fn check(&self) -> Result<(), String> {
+        // SAFETY: current live context, no pointer parameters.
+        let error = unsafe { (self.gl.get_error)() };
+        if error == 0 {
+            Ok(())
+        } else {
+            Err(format!("OpenGL error: {error:#x}"))
+        }
+    }
+    /// Typed clip-space geometry; ordinary/GUI/entity meshes cannot use Stroke.
+    pub fn create_stroke_mesh(
+        &mut self,
+        vertices: &[horizon_render_api::stroke::Vertex],
+        indices: &[u16],
+    ) -> Result<MeshId, String> {
+        self.upload_mesh(vertices, indices, MeshLayout::Stroke, |v| v.valid())
+    }
+    fn upload_mesh<T>(
+        &mut self,
+        vertices: &[T],
+        indices: &[u16],
+        layout: MeshLayout,
+        valid: impl Fn(&T) -> bool,
+    ) -> Result<MeshId, String> {
+        if self.stats.meshes >= self.object_limits[1] {
+            return Err("mesh object limit exceeded".into());
+        }
+        if vertices.is_empty()
+            || vertices.len() > 65536
+            || indices.is_empty()
+            || indices.len() % 3 != 0
+            || indices.len() > i32::MAX as usize
+            || indices.iter().any(|&i| i as usize >= vertices.len())
+            || vertices.iter().any(|value| !valid(value))
+        {
+            return Err("invalid indexed triangle mesh".into());
+        }
+        let vertex_bytes = size_of_val(vertices);
+        let index_bytes = size_of_val(indices);
+        let bytes = vertex_bytes
+            .checked_add(index_bytes)
+            .ok_or("mesh size overflow")?;
+        if vertex_bytes > isize::MAX as usize || index_bytes > isize::MAX as usize {
+            return Err("GL buffer size overflow".into());
+        }
+        charge(self.stats.mesh_bytes, bytes, self.budget.mesh_bytes)?;
+        let id = MeshId(id()?);
+        self.gl.context.make_current()?;
+        let mut buffers = [0; 2];
+        // SAFETY: the only callers instantiate T as repr(C) Vertex/LitVertex/GuiVertex/stroke::Vertex,
+        // containing only floats and no padding. Checked sizes match live arrays. GL copies client storage during BufferData.
+        unsafe {
+            (self.gl.gen_buffers)(2, buffers.as_mut_ptr());
+            (self.gl.bind_buffer)(0x8892, buffers[0]);
+            (self.gl.buffer_data)(
+                0x8892,
+                vertex_bytes as isize,
+                vertices.as_ptr().cast(),
+                0x88E4,
+            );
+            (self.gl.bind_buffer)(0x8893, buffers[1]);
+            (self.gl.buffer_data)(
+                0x8893,
+                index_bytes as isize,
+                indices.as_ptr().cast(),
+                0x88E4,
+            );
+        }
+        if let Err(error) = self.check().and_then(|_| {
+            if buffers.contains(&0) {
+                Err("GL buffer allocation failed".into())
+            } else {
+                Ok(())
+            }
+        }) {
+            // SAFETY: generated names; zero entries are ignored.
+            unsafe { (self.gl.delete_buffers)(2, buffers.as_ptr()) };
+            return Err(error);
+        }
+        self.meshes.insert(
+            id,
+            Mesh {
+                buffers,
+                count: indices.len() as i32,
+                bytes,
+                layout,
+            },
+        );
+        self.stats.mesh_bytes += bytes;
+        self.stats.meshes += 1;
+        Ok(id)
+    }
+    fn validate_draw(&self, draw: &Draw, frame: &Frame<'_>) -> Result<[f32; 3], String> {
+        if !self.meshes.contains_key(&draw.mesh)
+            || !self.textures.contains_key(&draw.texture)
+            || !self.textures.contains_key(&draw.lightmap)
+        {
+            return Err("unknown, foreign or released mesh/texture ID".into());
+        }
+        if self.meshes[&draw.mesh].layout != MeshLayout::pass(draw.pass) {
+            return Err("typed mesh/pass mismatch".into());
+        }
+        let glint = match draw.pass {
+            Pass::Entity(material) => {
+                if material.overlay_color().is_none() {
+                    return Err("invalid entity overlay".into());
+                }
+                if material.glint.is_some() && !matches!(material.kind, Kind::Body | Kind::Item) {
+                    return Err("glint on unsupported material".into());
+                }
+                material.glint
+            }
+            Pass::Gui(material) => {
+                if material.glint.is_some()
+                    && !matches!(
+                        material.kind,
+                        horizon_render_api::gui::Kind::Alpha
+                            | horizon_render_api::gui::Kind::Additive
+                            | horizon_render_api::gui::Kind::Depth
+                    )
+                {
+                    return Err("glint on unsupported GUI pipeline".into());
+                }
+                material.glint
+            }
+            _ => None,
+        };
+        if let Some(glint) = glint {
+            let foil = self
+                .textures
+                .get(&glint.texture)
+                .ok_or("unknown glint texture")?;
+            if (glint.texture == draw.texture || glint.texture == draw.lightmap)
+                && foil.size != [1, 1]
+            {
+                return Err("glint requires an independent repeating texture".into());
+            }
+        }
+        // GL2 texture sampling state belongs to the texture, not to a sampler
+        // object. One nonconstant texture cannot be both linear atlas and nearest
+        // lightmap in the same draw. A 1x1 white texture is equivalent either way.
+        if draw.pass.pipeline() == Pass::OverlayVignette
+            && !matches!(draw.pass, Pass::Screen(_))
+            && draw.texture == draw.lightmap
+            && self.textures[&draw.texture].size != [1, 1]
+        {
+            return Err("vignette atlas and lightmap need separate textures".into());
+        }
+        if draw
+            .scissor
+            .is_some_and(|r| !rect_valid(r, self.gl.context.size()))
+        {
+            return Err("invalid scissor rectangle".into());
+        }
+        relative_origin(draw.origin, frame.camera).ok_or("non-finite relative origin".into())
+    }
+}
+impl RenderBackend for Renderer<'_> {
+    type Error = String;
+    fn create_texture(&mut self, image: Image<'_>) -> Result<TextureId, String> {
+        let bytes = bytes(&image)?;
+        if self.stats.textures >= self.object_limits[0] {
+            return Err("texture object limit exceeded".into());
+        }
+        if [image.width, image.height]
+            .iter()
+            .any(|&n| n > self.max_texture)
+        {
+            return Err("texture exceeds driver size limit".into());
+        }
+        charge(self.stats.texture_bytes, bytes, self.budget.texture_bytes)?;
+        let id = TextureId(id()?);
+        self.gl.context.make_current()?;
+        let mut name = 0;
+        // SAFETY: sizes validated; RGBA8 storage exactly matches the readable slice.
+        // Texture has one level, so NEAREST minification is complete without mips.
+        unsafe {
+            (self.gl.gen_textures)(1, &mut name);
+            (self.gl.active_texture)(0x84C0);
+            (self.gl.bind_texture)(0x0DE1, name);
+            (self.gl.pixel_store)(0x0CF5, 1); // UNPACK_ALIGNMENT
+            for (parameter, value) in [
+                (0x2800, 0x2600),
+                (0x2801, 0x2600),
+                (0x2802, 0x812F),
+                (0x2803, 0x812F),
+            ] {
+                (self.gl.tex_parameter)(0x0DE1, parameter, value);
+            }
+            (self.gl.tex_image)(
+                0x0DE1,
+                0,
+                0x8058,
+                image.width as i32,
+                image.height as i32,
+                0,
+                0x1908,
+                0x1401,
+                image.rgba.as_ptr().cast(),
+            );
+        }
+        if let Err(error) = self.check().and_then(|_| {
+            if name == 0 {
+                Err("GL texture allocation failed".into())
+            } else {
+                Ok(())
+            }
+        }) {
+            // SAFETY: generated name (zero is ignored); current context.
+            unsafe { (self.gl.delete_textures)(1, &name) };
+            return Err(error);
+        }
+        self.textures.insert(
+            id,
+            Texture {
+                name,
+                size: [image.width, image.height],
+                bytes,
+            },
+        );
+        self.stats.texture_bytes += bytes;
+        self.stats.textures += 1;
+        Ok(id)
+    }
+    fn update_texture(
+        &mut self,
+        id: TextureId,
+        at: [u32; 2],
+        image: Image<'_>,
+    ) -> Result<(), String> {
+        bytes(&image)?;
+        let texture = self.textures.get(&id).ok_or("unknown texture ID")?;
+        if !rect_valid([at[0], at[1], image.width, image.height], texture.size) {
+            return Err("texture update out of bounds".into());
+        }
+        self.gl.context.make_current()?;
+        // SAFETY: validated live texture and subrectangle; slice contains all RGBA8 pixels.
+        unsafe {
+            (self.gl.active_texture)(0x84C0);
+            (self.gl.bind_texture)(0x0DE1, texture.name);
+            (self.gl.pixel_store)(0x0CF5, 1);
+            (self.gl.tex_update)(
+                0x0DE1,
+                0,
+                at[0] as i32,
+                at[1] as i32,
+                image.width as i32,
+                image.height as i32,
+                0x1908,
+                0x1401,
+                image.rgba.as_ptr().cast(),
+            );
+        }
+        self.check()
+    }
+    fn remove_texture(&mut self, id: TextureId) -> Result<(), String> {
+        self.gl.context.make_current()?;
+        let texture = self.textures.remove(&id).ok_or("unknown texture ID")?;
+        // SAFETY: owned live texture; its GL name is removed from the ID table first.
+        unsafe { (self.gl.delete_textures)(1, &texture.name) };
+        self.stats.texture_bytes -= texture.bytes;
+        self.stats.textures -= 1;
+        self.check()
+    }
+    fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, String> {
+        self.upload_mesh(vertices, indices, MeshLayout::Basic, valid_vertex)
+    }
+    fn create_entity_mesh(
+        &mut self,
+        vertices: &[horizon_render_api::entity::LitVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, String> {
+        if vertices.iter().any(|v| {
+            v.back_color
+                .iter()
+                .chain(&v.light_color)
+                .chain(&v.glint_uv)
+                .any(|f| !f.is_finite())
+        }) {
+            return Err("invalid entity lighting".into());
+        }
+        self.upload_mesh(vertices, indices, MeshLayout::Entity, |v| {
+            valid_vertex(&v.base)
+        })
+    }
+    fn create_gui_mesh(
+        &mut self,
+        vertices: &[horizon_render_api::gui::GuiVertex],
+        indices: &[u16],
+    ) -> Result<MeshId, String> {
+        if vertices
+            .iter()
+            .any(|v| v.glint_uv.iter().any(|n| !n.is_finite()))
+        {
+            return Err("invalid GUI glint UV".into());
+        }
+        self.upload_mesh(vertices, indices, MeshLayout::Gui, |v| {
+            valid_vertex(&v.base)
+        })
+    }
+    fn remove_mesh(&mut self, id: MeshId) -> Result<(), String> {
+        self.gl.context.make_current()?;
+        let mesh = self.meshes.remove(&id).ok_or("unknown mesh ID")?;
+        // SAFETY: uniquely owned buffer names, removed from the ID table first.
+        unsafe { (self.gl.delete_buffers)(2, mesh.buffers.as_ptr()) };
+        self.stats.mesh_bytes -= mesh.bytes;
+        self.stats.meshes -= 1;
+        self.check()
+    }
+    fn render(&mut self, frame: &Frame<'_>) -> Result<(), String> {
+        crate::validate_size(self.gl.context.size())
+            .map_err(|_| "surface suspended or exceeds size limit".to_string())?;
+        if frame.view_projection.iter().any(|v| !v.is_finite())
+            || frame.camera.iter().any(|v| !v.is_finite())
+            || matches!(frame.clear, Clear::ColorDepth(color) if color.iter().any(|v| !v.is_finite()))
+        {
+            return Err("non-finite frame state".into());
+        }
+        if frame.fog.is_some_and(|f| {
+            !f.start.is_finite()
+                || !f.end.is_finite()
+                || f.start > f.end
+                || (f.start == f.end && f.game.is_none())
+                || f.game.is_some_and(|g| {
+                    !g.start.is_finite()
+                        || !g.end.is_finite()
+                        || g.start > g.end
+                        || !g.alpha.is_finite()
+                        || !(0.0..=1.0).contains(&g.alpha)
+                })
+                || f.color.iter().any(|v| !v.is_finite())
+        }) {
+            return Err("invalid fog range/color".into());
+        }
+        // Validate the entire draw list before clearing or submitting any part.
+        for draw in frame.draws {
+            self.validate_draw(draw, frame)?;
+        }
+        self.gl.context.make_current()?;
+        let [width, height] = self.gl.context.size();
+        // SAFETY: all handles, counts, byte offsets and uniforms below have been
+        // validated. Attribute offsets refer to bound VBO storage, not CPU pointers.
+        unsafe {
+            (self.gl.use_program)(self.program);
+            (self.gl.viewport)(0, 0, width as i32, height as i32);
+            (self.gl.disable)(0x0C11); // SCISSOR_TEST before clear
+            (self.gl.disable)(0x0B44); // CULL_FACE: CPU prepares the visible faces
+            (self.gl.depth_mask)(1);
+            (self.gl.color_mask)(1, 1, 1, 1);
+            (self.gl.disable)(0x8037); // POLYGON_OFFSET_FILL
+            (self.gl.depth_func)(0x0201); // LESS
+            match frame.clear {
+                Clear::Load => (),
+                Clear::Depth => (self.gl.clear)(0x0100),
+                Clear::ColorDepth(color) => {
+                    (self.gl.clear_color)(color[0], color[1], color[2], color[3]);
+                    (self.gl.clear)(0x4000 | 0x0100);
+                }
+            }
+            (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
+            for draw in frame.draws {
+                let pass = draw.pass.pipeline();
+                (self.gl.uniform1f)(
+                    self.uniforms.stroke,
+                    if pass == Pass::Stroke { 1. } else { 0. },
+                );
+                let screen = match draw.pass {
+                    Pass::Screen(material) => Some(material),
+                    _ => None,
+                };
+                let mode = screen.map_or(0., |m| match m.blend {
+                    horizon_render_api::screen::Blend::Alpha => 1.,
+                    horizon_render_api::screen::Blend::Vignette => 2.,
+                });
+                (self.gl.uniform1f)(self.uniforms.screen, mode);
+                let additive = match pass {
+                    Pass::Entity(m) if matches!(m.kind, Kind::Additive | Kind::SkyCelestial) => 1.,
+                    Pass::Entity(m) if m.kind == Kind::DragonRays => 2.,
+                    _ => 0.,
+                };
+                (self.gl.uniform1f)(self.uniforms.additive, additive);
+                (self.gl.uniform1f)(
+                    self.uniforms.weather,
+                    if matches!(pass, Pass::Entity(m) if m.kind == Kind::Crumbling) {
+                        2.
+                    } else if matches!(pass, Pass::Entity(m) if m.kind == Kind::Weather) {
+                        1.
+                    } else {
+                        0.
+                    },
+                );
+                (self.gl.uniform1f)(
+                    self.uniforms.background_depth,
+                    if matches!(
+                        pass,
+                        Pass::Sky {
+                            flatten_depth: true,
+                            ..
+                        }
+                    ) {
+                        1.
+                    } else {
+                        0.
+                    },
+                );
+                let dimensions = self.textures[&draw.texture].size;
+                (self.gl.uniform3f)(
+                    self.uniforms.sprite_size,
+                    dimensions[0] as f32,
+                    dimensions[1] as f32,
+                    0.,
+                );
+                let mesh = &self.meshes[&draw.mesh];
+                let offset = self.validate_draw(draw, frame)?;
+                (self.gl.uniform3f)(self.uniforms.origin, offset[0], offset[1], offset[2]);
+                let (start, end, color) = match (frame.fog, pass) {
+                    (Some(f), pass) if !pass.is_overlay() => (f.start, f.end, f.color),
+                    _ => (1e20, 2e20, [0.; 3]),
+                };
+                (self.gl.uniform4f)(self.uniforms.fog, color[0], color[1], color[2], start);
+                (self.gl.uniform1f)(self.uniforms.fog_end, end);
+                let game = match (frame.fog.and_then(|f| f.game), pass.is_overlay()) {
+                    (Some(g), false) => [g.start, g.end, g.alpha, 1.],
+                    _ => [0., 1., 0., 0.],
+                };
+                (self.gl.uniform4f)(self.uniforms.game_fog, game[0], game[1], game[2], game[3]);
+                let cutoff = match pass {
+                    Pass::Entity(m) if matches!(m.kind, Kind::Shadow | Kind::WaterMask) => 0.,
+                    Pass::Cutout | Pass::Entity(_) => 0.1,
+                    Pass::Overlay | Pass::OverlayAdditive | Pass::OverlayDepth => 0.004,
+                    _ => 0.,
+                };
+                (self.gl.uniform1f)(self.uniforms.cutoff, cutoff);
+                let entity = match pass {
+                    Pass::Entity(m) => Some(m),
+                    _ => None,
+                };
+                (self.gl.uniform1f)(self.uniforms.entity, if entity.is_some() { 1. } else { 0. });
+                let gui_glint = match draw.pass {
+                    Pass::Gui(m) => m.glint,
+                    _ => None,
+                };
+                (self.gl.uniform1f)(
+                    self.uniforms.gui_glint,
+                    if gui_glint.is_some() { 1. } else { 0. },
+                );
+                let glint = gui_glint.or_else(|| entity.and_then(|m| m.glint));
+                (self.gl.uniform1f)(
+                    self.uniforms.glint,
+                    glint.map_or(0., |g| g.strength.value()),
+                );
+                (self.gl.active_texture)(0x84C2);
+                // A complete sampler binding is required even when strength is 0.
+                let foil = glint.map_or(draw.lightmap, |g| g.texture);
+                (self.gl.bind_texture)(0x0DE1, self.textures[&foil].name);
+                if glint.is_some() {
+                    for parameter in [0x2802, 0x2803] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, 0x2901);
+                    }
+                    for parameter in [0x2800, 0x2801] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, 0x2601);
+                    }
+                }
+                let mask = entity.is_some_and(|m| m.kind == Kind::WaterMask);
+                (self.gl.uniform1f)(self.uniforms.mask, if mask { 1. } else { 0. });
+                let write = u8::from(!mask);
+                (self.gl.color_mask)(write, write, write, write);
+                let bias = entity.and_then(|m| match m.kind {
+                    Kind::Body => Some((0., -128.)),
+                    Kind::Text => Some((-1., -10.)),
+                    Kind::Shadow => Some((-0.015, -128.)),
+                    Kind::Crumbling => Some((-1., -10.)),
+                    _ => None,
+                });
+                if let Some((slope, units)) = bias {
+                    (self.gl.enable)(0x8037);
+                    (self.gl.polygon_offset)(slope, units);
+                } else {
+                    (self.gl.disable)(0x8037);
+                }
+
+                let overlay = entity
+                    .and_then(|m| m.overlay_color())
+                    .unwrap_or([0., 0., 0., 1.]);
+                (self.gl.uniform4f)(
+                    self.uniforms.overlay,
+                    overlay[0],
+                    overlay[1],
+                    overlay[2],
+                    overlay[3],
+                );
+                (self.gl.front_face)(0x0901);
+                if entity.is_some_and(|m| m.cull) {
+                    (self.gl.enable)(0x0B44);
+                    (self.gl.cull_face)(0x0405);
+                } else {
+                    (self.gl.disable)(0x0B44);
+                }
+
+                (self.gl.uniform1f)(
+                    self.uniforms.force_opaque,
+                    if draw.pass.pipeline() == Pass::OverlayVignette {
+                        1.
+                    } else {
+                        0.
+                    },
+                );
+                if matches!(pass, Pass::Sky { .. })
+                    || (pass.is_overlay() && pass != Pass::OverlayDepth)
+                    || entity
+                        .is_some_and(|m| matches!(m.kind, Kind::SeeThrough | Kind::SkyCelestial))
+                {
+                    (self.gl.disable)(0x0B71);
+                } else {
+                    (self.gl.enable)(0x0B71);
+                }
+                (self.gl.depth_func)(
+                    if matches!(pass, Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_)) {
+                        0x0203
+                    } else {
+                        0x0201
+                    },
+                );
+                let depth_write = matches!(pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
+                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::Crumbling | Kind::SkyCelestial));
+                (self.gl.depth_mask)(u8::from(depth_write));
+                let factors = match pass {
+                    Pass::Entity(m) if m.kind == Kind::Crumbling => Some((0x0306, 0x0300, 1, 0)),
+                    Pass::Sky { additive: true, .. } => Some((0x0302, 1, 0x0302, 1)),
+                    Pass::Sky {
+                        additive: false, ..
+                    } => Some((0x0302, 0x0303, 1, 0x0303)),
+                    Pass::OverlayInvert => Some((0x0307, 0x0301, 1, 0)),
+                    Pass::OverlayAdditive => Some((1, 1, 1, 1)),
+                    Pass::OverlayVignette => Some((0, 0x0301, 0, 1)),
+                    Pass::Entity(m)
+                        if matches!(
+                            m.kind,
+                            Kind::Additive | Kind::DragonRays | Kind::SkyCelestial
+                        ) =>
+                    {
+                        Some((0x0302, 1, 0x0302, 1))
+                    }
+                    Pass::Overlay | Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_) => {
+                        Some((0x0302, 0x0303, 1, 0x0303))
+                    }
+                    Pass::Translucent => Some((0x0302, 0x0303, 0x0302, 0x0303)),
+                    _ => None,
+                };
+                if let Some((src, dst, src_alpha, dst_alpha)) = factors {
+                    (self.gl.enable)(0x0BE2);
+                    (self.gl.blend_func)(src, dst, src_alpha, dst_alpha);
+                } else {
+                    (self.gl.disable)(0x0BE2);
+                }
+                if let Some([x, y, w, h]) = draw.scissor {
+                    (self.gl.enable)(0x0C11);
+                    (self.gl.scissor)(x as i32, y as i32, w as i32, h as i32);
+                } else {
+                    (self.gl.disable)(0x0C11);
+                }
+                for (unit, id) in [(0x84C0, draw.texture), (0x84C1, draw.lightmap)] {
+                    (self.gl.active_texture)(unit);
+                    (self.gl.bind_texture)(0x0DE1, self.textures[&id].name);
+                    // Screen's shader does not read lightmap. Do not change its
+                    // sampler here: it may legally alias the image texture.
+                    if unit == 0x84C1 && screen.is_some() {
+                        continue;
+                    }
+                    let address = if unit == 0x84C0 && screen.is_some_and(|m| !m.clamp) {
+                        0x2901 // REPEAT on the extracted sprite, never the atlas
+                    } else {
+                        0x812F
+                    };
+                    for parameter in [0x2802, 0x2803] {
+                        (self.gl.tex_parameter)(0x0DE1, parameter, address);
+                    }
+                    let linear = unit == 0x84C0
+                        && screen.map_or(pass == Pass::OverlayVignette, |m| m.linear);
+                    let filter = if linear { 0x2601 } else { 0x2600 };
+                    (self.gl.tex_parameter)(0x0DE1, 0x2800, filter);
+                    (self.gl.tex_parameter)(0x0DE1, 0x2801, filter);
+                }
+                (self.gl.bind_buffer)(0x8892, mesh.buffers[0]);
+                (self.gl.bind_buffer)(0x8893, mesh.buffers[1]);
+                let attributes = if mesh.layout == MeshLayout::Stroke {
+                    [(0, 4, 0), (1, 2, 0), (2, 2, 32), (3, 4, 16)]
+                } else {
+                    [(0, 3, 0), (1, 2, 12), (2, 2, 20), (3, 4, 28)]
+                };
+                for (index, count, offset) in attributes {
+                    (self.gl.attribute_pointer)(
+                        index,
+                        count,
+                        0x1406,
+                        0,
+                        mesh.layout.stride(),
+                        offset as *const c_void,
+                    );
+                    (self.gl.enable_attribute)(index);
+                }
+                for (index, count, offset) in [(4, 4, 44), (5, 4, 60), (6, 2, 76)] {
+                    let present = mesh.layout == MeshLayout::Entity
+                        || (mesh.layout == MeshLayout::Gui && index == 6);
+                    if present {
+                        let offset = if mesh.layout == MeshLayout::Gui {
+                            44
+                        } else {
+                            offset
+                        };
+                        (self.gl.attribute_pointer)(
+                            index,
+                            count,
+                            0x1406,
+                            0,
+                            mesh.layout.stride(),
+                            offset as *const c_void,
+                        );
+                        (self.gl.enable_attribute)(index);
+                    } else {
+                        (self.gl.disable_attribute)(index);
+                        (self.gl.attribute4f)(index, 1., 1., 1., 1.);
+                    }
+                }
+                (self.gl.draw_elements)(0x0004, mesh.count, 0x1403, ptr::null());
+            }
+        }
+        self.check()
+    }
+    fn read_rgba(&mut self, rect: [u32; 4]) -> Result<Vec<u8>, String> {
+        if !rect_valid(rect, self.gl.context.size()) {
+            return Err("readback rectangle out of bounds".into());
+        }
+        self.gl.context.make_current()?;
+        let [x, y, w, h] = rect;
+        let mut pixels = vec![0u8; w as usize * h as usize * 4];
+        // SAFETY: validated bounded rectangle and exactly w*h*4 writable RGBA8 bytes.
+        unsafe {
+            (self.gl.pixel_store)(0x0D05, 1); // PACK_ALIGNMENT
+            (self.gl.read_pixels)(
+                x as i32,
+                y as i32,
+                w as i32,
+                h as i32,
+                0x1908,
+                0x1401,
+                pixels.as_mut_ptr().cast(),
+            );
+        }
+        self.check()?;
+        Ok(pixels)
+    }
+}
+impl Drop for Renderer<'_> {
+    fn drop(&mut self) {
+        // Never call through a different context if rebinding fails. The owning
+        // native context will release any remaining objects when it is destroyed.
+        if self.gl.context.make_current().is_err() {
+            return;
+        }
+        // SAFETY: uniquely owned names and live context (borrow outlives renderer).
+        unsafe {
+            for mesh in self.meshes.values() {
+                (self.gl.delete_buffers)(2, mesh.buffers.as_ptr());
+            }
+            for texture in self.textures.values() {
+                (self.gl.delete_textures)(1, &texture.name);
+            }
+            (self.gl.delete_program)(self.program);
+        }
+    }
+}
+fn program(gl: &Gl<'_>) -> Result<u32, String> {
+    // SAFETY: fixed shader kinds, live strings and sized writable query/log storage.
+    unsafe {
+        let mut shaders = Vec::new();
+        for (kind, source) in [
+            (0x8B31, include_str!("terrain.vert")),
+            (0x8B30, include_str!("terrain.frag")),
+        ] {
+            let shader = (gl.create_shader)(kind);
+            shaders.push(shader);
+            let source = CString::new(source).unwrap();
+            (gl.shader_source)(shader, 1, &source.as_ptr(), ptr::null());
+            (gl.compile_shader)(shader);
+            let mut compiled = 0;
+            (gl.shader_integer)(shader, 0x8B81, &mut compiled);
+            if compiled == 0 {
+                let mut length = 0;
+                (gl.shader_integer)(shader, 0x8B84, &mut length);
+                let mut log = vec![0; length.max(1) as usize];
+                (gl.shader_log)(shader, log.len() as i32, ptr::null_mut(), log.as_mut_ptr());
+                for id in shaders {
+                    (gl.delete_shader)(id);
+                }
+                return Err(format!(
+                    "legacy shader compile failed: {}",
+                    CStr::from_ptr(log.as_ptr()).to_string_lossy()
+                ));
+            }
+        }
+        let program = (gl.create_program)();
+        for &shader in &shaders {
+            (gl.attach_shader)(program, shader);
+        }
+        for (index, name) in [
+            c"position",
+            c"texcoord",
+            c"lightcoord",
+            c"color",
+            c"back_color",
+            c"light_color",
+            c"foilcoord",
+        ]
+        .iter()
+        .enumerate()
+        {
+            (gl.bind_attribute)(program, index as u32, name.as_ptr());
+        }
+        (gl.link_program)(program);
+        for shader in shaders {
+            (gl.delete_shader)(shader);
+        }
+        let mut linked = 0;
+        (gl.program_integer)(program, 0x8B82, &mut linked);
+        if linked == 0 {
+            let mut length = 0;
+            (gl.program_integer)(program, 0x8B84, &mut length);
+            let mut log = vec![0; length.max(1) as usize];
+            (gl.program_log)(program, log.len() as i32, ptr::null_mut(), log.as_mut_ptr());
+            (gl.delete_program)(program);
+            return Err(format!(
+                "legacy program link failed: {}",
+                CStr::from_ptr(log.as_ptr()).to_string_lossy()
+            ));
+        }
+        Ok(program)
+    }
+}
+const _: () = {
+    assert!(size_of::<horizon_render_api::stroke::Vertex>() == 40);
+    assert!(std::mem::offset_of!(horizon_render_api::stroke::Vertex, color) == 16);
+    assert!(std::mem::offset_of!(horizon_render_api::stroke::Vertex, distances) == 32);
+    assert!(size_of::<Vertex>() == 44);
+    assert!(std::mem::offset_of!(Vertex, color) == 28);
+};
+
+#[cfg(test)]
+mod reserve_tests {
+    use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires Mesa OSMesa; explicitly run by the GL2 CI job"]
+    fn boot_reserve_cancellation_deletes_actual_partial_texture_names() {
+        use horizon_render_api::{
+            atlas::{SpriteSize, pack_atlas},
+            scene::{SceneError, WorldScene},
+        };
+        let mut boot =
+            Renderer::owned(Context::new("osmesa", [32; 2]).unwrap(), Budget::default()).unwrap();
+        let white = boot
+            .create_texture(Image {
+                width: 1,
+                height: 1,
+                rgba: &[255; 4],
+            })
+            .unwrap();
+        let vertex = Vertex {
+            pos: [0.; 3],
+            uv: [0.; 2],
+            light_uv: [0.; 2],
+            color: [1.; 4],
+        };
+        let mesh = boot.create_mesh(&[vertex; 3], &[0, 1, 2]).unwrap();
+        let baseline = boot.stats();
+        let texture_name = boot.textures[&white].name;
+        let buffers = boot.meshes[&mesh].buffers;
+        // SAFETY: fixed GL1/GL1.5 signatures, addresses retained only within
+        // the live/current context below. No pointers or client memory involved.
+        let (is_texture, is_buffer) = unsafe {
+            (
+                std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32) -> u8>(
+                    boot.context().address(c"glIsTexture").unwrap(),
+                ),
+                std::mem::transmute::<*const c_void, unsafe extern "system" fn(u32) -> u8>(
+                    boot.context().address(c"glIsBuffer").unwrap(),
+                ),
+            )
+        };
+        let atlas = pack_atlas(
+            &[SpriteSize {
+                width: 1,
+                height: 1,
+            }; 3],
+            4,
+            1,
+            3,
+        )
+        .unwrap();
+        for stop in 0..=3 {
+            let candidate = boot
+                .staging_replacement_reserving(Stats {
+                    mesh_bytes: 256,
+                    meshes: 1,
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(candidate.remaining().meshes, 65534);
+            let mut names = Vec::new();
+            let result = WorldScene::new_paged_checked(
+                candidate,
+                atlas.clone(),
+                &[255; 1024],
+                1,
+                |_| Ok(vec![255; 64]),
+                |backend, completed, _| {
+                    // One temporary boot mesh fits the reserved bytes/slot
+                    // while candidate textures are live on the SAME context.
+                    let temporary = boot.create_mesh(&[vertex; 3], &[0, 1, 2])?;
+                    assert!(
+                        boot.stats().mesh_bytes + backend.stats().mesh_bytes
+                            <= Budget::default().mesh_bytes
+                    );
+                    assert!(
+                        boot.stats().texture_bytes + backend.stats().texture_bytes
+                            <= Budget::default().texture_bytes
+                    );
+                    boot.remove_mesh(temporary)?;
+                    names = backend.textures.values().map(|t| t.name).collect();
+                    if completed == stop {
+                        Err("cancel-real-pages".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(matches!(result, Err(SceneError::Backend(ref e)) if e == "cancel-real-pages"));
+            assert_eq!(names.len(), stop);
+            boot.context().make_current().unwrap();
+            // SAFETY: same live/current context and fixed signatures above.
+            unsafe {
+                assert!(
+                    names.iter().all(|&name| is_texture(name) == 0),
+                    "cancelled page remained a GL object"
+                );
+                assert_ne!(
+                    is_texture(texture_name),
+                    0,
+                    "candidate deleted boot texture"
+                );
+                assert!(
+                    buffers.iter().all(|&name| is_buffer(name) != 0),
+                    "candidate deleted boot buffers"
+                );
+            }
+            assert_eq!(boot.stats(), baseline);
+        }
+    }
+    #[test]
+    fn reserve_charges_bytes_and_object_slots_without_saturating_or_wrapping() {
+        let free = Stats {
+            texture_bytes: 8,
+            mesh_bytes: 9,
+            textures: 10,
+            meshes: 11,
+        };
+        assert_eq!(reserved_capacity(free, Stats::default()).unwrap(), free);
+        assert_eq!(reserved_capacity(free, free).unwrap(), Stats::default());
+        for reserve in [
+            Stats {
+                texture_bytes: 9,
+                ..Default::default()
+            },
+            Stats {
+                mesh_bytes: 10,
+                ..Default::default()
+            },
+            Stats {
+                textures: 11,
+                ..Default::default()
+            },
+            Stats {
+                meshes: 12,
+                ..Default::default()
+            },
+            Stats {
+                mesh_bytes: usize::MAX,
+                ..Default::default()
+            },
+        ] {
+            assert!(reserved_capacity(free, reserve).is_err());
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "renderer/stroke_tests.rs"]
+mod stroke_tests;

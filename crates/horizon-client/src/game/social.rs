@@ -3,6 +3,7 @@
 //! scroll, and what hiding does to chat (`Minecraft.isBlocked`). The screen is
 //! `social_screen`. Blocking is Mojang's service (`UserApiService.isBlockedPlayer`), which
 //! Horizon does not offer: nobody is blocked, as in vanilla's offline mode.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     social_screen::{self, Action, Entry, Page, SocialView},
@@ -12,7 +13,7 @@ use horizon_client::{
 };
 use std::collections::{HashMap, HashSet};
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 

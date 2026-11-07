@@ -2,6 +2,7 @@
 //! opened with the client, closed with it, and kept in step with the options
 //! it reads (`Options.narrator`, `getFinalSoundSourceVolume(VOICE)`); and its
 //! `NARRATOR_TOGGLE` toast.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     clipboard,
@@ -12,7 +13,7 @@ use horizon_client::{
     toasts::SystemToast,
 };
 use horizon_narrator::{Status, screen::Trigger};
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `Minecraft`'s constructor: `new GameNarrator`, then
@@ -115,9 +116,10 @@ pub(super) fn is_hotkey(
 /// shortcuts (fullscreen, screenshots, debug keys) never get here.
 pub(super) fn narrate_input(
     narration: &mut ScreenNarrator,
-    event: &WindowEvent,
+    event: &super::input_event::Event,
     cursor: (f32, f32),
 ) {
+    use super::input_event::Event as WindowEvent;
     match event {
         WindowEvent::KeyboardInput { event, .. } => {
             if let PhysicalKey::Code(key) = event.physical_key {

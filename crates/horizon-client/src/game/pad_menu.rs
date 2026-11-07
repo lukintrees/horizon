@@ -134,9 +134,7 @@ impl Game<'_> {
     }
 
     pub(super) fn gui_scale(&self) -> Option<HudBatch> {
-        self.renderer
-            .as_ref()
-            .map(|r| HudBatch::new([r.config.width, r.config.height]))
+        self.renderer.size().map(HudBatch::new)
     }
 
     /// Focus mode is on for the open screen (the keyboard always focuses).
@@ -1243,7 +1241,12 @@ impl Game<'_> {
     /// The real mouse, before the screen takes it: where it is, and a press
     /// or a scroll hands it the pointer back from the keyboard, at the
     /// place the mouse left it (`setLastInputType(MOUSE)`).
-    pub(super) fn key_focus_mouse(&mut self, event_loop: &dyn EventLoopCtl, event: &WindowEvent) {
+    pub(super) fn key_focus_mouse(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        event: &super::input_event::Event,
+    ) {
+        use super::input_event::Event as WindowEvent;
         if self.pad.menu.synthetic {
             return;
         }
@@ -1261,7 +1264,8 @@ impl Game<'_> {
     }
 
     /// Only a press accepted by ScreenEvent.Pre may focus the widget under it.
-    pub(super) fn key_focus_mouse_press(&mut self, event: &WindowEvent) {
+    pub(super) fn key_focus_mouse_press(&mut self, event: &super::input_event::Event) {
+        use super::input_event::Event as WindowEvent;
         if !self.pad.menu.synthetic
             && self.pad_in_menu()
             && matches!(

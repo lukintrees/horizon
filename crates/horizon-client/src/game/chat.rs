@@ -1,5 +1,6 @@
 //! Chat, the command registries and the per-world state behind commands
 //! (game rules, the world clock, difficulty), bound to the game.
+use super::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     chat::{
@@ -30,10 +31,7 @@ pub(super) fn chat_tree(
         None => horizon_client::command::vanilla::game_dispatcher(),
     }
 }
-use winit::{
-    event::KeyEvent,
-    keyboard::{KeyCode, PhysicalKey},
-};
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `base` with the commands native mods own (`native_commands`) added: each a
 /// literal that takes the rest of the line as it was typed, run by
@@ -687,7 +685,7 @@ impl Game<'_> {
         self.refresh_dynamic_registries();
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1280, 720], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size);
         let m = Measure(&self.gui.atlas.font);
@@ -1001,7 +999,7 @@ impl Game<'_> {
     }
     pub(super) fn chat_scroll(&mut self, amount: f32) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
+        let height = self.renderer.modern_ref().map_or(720.0, |r| {
             HudBatch::new([r.config.width, r.config.height]).height
         });
         let _ = height;
@@ -1018,7 +1016,7 @@ impl Game<'_> {
     }
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
+        let height = self.renderer.modern_ref().map_or(720.0, |r| {
             HudBatch::new([r.config.width, r.config.height]).height
         });
         let m = Measure(&self.gui.atlas.font);
@@ -1027,7 +1025,7 @@ impl Game<'_> {
             registries: &self.ui.registries,
         };
         if self.ui.in_bed_chat && self.sleeping.is_some() {
-            let width = self.renderer.as_ref().map_or(1280.0, |r| {
+            let width = self.renderer.modern_ref().map_or(1280.0, |r| {
                 HudBatch::new([r.config.width, r.config.height]).width
             });
             let (x, y, w, h) = Self::leave_bed_button(width, height);
@@ -1487,20 +1485,34 @@ impl Game<'_> {
     }
     /// F2: ScreenShot.grab into `screenshots/` with vanilla's file name.
     pub(super) fn take_screenshot(&mut self) {
+        // The native menu profile rejects screenshots before filesystem work,
+        // just as startup rejects --screenshot-after. Do not silently create a
+        // directory and return for lack of a modern renderer.
+        if self.options.renderer.is_native() {
+            if let Err(error) = self.native_menu_only() {
+                self.error = Some(error);
+            }
+            return;
+        }
         let dir = horizon_client::logging::player_dir().join("screenshots");
         if std::fs::create_dir_all(&dir).is_err() {
             return;
         }
         let name = screenshot_name(&dir);
-        let Some(renderer) = self.renderer.as_mut() else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return;
         };
         let path = dir.join(name);
-        renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
-            path: path.clone(),
-            size: None,
-            scaled: true,
-        });
+        if let Err(error) = horizon_client::renderer_facade::RendererFacade::modern(renderer)
+            .request_screenshot(horizon_client::gfx::ScreenshotRequest {
+                path: path.clone(),
+                size: None,
+                scaled: true,
+            })
+        {
+            log::warn!("Horizon: cannot queue a screenshot: {error}");
+            return;
+        }
         self.ui.screenshot_message = Some(path);
     }
     /// `Minecraft.handleGlobalKeyPress`'s screenshot branch: the
