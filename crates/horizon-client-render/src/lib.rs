@@ -90,6 +90,9 @@ pub mod frame;
 // The legacy coordinator, its facade and the owning renderer slot (MVP-2).
 #[cfg(feature = "legacy-gl")]
 pub mod legacy_gfx;
+// The boot screen on a shared native context: the legacy route's loading HUD.
+#[cfg(feature = "legacy-gl")]
+pub mod native_loading;
 pub mod renderer_facade;
 pub mod renderer_owner;
 // The CPU bridges to `horizon-render-api` (also `gui_bridge`, `paged_hud` and

@@ -36,6 +36,7 @@ alloc-census = ["horizon-client/alloc-census"]
 alloc-count = ["horizon-client/alloc-count"]
 windows-mimalloc = ["horizon-client/windows-mimalloc"]
 windows-segment-heap = ["horizon-client/windows-segment-heap"]
+legacy-gl = ["horizon-client/legacy-gl"]
 
 [build-dependencies]
 winresource = "0.1"

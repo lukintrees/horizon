@@ -163,6 +163,10 @@ alloc-census = ["horizon-threads/alloc-census"]
 windows-mimalloc = []
 # Opt-in Windows heap experiment; see docs/windows-allocators.md.
 windows-segment-heap = []
+# The legacy desktop OpenGL 2.x backend (`--renderer native-gl2`), for GPUs without
+# Vulkan or D3D12. Not wgpu's GL API: a second, SDR-only renderer behind the same
+# CPU frame contract (docs/design/opengl2-win7-x86.md).
+legacy-gl = ["horizon-client-render/legacy-gl"]
 
 [[test]]
 name = "it"
