@@ -86,7 +86,10 @@ impl StagedAssetReload<'_, '_> {
             &mut self.replacement.screenshots,
             &mut self.active.screenshots,
         );
-        self.hud.font.reset_renderer_cache();
+        self.hud.font.reset_cache();
+        // The patches were laid out for the old atlas: drop them rather than
+        // replay them over the new renderer's freshly allocated glyph region.
+        drop(self.hud.font.take_patches());
         let old = std::mem::replace(self.active, self.replacement);
         drop(old);
         Ok(generation)
@@ -247,7 +250,7 @@ mod gpu_tests {
         mesh
     }
     fn batch(atlas: &HudAtlas) -> HudBatch {
-        let mut batch = HudBatch::new([64; 2]);
+        let mut batch = HudBatch::scratch([64; 2]);
         batch.rect_uv(0., 0., 16., 16., atlas.sprites["horizon/white"], u32::MAX);
         batch
     }

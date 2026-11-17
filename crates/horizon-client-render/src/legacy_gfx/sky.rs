@@ -285,7 +285,7 @@ mod tests {
     use crate::{hud::HudBatch, legacy_gfx::frame};
     #[test]
     fn sky_orders_shared_end_celestial_stars_and_dark_disc_with_distinct_fog_and_pose() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let mut f = frame::tests::source(&hud);
         f.skybox = true;
         f.end_sky = true;
@@ -341,7 +341,7 @@ mod tests {
     }
     #[test]
     fn sky_rejects_requested_invalid_metadata_and_counts_without_truncation() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         for case in 0..8 {
             let mut f = frame::tests::source(&hud);
             f.skybox = true;

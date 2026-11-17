@@ -569,7 +569,7 @@ mod gpu_tests {
             );
         }
         renderer.upload_section([0; 3], &mesh).unwrap();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.rect_uv(0., 0., 16., 16., rect, u32::MAX);
         let scene = SceneFrame {
             view_projection: IDENTITY,

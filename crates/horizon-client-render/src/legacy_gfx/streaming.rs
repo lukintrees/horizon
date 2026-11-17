@@ -288,7 +288,7 @@ mod gpu_tests {
     fn issued_jobs_survive_backpressure_not_unload_reload_or_world_change() {
         let assets = super::super::test_assets();
         let atlas = HudAtlas::boot();
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let red = mesh(0);
         let green = mesh(1);
         let charge = retained(&red).unwrap();
