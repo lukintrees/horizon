@@ -97,7 +97,7 @@ fn image(owner: &mut RendererOwner) -> Vec<u8> {
                 solid: &keys,
                 translucent: &[],
             },
-            &HudBatch::new([64; 2]),
+            &HudBatch::scratch([64; 2]),
         )
         .unwrap();
     renderer.read_rgba([0, 0, 64, 64]).unwrap()
@@ -111,14 +111,16 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
             .expect("normal prepared HORIZON_TEST_RESOURCES required"),
     );
     let assets = Arc::new(Assets::load(&root)?);
-    let render = Arc::new(assets.reload(&root)?);
+    let resource_root = horizon_assets::resource_source::ResourceRoot::directory(root.clone());
+    let render = Arc::new(assets.reload(&resource_root)?);
     let facts = BlockFacts::load(&root, assets.registry)?;
-    let biomes = Arc::new(Biomes::load(&root)?);
+    let biomes = Arc::new(Biomes::load(&resource_root)?);
     let tables = Arc::new(MeshTables::new(
         &assets,
         &render,
         &facts,
         crate::models::load_visibility(&root, assets.registry)?,
+        None,
     )?);
     let context = Arc::new(WorkerContext {
         light: Arc::new(LightTables::load(&root, assets.registry, &facts)?),
@@ -126,6 +128,8 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         assets: assets.clone(),
         render: render.clone(),
         biomes: biomes.clone(),
+        hidden_states: Arc::from([]),
+        part_tables: Default::default(),
     });
     // Existing generator is required by Streaming's generic worker state, but
     // remote=true prevents generation. No replacement mesher/scheduler exists.
@@ -205,7 +209,8 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
     // Do not collect another completion between dispatch and replacement.
     // Even a very fast worker still has its old snapshot in the real mailbox.
     let gone = [(0, 0)].into_iter().collect();
-    assert_eq!(stream.forget_columns(&mut world, &gone).len(), 1);
+    assert_eq!(Streaming::take_remote_columns(&mut world, &gone).len(), 1);
+    stream.forget_columns(&mut world, &gone);
     let mut replacement = Chunk::empty(0, 0);
     replacement.set(8, 0, 8, gold.0);
     stream.insert_remote(&mut world, replacement);
@@ -236,7 +241,8 @@ fn prepared_resources_real_mesher_rejects_inflight_replaced_columns() -> crate::
         "obsolete stone mesh won over the replacement gold block (requires distinct normal textures)"
     );
 
-    assert_eq!(stream.forget_columns(&mut world, &gone).len(), 1);
+    assert_eq!(Streaming::take_remote_columns(&mut world, &gone).len(), 1);
+    stream.forget_columns(&mut world, &gone);
     settle(
         &mut state,
         &mut owner,

@@ -328,7 +328,7 @@ mod gpu_tests {
             r#"{"frametime":1}"#,
         ));
         let atlas = HudAtlas::boot();
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let renderer = TerrainHudRenderer::stage_assets(
             horizon_legacy_render::Context::new("osmesa", [64; 2]).unwrap(),
             &assets,
@@ -464,7 +464,7 @@ mod gpu_tests {
             ),
             [0, 255, 0],
         );
-        let skin = crate::frame::SkinFrame::default();
+        let skin = crate::gfx::entity_skin::SkinFrame::default();
         source.skin = Some(&skin);
         assert!(
             owner
@@ -500,12 +500,14 @@ mod gpu_tests {
     #[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
     fn native_resident_order_draws_actual_frame_across_camera_unload_and_world_reset() {
         let mut assets = test_assets();
-        assets.pixels[3] = 128; // Red and green half-covered texels, not mesher material alpha.
-        assets.pixels[7] = 128;
-        assets.pixels.extend([0, 0, 255, 255]);
+        let mut pixels = (*assets.pixels.get()).clone();
+        pixels[3] = 128; // Red and green half-covered texels, not mesher material alpha.
+        pixels[7] = 128;
+        pixels.extend([0, 0, 255, 255]);
+        assets.pixels = crate::assets::SpritePixels::new(pixels);
         assets.texture_layers = 3;
         let atlas = HudAtlas::boot();
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let renderer = TerrainHudRenderer::stage_assets(
             horizon_legacy_render::Context::new("osmesa", [64; 2]).unwrap(),
             &assets,
