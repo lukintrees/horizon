@@ -54,6 +54,7 @@ impl Streaming {
     /// The settings the player's sections mesh with now.
     pub(super) fn mesh_settings(&self) -> MeshSettings {
         MeshSettings {
+            stamp: None,
             nether: self.nether_shading,
             shader_pack_lighting: self.shader_pack_lighting,
             separate_ao: self.separate_ao,
