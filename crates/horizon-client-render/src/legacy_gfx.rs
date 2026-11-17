@@ -347,6 +347,11 @@ impl TerrainHudRenderer {
     pub fn size(&self) -> [u32; 2] {
         self.world.backend().context().size()
     }
+    /// The native context's driver identity: what `horizon-ctl status` reports as
+    /// `status.legacy`, and the only honest proof a run is on GL2 at all.
+    pub fn identity(&self) -> &horizon_legacy_render::Identity {
+        self.world.backend().identity()
+    }
 
     /// Convert all CPU GUI data first, so missing glint assets/unsupported portal materials do
     /// not clear the previous world image. This does not silently hide entities:

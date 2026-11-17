@@ -100,6 +100,18 @@ pub struct Renderer<'a> {
     object_limits: [usize; 2],
     stats: Stats,
     max_texture: u32,
+    identity: std::rc::Rc<Identity>,
+}
+
+/// The driver's own words about the context, read once when it was qualified:
+/// what `horizon-ctl status` reports for `status.legacy` and what the crash
+/// report names, so neither has to re-enter GL to ask.
+#[derive(Clone, Debug, Default)]
+pub struct Identity {
+    pub vendor: String,
+    pub renderer: String,
+    pub version: String,
+    pub glsl: String,
 }
 static IDS: AtomicU64 = AtomicU64::new(1);
 fn reserved_capacity(free: Stats, reserve: Stats) -> Result<Stats, String> {
@@ -172,24 +184,41 @@ impl<'a> Renderer<'a> {
     pub fn context(&self) -> &Context {
         &self.gl.context
     }
+    /// The driver's own words about this context (`GL_VENDOR`, `GL_RENDERER`,
+    /// `GL_VERSION`, `GL_SHADING_LANGUAGE_VERSION`), read once at creation.
+    pub fn identity(&self) -> &Identity {
+        &self.identity
+    }
     fn from_context(context: ContextHandle<'a>, budget: Budget) -> Result<Self, String> {
         context.make_current()?;
         // Qualify GL1 identity before requesting GL2 function pointers.
         // SAFETY: fixed GL1 ABI and live current context; strings are borrowed until copied.
-        unsafe {
+        let identity = unsafe {
             let get = std::mem::transmute::<
                 *const c_void,
                 unsafe extern "system" fn(u32) -> *const u8,
             >(context.address(c"glGetString")?);
-            let (version, renderer) = (get(0x1F02), get(0x1F01));
+            let (version, renderer, vendor, glsl) =
+                (get(0x1F02), get(0x1F01), get(0x1F00), get(0x8B8C));
             if version.is_null() || renderer.is_null() {
                 return Err("null GL identity".into());
             }
-            Context::qualify(
-                &CStr::from_ptr(version.cast()).to_string_lossy(),
-                &CStr::from_ptr(renderer.cast()).to_string_lossy(),
-            )?;
-        }
+            let read = |p: *const u8| {
+                if p.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(p.cast()).to_string_lossy().into_owned()
+                }
+            };
+            let (version, renderer) = (read(version), read(renderer));
+            Context::qualify(&version, &renderer)?;
+            Identity {
+                vendor: read(vendor),
+                renderer,
+                version,
+                glsl: read(glsl),
+            }
+        };
         let gl = Gl::load(context)?;
         // SAFETY: valid GL2 integer queries with writable outputs.
         let (max_texture, attributes, units) = unsafe {
@@ -232,6 +261,7 @@ impl<'a> Renderer<'a> {
             object_limits: [4096, 65536],
             stats: Stats::default(),
             max_texture: max_texture as u32,
+            identity: std::rc::Rc::new(identity),
         };
         // SAFETY: live linked program, NUL-terminated names, scalar uniform writes.
         unsafe {

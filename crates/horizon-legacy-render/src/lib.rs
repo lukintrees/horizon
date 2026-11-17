@@ -16,7 +16,7 @@ pub use window::{MouseButton, WindowEvent, WindowEvents};
 mod wgl;
 #[cfg(any(windows, test))]
 mod wgl_address;
-pub use renderer::{Budget, Renderer, Stats};
+pub use renderer::{Budget, Identity, Renderer, Stats};
 use std::ffi::{CStr, c_void};
 
 trait ContextImpl {
