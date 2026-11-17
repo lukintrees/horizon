@@ -412,6 +412,7 @@ pub(crate) mod tests {
             skybox: false,
             end_sky: false,
             end_sky_sprite: None,
+            boss_world_fog: false,
             environment_fog: None,
             water_fog: [0.0; 3],
             fog: None,
@@ -419,6 +420,7 @@ pub(crate) mod tests {
             outline: Vec::new(),
             outline_after_terrain: false,
             outline_high_contrast: false,
+            pvp: Default::default(),
             debug_lines: &[],
             debug_lines_on_top: &[],
             debug_crosshair: &[],
@@ -431,6 +433,7 @@ pub(crate) mod tests {
             visible_static_block_entity_sections: &[],
             static_block_entity_stats: Default::default(),
             entity_motion: &[],
+            entity_motion_posed: &[],
             entity_spans: &[],
             skin: None,
             glowing: &[],
@@ -441,10 +444,12 @@ pub(crate) mod tests {
             lightning: Default::default(),
             additive: &[],
             see_through: &[],
+            world_primitives: Default::default(),
             shadow_only: &[],
             celestial: &[],
             stars: None,
             hand: &[],
+            hand_items: &[],
             hand_fov_degrees: 70.0,
             screen: &[],
             pack: Default::default(),
@@ -485,7 +490,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn actual_lightning_uses_shared_seed_geometry_offset_order_and_combined_limits() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let mut frame = source(&hud);
         frame.camera = DVec3::new(30_000_000., 0., 0.);
         let bolts = [
@@ -578,7 +583,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn game_matrices_preserve_xy_bob_spin_and_unreverse_depth() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let mut frame = source(&hud);
         frame.camera = DVec3::ZERO;
         frame.yaw = 37.;
@@ -625,7 +630,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn visible_static_vertices_keep_precision_order_and_combined_budget() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let mut frame = source(&hud);
         frame.camera = DVec3::new(29_999_999.75, 0., 0.);
         let snapshots = [
@@ -702,7 +707,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn actual_fog_overrides_fallbacks_and_shared_lightmap_is_uploaded_input() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let mut frame = source(&hud);
         frame.sky = Sky {
             fog_color: [0.25, 0.5, 0.75],
@@ -773,7 +778,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn rejects_requested_missing_passes_invalid_cameras_and_stale_hud() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let mut frame = source(&hud);
         frame.title = true;
         assert_eq!(

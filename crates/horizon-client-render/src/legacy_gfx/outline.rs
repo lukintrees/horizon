@@ -82,7 +82,7 @@ mod tests {
     use horizon_render_api::atlas::{SpriteSize, build_page, pack_atlas};
     #[test]
     fn actual_frame_accepts_block_edges_but_not_debug_passes_and_orders_contrast_layers() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let lines = [[0.; 8]];
         let mut source = frame::tests::source(&hud);
         source.camera = glam::DVec3::ZERO;
@@ -129,7 +129,7 @@ mod tests {
     #[ignore = "requires OSMesa and explicit GL2 overrides; real Frame adapter, not a Game launch"]
     fn actual_frame_outline_draws_both_modes_without_leaks_and_rejects_before_clear() {
         let atlas = HudAtlas::boot();
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let layout = pack_atlas(
             &[SpriteSize {
                 width: 1,

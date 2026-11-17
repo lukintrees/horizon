@@ -981,7 +981,7 @@ mod tests {
     fn bridge_actual_sky_matches_disc_fog_then_sunrise_celestial_stars_end_and_world_depth() {
         use crate::mesher::Vertex;
         let atlas = HudAtlas::boot();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.fill(&atlas, 0., 0., 1., 1., u32::MAX);
         let uv = hud.vertices[0].uv;
         hud.vertices.clear();
@@ -1032,10 +1032,7 @@ mod tests {
         // Independent terrain.wgsl analytic octagon/ray reference, not the fan builder.
         for y in [3, 17, 32, 48, 60] {
             for x in [3, 17, 32, 48, 60] {
-                let (nx, ny) = (
-                    (f64::from(x) + 0.5) / 32. - 1.,
-                    (f64::from(y) + 0.5) / 32. - 1.,
-                );
+                let (nx, ny) = ((x as f64 + 0.5) / 32. - 1., (y as f64 + 0.5) / 32. - 1.);
                 let c = std::f64::consts::FRAC_1_SQRT_2;
                 let (dx, dy, dz) = (-nx, (ny + 1.) * c, (1. - ny) * c);
                 let (px, pz) = (dx * 16. / dy, dz * 16. / dy);
@@ -1199,7 +1196,7 @@ mod tests {
         assert!(small.render_game_frame(&f, empty, options).is_err());
         assert_eq!(small.read_rgba([0, 0, 64, 64]).unwrap(), saved); // sunrise needs 2208 bytes
         renderer.resize([512; 2]).unwrap();
-        let star_hud = HudBatch::new([512; 2]);
+        let star_hud = HudBatch::scratch([512; 2]);
         let mut stars = frame::tests::source(&star_hud);
         stars.skybox = true;
         stars.pitch = -45.;
@@ -1286,7 +1283,7 @@ mod tests {
             limits,
         )
         .unwrap();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.quad(
             [[24., 24.], [40., 24.], [40., 40.], [24., 40.]],
             [[6.5 / 8., 0.5 / 4.]; 4],
@@ -1432,15 +1429,14 @@ mod tests {
         .unwrap();
         near(&mut renderer, [0, 16], [0, 0, 255]); // hand follows weather too
         let overlay = ScreenQuad {
-            vertices: [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]].map(|pos| ScreenVertex {
-                pos,
+            vertices: [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]].map(|[x, y]| ScreenVertex {
+                pos: [x, y, 0., 1.],
                 uv: [0.5; 2],
                 rect: [6. / 8., 0., 7. / 8., 1. / 4.],
                 color: [0., 0., 0., 0.5],
             }),
             blend: Blend::Alpha,
             sampling: 0,
-            world_tint: false,
         };
         draw(
             &mut renderer,
@@ -1556,7 +1552,7 @@ mod tests {
     fn bridge_actual_lightning_and_additive_precede_translucency_and_preserve_ray_depth() {
         use crate::{gfx::lightning, mesher::Vertex};
         let atlas = HudAtlas::boot();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.fill(&atlas, 0., 0., 1., 1., u32::MAX);
         let white_uv = hud.vertices[0].uv;
         hud.vertices.clear();
@@ -1814,7 +1810,7 @@ mod tests {
             },
         )
         .unwrap();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.quad(
             [[24., 24.], [40., 24.], [40., 40.], [24., 40.]],
             [[4.5 / 6., 0.5]; 4],
@@ -1824,25 +1820,23 @@ mod tests {
         let uv = [[-0.25, 0.], [3.75, 0.], [3.75, 1.], [-0.25, 1.]];
         let overlay = ScreenQuad {
             vertices: std::array::from_fn(|i| ScreenVertex {
-                pos: full[i],
+                pos: [full[i][0], full[i][1], 0., 1.],
                 uv: uv[i],
                 rect: [1. / 6., 0., 3. / 6., 1.],
                 color: [1.; 4],
             }),
             blend: Blend::Alpha,
             sampling: 0,
-            world_tint: true,
         };
         let vignette = ScreenQuad {
             vertices: std::array::from_fn(|i| ScreenVertex {
-                pos: full[i],
+                pos: [full[i][0], full[i][1], 0., 1.],
                 uv: uv[i],
                 rect: [4. / 6., 0., 1., 1.],
                 color: [0.5, 0.25, 0.75, 0.],
             }),
             blend: Blend::Vignette,
             sampling: 0,
-            world_tint: false,
         };
         // A blue hand covers the entire view; overlays must draw AFTER it.
         let hand = full.map(|p| Vertex {
@@ -1986,7 +1980,7 @@ mod tests {
         );
         let key = [1_875_000, 0, 0];
         renderer.upload_section(key, &mesh).unwrap();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.fill(&atlas, 6., 6., 8., 8., 0xff306010);
         let white_uv = hud.vertices[0].uv;
         let quad = |extent, z, color| {
@@ -2117,7 +2111,7 @@ mod tests {
                 .map(|p| TerrainVertex::new(p, [0.5; 2], 0x8000, u32::MAX, 0xf0f0)),
         );
         renderer.upload_section([0; 3], &mesh).unwrap();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.fill(&atlas, 16., 16., 32., 32., u32::MAX);
         hud.invert_since(0);
         let frame = SceneFrame {
@@ -2193,7 +2187,7 @@ mod tests {
             limits,
         )
         .unwrap();
-        let mut batch = HudBatch::new([64; 2]);
+        let mut batch = HudBatch::scratch([64; 2]);
         let (u0, u1) = (509. / atlas.width as f32, 511. / atlas.width as f32);
         batch.quad(
             [[0., 0.], [64., 0.], [64., 64.], [0., 64.]],
@@ -2292,7 +2286,7 @@ mod tests {
             solid: &[[0; 3]],
             translucent: &[],
         };
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         renderer.render(&frame, &hud).unwrap();
         frame.solid = &[];
         frame.clear = [1., 0., 0., 1.];
@@ -2315,7 +2309,7 @@ mod tests {
         });
         assert!(
             renderer
-                .render_with_entities(&frame, &HudBatch::new([64; 2]), &entity, false)
+                .render_with_entities(&frame, &HudBatch::scratch([64; 2]), &entity, false)
                 .is_err()
         );
         assert_eq!(
@@ -2389,7 +2383,7 @@ mod tests {
             })
         };
         let entities = [quad(0.1, 0.2, 32), quad(0.5, 0.1, 15)].concat();
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.quad(
             [[0., 0.], [8., 0.], [8., 8.], [0., 8.]],
             [[0.9, 0.5]; 4],
@@ -2457,7 +2451,12 @@ mod tests {
         assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), before);
         renderer.update_lightmap(&[0; 1024]).unwrap();
         renderer
-            .render_with_entities(&frame, &HudBatch::new([64; 2]), &quad(0.1, -0.5, 0), false)
+            .render_with_entities(
+                &frame,
+                &HudBatch::scratch([64; 2]),
+                &quad(0.1, -0.5, 0),
+                false,
+            )
             .unwrap();
         near(&renderer.read_rgba([32, 32, 1, 1]).unwrap(), [0; 3]);
     }
@@ -2541,7 +2540,7 @@ mod tests {
         // shadow. Sorting by texture or preserving these phase tags verbatim
         // would hide the item or miss its faint shadow beneath the water.
         let vertices = [mask, item, shadow].concat();
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         renderer
             .render_with_entities(&frame, &hud, &vertices, false)
             .unwrap();
@@ -2698,7 +2697,7 @@ mod tests {
             solid: &[],
             translucent: &[],
         };
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let quad = |layer| {
             [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]].map(|pos| Vertex {
                 pos,
@@ -2775,7 +2774,7 @@ mod tests {
             assert_eq!(renderer.read_rgba([32, 32, 1, 1]).unwrap(), stable);
         }
         // A half-transparent base becomes opaque with full glint strength.
-        let mut patched = HudBatch::new([64; 2]);
+        let mut patched = HudBatch::scratch([64; 2]);
         patched.patches.push(crate::font::Patch {
             x: 0,
             y: 0,
@@ -2890,7 +2889,7 @@ mod tests {
             translucent: &[],
         };
         let p = [[2., 2.], [62., 2.], [62., 62.], [2., 62.]];
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         hud.glint_alpha = 0.5;
         hud.quad(p, [[4.5 / 6., 0.5]; 4], 0xff302010);
         renderer.render(&frame, &hud).unwrap();
@@ -3046,7 +3045,7 @@ mod tests {
             let events = renderer.poll_events().unwrap();
             assert!(events.events.is_empty());
             assert!(!events.close_requested);
-            let mut hud = HudBatch::new(size);
+            let mut hud = HudBatch::scratch(size);
             hud.glint_alpha = 1.;
             let p = [
                 [2., 2.],

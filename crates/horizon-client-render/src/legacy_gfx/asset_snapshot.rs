@@ -7,7 +7,7 @@ use horizon_render_api::{
     render_contract::ResourceGeneration,
     resource_contract::{Resources, TextureLayers, image_bytes},
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 /// Cooperative startup boundaries, not a hard driver-call latency guarantee.
 /// Terrain counters describe completed pages; other phases may allocate/decode
@@ -27,6 +27,9 @@ pub enum StagePoint {
 pub struct AssetSnapshot<'a> {
     assets: &'a RenderAssets,
     hud: &'a HudAtlas,
+    /// The terrain layers' pixels as the producer holds them: shared with
+    /// `RenderAssets` rather than copied (`SpritePixels::get`).
+    terrain: Arc<Vec<u8>>,
     pixels: Cow<'a, [u8]>,
     generation: ResourceGeneration,
 }
@@ -42,17 +45,31 @@ impl<'a> AssetSnapshot<'a> {
         generation: ResourceGeneration,
         max_bytes: usize,
     ) -> Result<Self, String> {
-        if hud.text_shader.is_some() || hud.lines_shader.is_some() {
+        if hud.text_shaders.gui.is_some() || hud.lines_shader.is_some() {
             return Err(
                 "legacy asset snapshot does not support custom core text/line shaders".into(),
             );
         }
-        let terrain = TextureLayers {
+        // Bound the uncompressed length before `get` possibly expands a packed
+        // store, then let `TextureLayers` re-check the returned bytes.
+        let terrain_bytes = (assets.sprite_size as usize)
+            .checked_mul(assets.sprite_size as usize)
+            .and_then(|n| n.checked_mul(assets.texture_layers as usize))
+            .and_then(|n| n.checked_mul(4))
+            .ok_or("asset terrain pixel size overflow")?;
+        if assets.pixels.len() != terrain_bytes {
+            return Err("invalid terrain pixel length".into());
+        }
+        // The producer's shared pixel store: `get` hands back the same `Arc`
+        // while it is uncompressed, so the layers stay borrowed, not copied.
+        let terrain = assets.pixels.get();
+        TextureLayers {
             size: assets.sprite_size,
             layers: assets.texture_layers,
-            rgba: &assets.pixels,
-        };
-        let terrain_bytes = terrain.validate().map_err(super::diagnostic)?;
+            rgba: &terrain,
+        }
+        .validate()
+        .map_err(super::diagnostic)?;
         let hud_bytes = image_bytes(hud.width, hud.height).map_err(super::diagnostic)?;
         let mut total = terrain_bytes
             .checked_add(hud_bytes)
@@ -69,10 +86,14 @@ impl<'a> AssetSnapshot<'a> {
         if total > max_bytes {
             return Err("asset base pixel budget exceeded".into());
         }
-        let pixels = hud.checked_pixels(hud_bytes)?;
+        let pixels = hud.pixels();
+        if pixels.len() != hud_bytes {
+            return Err("invalid HUD pixel length".into());
+        }
         Ok(Self {
             assets,
             hud,
+            terrain,
             pixels,
             generation,
         })
@@ -91,7 +112,7 @@ impl<'a> AssetSnapshot<'a> {
             terrain: TextureLayers {
                 size: self.assets.sprite_size,
                 layers: self.assets.texture_layers,
-                rgba: &self.assets.pixels,
+                rgba: &self.terrain,
             },
             hud: Image {
                 width: self.hud.width,
@@ -155,7 +176,10 @@ impl StagedAssetRenderer<'_> {
         if self.hud.font.epoch() != self.font_epoch {
             return Err("font changed during native asset staging; rebuild the snapshot".into());
         }
-        self.hud.font.reset_renderer_cache();
+        self.hud.font.reset_cache();
+        // The patches were laid out for the old atlas: drop them rather than
+        // replay them over the new renderer's freshly allocated glyph region.
+        drop(self.hud.font.take_patches());
         Ok(self.renderer)
     }
 }
@@ -231,7 +255,7 @@ pub(crate) mod tests {
         RenderAssets {
             sprite_size: 1,
             sprite_minimum_size: 1,
-            pixels: vec![255, 0, 0, 255, 0, 255, 0, 255],
+            pixels: crate::assets::SpritePixels::new(vec![255, 0, 0, 255, 0, 255, 0, 255]),
             texture_layers: 2,
             model_catalog: Default::default(),
             model_library: Err("synthetic snapshot fixture".into()),
@@ -247,6 +271,8 @@ pub(crate) mod tests {
             pbr_size: 0,
             connected: Default::default(),
             fusion: Default::default(),
+            mod_animations: Default::default(),
+            mod_pipelines: Default::default(),
             generation: 23,
         }
     }
@@ -265,8 +291,8 @@ pub(crate) mod tests {
             assert_eq!(bundle.generation, ResourceGeneration(77));
             assert_eq!(snapshot.asset_generation(), 23);
             assert_eq!(snapshot.hud_revision(), hud.revision);
-            assert_eq!(bundle.terrain.rgba.as_ptr(), assets.pixels.as_ptr());
-            assert_eq!(bundle.hud.rgba.as_ptr(), hud.pixels.as_ptr());
+            assert_eq!(bundle.terrain.rgba.as_ptr(), assets.pixels.get().as_ptr());
+            assert_eq!(bundle.hud.rgba.as_ptr(), hud.pixels().as_ptr());
             assert_eq!(bundle.item_glint.rgba.as_ptr(), hud.glint.0.as_ptr());
             assert_eq!(snapshot.animation_counts(), [0, 0]);
             assert!(AssetSnapshot::new(&assets, &hud, ResourceGeneration(77), bytes - 1).is_err());
@@ -284,7 +310,9 @@ pub(crate) mod tests {
         assert_ne!(replacement.hud_revision(), hud.revision);
         drop(replacement);
         let mut bad_assets = assets;
-        bad_assets.pixels.pop();
+        let mut short = Vec::clone(&bad_assets.pixels.get());
+        short.pop();
+        bad_assets.pixels = crate::assets::SpritePixels::new(short);
         assert!(AssetSnapshot::new(&bad_assets, &hud, ResourceGeneration(78), usize::MAX).is_err());
     }
 }

@@ -115,7 +115,7 @@ fn actual_frame_cracks_multiply_cutout_order_and_reclaim_without_clearing_on_fai
             }
         })
         .collect();
-    let hud = HudBatch::new([64; 2]);
+    let hud = HudBatch::scratch([64; 2]);
     let layout = pack_atlas(
         &[SpriteSize {
             width: 1,

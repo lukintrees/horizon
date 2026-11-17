@@ -209,14 +209,13 @@ mod tests {
     fn quad(rect: [f32; 4]) -> ScreenQuad {
         ScreenQuad {
             vertices: [ScreenVertex {
-                pos: [0.; 2],
+                pos: [0.; 4],
                 uv: [4., -2.],
                 rect,
                 color: [1.; 4],
             }; 4],
             blend: source::Blend::Alpha,
             sampling: source::SAMPLE_BLUR,
-            world_tint: true,
         }
     }
     #[test]
