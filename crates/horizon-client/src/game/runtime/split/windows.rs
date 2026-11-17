@@ -573,7 +573,7 @@ impl<'a> Split<'a> {
                     // The new surface configures itself on the players' device, and that
                     // wait breaks on a frame submitted meanwhile: drain every queue first.
                     self.wait_queues();
-                    let renderer = self.host.renderer.as_ref().ok_or("no renderer")?;
+                    let renderer = self.host.renderer.modern_ref().ok_or("no renderer")?;
                     Ok::<_, Box<dyn std::error::Error>>((w.clone(), renderer.compositor(w)?))
                 });
             if let (Ok((window, _)), Some((at, size))) = (&made, cover) {

@@ -347,13 +347,13 @@ impl Game<'_> {
             self.native_shaders.select(&picked);
             self.set_translucent_layers(Vec::new());
             self.pack_ids = None;
-            if let Some(renderer) = &mut self.renderer {
+            if let Some(renderer) = self.renderer.modern_mut() {
                 renderer.drop_shader_packs();
             }
         }
         // A pack whose pipelines were building runs once they are built, or is turned off.
         if let Some((dimension, name, started, report)) =
-            self.renderer.as_mut().and_then(|r| r.poll_shader_pack())
+            self.renderer.modern_mut().and_then(|r| r.poll_shader_pack())
         {
             match report {
                 Ok(Some((programs, notes))) => {
@@ -398,7 +398,7 @@ impl Game<'_> {
         {
             // One of Horizon's own packs (game/modding/native_shaders.rs).
             self.tick_native_shader_pack(&path);
-        } else if let Some(renderer) = &mut self.renderer
+        } else if let Some(renderer) = self.renderer.modern_mut()
             && renderer.shader_pack_dimension() != Some(dimension)
             && !refused(&path, fingerprint(&path))
         {
@@ -643,7 +643,7 @@ impl Game<'_> {
             .is_some_and(|ids| ids.blocks.has_block_tags())
         {
             self.pack_ids = None;
-            if let Some(renderer) = &mut self.renderer {
+            if let Some(renderer) = self.renderer.modern_mut() {
                 renderer.drop_shader_packs();
             }
         }
@@ -652,7 +652,7 @@ impl Game<'_> {
     /// The Shader Options page opened: the picked pack's options, screens and names.
     pub(super) fn open_shader_options(&mut self) {
         let mut macros = Macros::standard();
-        if let Some(renderer) = &self.renderer {
+        if let Some(renderer) = self.renderer.modern_ref() {
             renderer.define_pack_macros(&mut macros);
         }
         let name = &self.settings.horizon.shader_pack;
@@ -666,7 +666,7 @@ impl Game<'_> {
         };
         write_shader_options(&options);
         self.pack_ids = None;
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.drop_shader_packs();
         }
     }
@@ -679,7 +679,7 @@ impl Game<'_> {
         remember(&path, fingerprint(&path), false);
         log::error!("shader pack {name}: turned off: {error}");
         self.pack_ids = None;
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             // Marks this dimension as loaded, without a pack, so it is not tried again (without
             // a pack this can't fail).
             let _ = renderer.set_shader_pack(dimension, None, &[]);

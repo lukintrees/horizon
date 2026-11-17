@@ -92,14 +92,14 @@ impl EntityCullDecision {
 impl Game<'_> {
     pub(super) fn prepare_entity_culling(&mut self, camera: glam::DVec3) {
         // The ray scene's entity layer reads the stream's vertices: GPU-posed models have none.
-        let reach = self.renderer.as_ref().filter(|_| !self.skinning());
+        let reach = self.renderer.modern_ref().filter(|_| !self.skinning());
         self.native_shaders.ray_reach = reach.and_then(|r| r.ray_entity_reach(camera));
         self.native_shaders.ray_only.get_mut().clear();
         self.native_shaders.ray_runs.get_mut().clear();
         // The mods' render hooks: whether any listens this frame, and no entity canceled yet.
         super::native_mob_draw::begin_entity_frame();
         // Spans tell the pack's passes which entities are hidden; without them, nothing changes.
-        self.pack_shadow_casters = match (&self.renderer, &self.pack_ids) {
+        self.pack_shadow_casters = match (self.renderer.modern_ref(), &self.pack_ids) {
             (Some(r), Some(_)) => r.pack_shadow_casters(),
             // A native pack's shadow pass has no spans to hide entities with: it only needs
             // the first-person model.
@@ -217,7 +217,7 @@ impl Game<'_> {
                         Some((true, Some(proof)))
                             if culler.proof_is_current(
                                 &self.world,
-                                self.renderer.as_ref(),
+                                self.renderer.modern_ref(),
                                 &self.streaming,
                                 &self.pending_uploads,
                                 proof,
@@ -243,7 +243,7 @@ impl Game<'_> {
             let mut occluder = SyncOccluder::new(
                 &self.world,
                 self.res.facts(),
-                self.renderer.as_ref(),
+                self.renderer.modern_ref(),
                 &self.streaming,
                 &self.pending_uploads,
             );
@@ -318,7 +318,7 @@ impl Game<'_> {
                     Some((true, Some(proof)))
                         if culler.proof_is_current(
                             &self.world,
-                            self.renderer.as_ref(),
+                            self.renderer.modern_ref(),
                             &self.streaming,
                             &self.pending_uploads,
                             proof,
@@ -344,7 +344,7 @@ impl Game<'_> {
         {
             return false;
         }
-        let Some(renderer) = &self.renderer else {
+        let Some(renderer) = self.renderer.modern_ref() else {
             return false;
         };
         let Some(camera_section) = self.entity_section_camera else {
@@ -410,7 +410,7 @@ impl Game<'_> {
                         Some((true, Some(proof)))
                             if culler.proof_is_current(
                                 &self.world,
-                                self.renderer.as_ref(),
+                                self.renderer.modern_ref(),
                                 &self.streaming,
                                 &self.pending_uploads,
                                 proof,
@@ -440,7 +440,7 @@ impl Game<'_> {
             let mut occluder = SyncOccluder::new(
                 &self.world,
                 self.res.facts(),
-                self.renderer.as_ref(),
+                self.renderer.modern_ref(),
                 &self.streaming,
                 &self.pending_uploads,
             );

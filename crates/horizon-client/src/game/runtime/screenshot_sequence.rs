@@ -98,7 +98,7 @@ impl Game<'_> {
     fn sequence_scene(&mut self) -> Result<String> {
         let view = self.camera_view(1.0).ok_or("no camera")?;
         let (position, yaw, pitch) = self.native_camera_pose_now(1.0, view);
-        let renderer = self.renderer.as_ref().ok_or("no renderer")?;
+        let renderer = self.renderer.modern_ref().ok_or("no renderer")?;
         Ok(format!(
             "{:?}",
             (
@@ -137,7 +137,7 @@ impl Game<'_> {
         if self.screenshot_sequence.is_some() {
             return Err("a screenshot sequence is already running".into());
         }
-        let renderer = self.renderer.as_ref().ok_or("no renderer yet")?;
+        let renderer = self.renderer.modern_ref().ok_or("no renderer yet")?;
         if self.pending_screenshot.is_some() || renderer.screenshot.is_some() {
             return Err("a screenshot is already pending".into());
         }
@@ -150,7 +150,7 @@ impl Game<'_> {
             return Err("the shader pack isn't running (still loading, or it failed)".into());
         }
         let scene = self.sequence_scene()?;
-        let renderer = self.renderer.as_mut().ok_or("no renderer yet")?;
+        let renderer = self.renderer.modern_mut().ok_or("no renderer yet")?;
         renderer.reset_shader_pack_history();
         self.screenshot_sequence = Some(Sequence {
             frames,
@@ -188,7 +188,7 @@ impl Game<'_> {
         let Some(sequence) = self.screenshot_sequence.take() else {
             return;
         };
-        if let Some(renderer) = &mut self.renderer
+        if let Some(renderer) = self.renderer.modern_mut()
             && renderer
                 .screenshot
                 .as_ref()
@@ -225,7 +225,7 @@ impl Game<'_> {
                 return self.render_frame();
             }
         }
-        if last && let Some(renderer) = &mut self.renderer {
+        if last && let Some(renderer) = self.renderer.modern_mut() {
             renderer.screenshot = Some(ScreenshotRequest {
                 path,
                 size: None,
@@ -235,7 +235,7 @@ impl Game<'_> {
             renderer.screenshot_result = None;
         }
         let drawn = self.render_frame();
-        let renderer = self.renderer.as_mut().ok_or("no renderer")?;
+        let renderer = self.renderer.modern_mut().ok_or("no renderer")?;
         // Still queued when the frame wasn't drawn, or when the PNG is to be taken
         // again smaller (out of memory): not this sequence's frame.
         let queued = last && renderer.screenshot.take().is_some();

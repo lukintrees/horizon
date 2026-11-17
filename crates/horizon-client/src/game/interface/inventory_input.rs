@@ -22,7 +22,7 @@ impl Game<'_> {
         };
         let Some(size) = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
         else {
             return false;
@@ -50,7 +50,7 @@ impl Game<'_> {
         use horizon_client::menu::Input;
         let Some(size) = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
         else {
             return false;
@@ -89,7 +89,7 @@ impl Game<'_> {
             && !self.dialog_open();
         let Some(size) = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
         else {
             return;
@@ -269,7 +269,7 @@ impl Game<'_> {
         let Some((ty, slots)) = self.inv_drag.clone() else {
             return;
         };
-        let Some(r) = self.renderer.as_ref() else {
+        let Some(r) = self.renderer.modern_ref() else {
             return;
         };
         let batch = HudBatch::new(
@@ -300,7 +300,7 @@ impl Game<'_> {
     }
     /// The hovered slot and whether the cursor is outside the window.
     pub(super) fn inventory_target(&self) -> (Option<usize>, bool) {
-        let Some(r) = self.renderer.as_ref() else {
+        let Some(r) = self.renderer.modern_ref() else {
             return (None, false);
         };
         let batch = HudBatch::new(

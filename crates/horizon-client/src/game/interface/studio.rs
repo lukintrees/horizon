@@ -89,7 +89,7 @@ impl Game<'_> {
         // What `native_mod_screen_open` refuses over the world: the Studio
         // screen would be up with no hook to draw or click it.
         let blocked = self.title.is_some()
-            || self.renderer.is_none()
+            || !self.renderer.has_modern()
             || self.lan_acting.is_some()
             || self.player.is_none()
             || self.screen_over_playing()
@@ -603,7 +603,7 @@ impl Game<'_> {
         if (self.studio.freecam.active || self.replay.driver.is_some())
             && button == winit::event::MouseButton::Right
         {
-            if let Some(renderer) = &self.renderer {
+            if let Some(renderer) = self.renderer.modern_ref() {
                 let batch = super::HudBatch::new(
                     [renderer.config.width, renderer.config.height],
                     self.settings.gui_scale_inputs(),
@@ -646,7 +646,7 @@ impl Game<'_> {
         {
             let size = self
                 .renderer
-                .as_ref()
+                .modern_ref()
                 .map(|renderer| [renderer.config.width, renderer.config.height])
                 .unwrap_or([1, 1]);
             let batch = super::HudBatch::new(size, self.settings.gui_scale_inputs());

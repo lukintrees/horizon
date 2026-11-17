@@ -36,7 +36,7 @@ impl Game<'_> {
         let framebuffer = self
             .window
             .as_ref()
-            .and(self.renderer.as_ref())
+            .and(self.renderer.modern_ref())
             .map(|r| [r.config.width, r.config.height]);
         resolved_gui_scale(
             framebuffer,

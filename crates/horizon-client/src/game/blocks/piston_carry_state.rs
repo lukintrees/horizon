@@ -101,7 +101,7 @@ impl Game<'_> {
                     for at in [from, to] {
                         let p = [at.0, at.1, at.2];
                         self.be_anims.remove_position(p);
-                        if let Some(renderer) = self.renderer.as_mut() {
+                        if let Some(renderer) = self.renderer.modern_mut() {
                             renderer.invalidate_block_entity_position(p);
                         }
                         self.be_anims.present_revision = None;

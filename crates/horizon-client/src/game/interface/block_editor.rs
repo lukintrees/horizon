@@ -441,7 +441,7 @@ impl Game<'_> {
     pub(super) fn block_editor_click(&mut self) {
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1, 1], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let cursor = self.cursor;
@@ -543,7 +543,7 @@ impl Game<'_> {
         let types_text = self.types_text();
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1, 1], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         match key {

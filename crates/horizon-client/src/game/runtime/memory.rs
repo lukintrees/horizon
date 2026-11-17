@@ -568,7 +568,7 @@ impl Game<'_> {
                 bytes,
             }
         });
-        let renderer = self.renderer.as_ref().map(|r| {
+        let renderer = self.renderer.modern_ref().map(|r| {
             let [arenas, vertices] = r.section_vertex_bytes();
             let cpu = r.cpu_census();
             let cpu_bytes: usize = cpu.iter().map(|(_, v)| *v).sum();

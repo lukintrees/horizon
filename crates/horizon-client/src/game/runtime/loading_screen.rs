@@ -399,7 +399,7 @@ impl Loading {
         };
         drop(game_step);
         let game_ms = game_at.elapsed().as_millis();
-        game.renderer = Some(renderer);
+        game.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(renderer);
         game.resize_state = Some(game.resize_state_of(window.inner_size()));
         game.window = Some(window);
         game.world_renderer_ready = true;

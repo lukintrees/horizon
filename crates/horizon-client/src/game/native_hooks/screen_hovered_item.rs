@@ -9,7 +9,7 @@ impl Game<'_> {
     pub(in crate::game) fn screen_hovered_item(&self) -> Option<mod_api::ItemKey> {
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])?;
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
         let slot = self.slot_at(&batch, self.cursor.0, self.cursor.1)?;

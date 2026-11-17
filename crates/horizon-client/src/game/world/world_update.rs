@@ -16,13 +16,13 @@ impl Game<'_> {
         self.lod_blue_map = None;
         self.far_beacons.clear();
         self.lod_covered_at = None;
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.clear_lods();
         }
     }
     pub(super) fn prepare_lod(&mut self) {
         let enabled = self.far_terrain_choice().0 > 0
-            && self.renderer.is_some()
+            && self.renderer.has_modern()
             && self.player.is_some()
             && self.title.is_none();
         if !enabled {
@@ -151,7 +151,7 @@ impl Game<'_> {
         // or went) and dropped every section and far tile: meshed again, as for a new one.
         if self
             .renderer
-            .as_mut()
+            .modern_mut()
             .is_some_and(Renderer::take_dropped_sections)
         {
             self.clear_lod();
@@ -190,7 +190,7 @@ impl Game<'_> {
         // A headless game has nothing to draw sections with: like a server's, they aren't
         // meshed while it has no renderer.
         if self.options.headless {
-            self.streaming.mesh = self.renderer.is_some();
+            self.streaming.mesh = self.renderer.has_modern();
         }
         let areas = self.streaming.extra.len();
         let waiting = std::mem::take(&mut self.spawn_wait);
@@ -315,7 +315,7 @@ impl Game<'_> {
             self.view_arrival.arriving(view, now, has) || self.remote_backlog() > 0
         };
         // Which far tiles a zoom magnifies (`lod::ZoomAim`), read before
-        // `self.renderer.as_mut()` below borrows self mutably for the rest of
+        // `self.renderer.modern_mut()` below borrows self mutably for the rest of
         // this function. Cheap: trigonometry on one angle, or None when the
         // view is not zoomed.
         let lod_aim = self
@@ -323,7 +323,7 @@ impl Game<'_> {
             .as_ref()
             .map(|p| [p.position.x, p.position.y, p.position.z])
             .and_then(|camera| self.lod_aim(camera));
-        if let Some(renderer) = self.renderer.as_mut() {
+        if let Some(renderer) = self.renderer.modern_mut() {
             let g = &self.settings.horizon;
             let budgeted = g.chunk_updates > 0 || g.upload_budget_kib > 0;
             // The meshes, once copied, are freed by a worker (`Streaming::free`).

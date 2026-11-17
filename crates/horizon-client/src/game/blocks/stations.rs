@@ -1120,7 +1120,7 @@ impl Game<'_> {
         }
         let Some(size) = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
         else {
             return true;
@@ -1275,7 +1275,7 @@ impl Game<'_> {
         self.merchant_drag();
         let Some(size) = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| [r.config.width, r.config.height])
         else {
             return;

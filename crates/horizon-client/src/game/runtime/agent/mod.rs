@@ -1053,7 +1053,7 @@ impl Game<'_> {
         let id = self.window.as_ref().ok_or("no window yet")?.id();
         let scale = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| {
                 horizon_client::hud::HudBatch::new(
                     [r.config.width, r.config.height],
@@ -1653,7 +1653,7 @@ impl Game<'_> {
                 let id = self.window.as_ref().ok_or("no window yet")?.id();
                 let scale = self
                     .renderer
-                    .as_ref()
+                    .modern_ref()
                     .map(|r| {
                         horizon_client::hud::HudBatch::new(
                             [r.config.width, r.config.height],
