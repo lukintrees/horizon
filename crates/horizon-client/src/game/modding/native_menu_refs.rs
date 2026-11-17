@@ -90,7 +90,7 @@ impl Game<'_> {
             return None;
         }
         let name = self.native_client_menu_name(menu)?;
-        let renderer = self.renderer.as_ref()?;
+        let renderer = self.renderer.modern_ref()?;
         let batch = super::HudBatch::new(
             [renderer.config.width, renderer.config.height],
             self.settings.gui_scale_inputs(),

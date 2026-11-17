@@ -360,7 +360,7 @@ impl<'a> Split<'a> {
     #[inline(never)]
     fn enable(&mut self) -> Result<()> {
         let window = self.host.window.clone().ok_or("no window")?;
-        let mut old = self.host.renderer.take().ok_or("no renderer")?;
+        let mut old = self.host.renderer.take_modern().ok_or("no renderer")?;
         old.release_surface();
         let api = self.host.settings.horizon.api;
         let batching = self.host.settings.horizon.translucent_batching;
@@ -387,7 +387,7 @@ impl<'a> Split<'a> {
             Ok(r) => r,
             Err(e) => {
                 old.recreate_surface()?;
-                self.host.renderer = Some(old);
+                self.host.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(old);
                 return Err(e);
             }
         };
@@ -397,11 +397,11 @@ impl<'a> Split<'a> {
             Err(e) => {
                 drop(renderer);
                 old.recreate_surface()?;
-                self.host.renderer = Some(old);
+                self.host.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(old);
                 return Err(e);
             }
         };
-        self.host.renderer = Some(renderer);
+        self.host.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(renderer);
         self.host.forget_atlas_slots();
         self.host.split_window = !self.offscreen;
         self.host.options.offscreen = true;
@@ -445,7 +445,7 @@ impl<'a> Split<'a> {
         window.set_visible(windows::window_shown(true, self.offscreen));
         self.window1_shown = true;
         self.host.window = Some(window.clone());
-        let old = self.host.renderer.take().ok_or("no renderer")?;
+        let old = self.host.renderer.take_modern().ok_or("no renderer")?;
         old.take_back(main.compositor);
         let api = self.host.settings.horizon.api;
         let batching = self.host.settings.horizon.translucent_batching;
@@ -474,12 +474,12 @@ impl<'a> Split<'a> {
                 // P1 stays offscreen, presented as before (alone now).
                 let compositor = old.compositor(window)?;
                 self.surfaces.push(Surface { compositor, ..main });
-                self.host.renderer = Some(old);
+                self.host.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(old);
                 return Err(e);
             }
         };
         drop(old);
-        self.host.renderer = Some(renderer);
+        self.host.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(renderer);
         self.host.forget_atlas_slots();
         self.host.options.offscreen = self.offscreen;
         self.host.split_window = false;
@@ -559,8 +559,8 @@ impl<'a> Split<'a> {
         // frame is submitted while it waits. Land this turn's frames on the submit
         // threads first (the compositor then copies views already submitted, too).
         self.wait_queues();
-        let renderers: Vec<_> = std::iter::once(&self.host.renderer)
-            .chain(self.guests.iter().map(|g| &g.game.renderer))
+        let renderers: Vec<_> = std::iter::once(self.host.renderer.modern_ref())
+            .chain(self.guests.iter().map(|g| g.game.renderer.modern_ref()))
             .collect();
         for (k, surface) in self.surfaces.iter_mut().enumerate() {
             let frames: Vec<_> = renderers
@@ -577,8 +577,8 @@ impl<'a> Split<'a> {
         }
         let presented = Instant::now();
         // One player's CPU work overlapped the GPU drawing another's.
-        let renderers = std::iter::once(&mut self.host.renderer)
-            .chain(self.guests.iter_mut().map(|g| &mut g.game.renderer));
+        let renderers = std::iter::once(self.host.renderer.modern_mut())
+            .chain(self.guests.iter_mut().map(|g| g.game.renderer.modern_mut()));
         for renderer in renderers.flatten() {
             renderer.paced_elsewhere = true;
             renderer.wait_in_flight();
@@ -589,8 +589,8 @@ impl<'a> Split<'a> {
     /// anything reconfigures a surface, whose wait for the GPU breaks on a submission
     /// made while it waits.
     fn wait_queues(&mut self) {
-        let renderers = std::iter::once(&mut self.host.renderer)
-            .chain(self.guests.iter_mut().map(|g| &mut g.game.renderer));
+        let renderers = std::iter::once(self.host.renderer.modern_mut())
+            .chain(self.guests.iter_mut().map(|g| g.game.renderer.modern_mut()));
         for renderer in renderers.flatten() {
             renderer.wait_submissions();
         }

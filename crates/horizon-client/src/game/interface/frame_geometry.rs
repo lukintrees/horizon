@@ -12,7 +12,7 @@ impl Game<'_> {
         // Only a renderer drawing the transparency path draws a translucent crack with its set.
         let transparent = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .is_some_and(|r| r.translucent_cracks_transparent());
         let mut stages: Vec<([i32; 3], u32)> = Vec::new();
         let mut add = |pos: [i32; 3], stage: u32| match stages.iter_mut().find(|c| c.0 == pos) {

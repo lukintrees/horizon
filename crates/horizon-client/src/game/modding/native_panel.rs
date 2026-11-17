@@ -327,7 +327,7 @@ impl Game<'_> {
         self.panel.set_style(mod_id, style);
     }
     fn browser_batch(&self) -> Option<HudBatch> {
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         Some(HudBatch::new(
             [r.config.width, r.config.height],
             self.settings.gui_scale_inputs(),
@@ -403,7 +403,7 @@ impl Game<'_> {
             return classic_layout(screen, window, f32::from(window_width), centred);
         }
         let left = window_right + MARGIN;
-        let (width, height) = self.renderer.as_ref().filter(|_| recipes).map_or(
+        let (width, height) = self.renderer.modern_ref().filter(|_| recipes).map_or(
             (batch.width, batch.height),
             |renderer| {
                 (

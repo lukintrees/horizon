@@ -113,7 +113,7 @@ impl Game<'_> {
     pub(super) fn gui_size(&self) -> (f32, f32) {
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1280, 720], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         (b.width, b.height)
@@ -184,13 +184,13 @@ impl Game<'_> {
         if self.ui.options.controller_open() {
             self.ui.options.set_controller_context(context);
         }
-        let pack = (self.renderer.as_ref()).and_then(|r| r.native_pack_name());
+        let pack = (self.renderer.modern_ref()).and_then(|r| r.native_pack_name());
         if self.settings.running_pack.as_deref() != pack {
             self.settings.running_pack = pack.map(str::to_owned);
         }
         let output = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or(Default::default(), |r| r.output());
         self.ui
             .options
@@ -226,7 +226,7 @@ impl Game<'_> {
         let picture = (self.screen == Screen::Options)
             .then(|| self.ui.options.calibration_picture(&self.gui.atlas, size))
             .flatten();
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.set_hdr_calibration(picture.map(|(step, nits, band)| {
                 horizon_client::gfx::HdrCalibration {
                     step: step.number(),
@@ -274,7 +274,7 @@ impl Game<'_> {
             self.dragging = true;
         }
         let size = self.gui_size();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         let mut ui = std::mem::take(&mut self.ui.options);
@@ -294,7 +294,7 @@ impl Game<'_> {
     }
     pub(super) fn options_drag(&mut self) -> Result<()> {
         let size = self.gui_size();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         let mut ui = std::mem::take(&mut self.ui.options);
@@ -314,7 +314,7 @@ impl Game<'_> {
     pub(super) fn options_key(&mut self, key: KeyCode, text: Option<&str>) -> Result<()> {
         let size = self.gui_size();
         let shift = self.has_shift_down();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         self.ui.options.size = size;
@@ -342,7 +342,7 @@ impl Game<'_> {
                 .scroll_at(&self.settings, size, self.cursor, amount);
             return Ok(());
         }
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
+        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
         if self.ui.options.video_open() && self.has_control_down() {
@@ -597,7 +597,7 @@ impl Game<'_> {
         self.apply_fullscreen();
         // A failed HDR start that named no driver becomes the window's driver's, and another
         // driver's is dropped, so HDR output is tried again.
-        if let Some(driver) = self.renderer.as_ref().and_then(|r| r.hdr_driver())
+        if let Some(driver) = self.renderer.modern_ref().and_then(|r| r.hdr_driver())
             && self.settings.horizon.settle_failed_start(driver)
             && let Some(dir) = Self::options_path().parent()
         {
@@ -605,7 +605,7 @@ impl Game<'_> {
         }
         self.hold_fullbright();
         let s = &self.settings;
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.gamma = s.gamma;
             r.improved_transparency = s.improved_transparency;
             r.set_present_mode(s.vsync, s.horizon.present_mode);
@@ -681,7 +681,7 @@ impl Game<'_> {
     pub(super) fn resize_state_of(&self, size: winit::dpi::PhysicalSize<u32>) -> ResizeState {
         let viewport = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([size.width, size.height], |r| {
                 [r.config.width, r.config.height]
             });
@@ -828,7 +828,7 @@ impl Game<'_> {
             self.replay.playing(),
         );
         self.settings.fullbright_held = held;
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.fullbright = self.settings.extras.fullbright && !held;
         }
     }
@@ -940,8 +940,8 @@ mod resize_state_tests {
                 super::super::native_entity_refs::tests::with_client_game(|game| {
                     game.options.offscreen = true;
                     game.window = Some(window.clone());
-                    game.renderer = Some(game.new_renderer(window.clone()).unwrap());
-                    game.renderer.as_mut().unwrap().resize(960, 1080);
+                    game.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(game.new_renderer(window.clone()).unwrap());
+                    game.renderer.modern_mut().unwrap().resize(960, 1080);
                     game.settings.gui_scale = scale;
                     game.settings.force_unicode = false;
                     game.notify_window_resize();
@@ -951,7 +951,7 @@ mod resize_state_tests {
                         Some((1920, 1080, expected.0, expected.1))
                     );
                     assert!(events.lock().unwrap().is_empty());
-                    game.renderer.as_mut().unwrap().resize(1920, 1080);
+                    game.renderer.modern_mut().unwrap().resize(1920, 1080);
                     game.notify_window_resize();
                     let gui = horizon_client::window::GuiSize::new([1920, 1080], scale, false).size;
                     assert_eq!(

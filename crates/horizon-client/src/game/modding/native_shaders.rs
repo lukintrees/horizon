@@ -143,7 +143,7 @@ impl Game<'_> {
     /// Kept only while the pack in use has the stage, or its rays read the entity layer
     /// (`names_entity_runs`).
     fn lit_run(&self, run: std::ops::Range<usize>, posed: u32, kind: EntityKind) {
-        let stage = self.renderer.as_ref();
+        let stage = self.renderer.modern_ref();
         if stage.is_some_and(|r| r.names_entity_runs()) {
             self.native_shaders.entity_runs.borrow_mut().push(run, kind);
             let posed = posed as usize..self.skin_frame.borrow().vertices as usize;
@@ -205,7 +205,7 @@ impl Game<'_> {
         }
         let reload = state.stamp.is_some();
         state.stamp = stamp;
-        let Some(renderer) = &mut self.renderer else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return;
         };
         let manifest_refused = manifest_refused(path);
@@ -296,7 +296,7 @@ impl Game<'_> {
             }
             Err(problems) => {
                 if manifest_refused.is_some() {
-                    if let Some(renderer) = &mut self.renderer {
+                    if let Some(renderer) = self.renderer.modern_mut() {
                         renderer.drop_shader_packs();
                     }
                     self.set_translucent_layers(Vec::new());

@@ -606,7 +606,7 @@ impl Game<'_> {
         let (w, h) = {
             let size = self
                 .renderer
-                .as_ref()
+                .modern_ref()
                 .map_or([1, 1], |r| [r.config.width, r.config.height]);
             let b = HudBatch::new(size, self.settings.gui_scale_inputs());
             (b.width, b.height)
@@ -658,7 +658,7 @@ impl Game<'_> {
         let (w, h) = {
             let size = self
                 .renderer
-                .as_ref()
+                .modern_ref()
                 .map_or([1, 1], |r| [r.config.width, r.config.height]);
             let b = HudBatch::new(size, self.settings.gui_scale_inputs());
             (b.width, b.height)
@@ -962,7 +962,7 @@ impl Game<'_> {
         }
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1, 1], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let hit = death_buttons(b.width, b.height, self.level.hardcore)

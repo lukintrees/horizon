@@ -174,7 +174,7 @@ impl Game<'_> {
             .ok_or(InstanceError::Model(mod_api::ModelError::UnknownModel))?;
         let uploaded = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .and_then(|renderer| renderer.prepared_generation());
         #[cfg(test)]
         let uploaded = uploaded.or_else(horizon_client::gfx::test_prepared_generation);

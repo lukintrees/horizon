@@ -181,7 +181,7 @@ impl Game<'_> {
             self.restore_held_keys();
         }
         let Some(window) = &self.window else { return };
-        let size = self.renderer.as_ref().map_or_else(
+        let size = self.renderer.modern_ref().map_or_else(
             || window.inner_size().into(),
             |r| [r.config.width, r.config.height],
         );

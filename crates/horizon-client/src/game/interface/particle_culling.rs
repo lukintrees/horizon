@@ -592,7 +592,7 @@ impl Game<'_> {
         };
         let section = (pos[0] >> 4, y.div_euclid(16), pos[2] >> 4);
         self.renderer
-            .as_ref()
+            .modern_ref()
             .is_some_and(|renderer| renderer.has_section(section))
             && !self.world.dirty_sections.contains(&section)
             && !self.streaming.is_meshing(section)
@@ -640,7 +640,7 @@ impl Game<'_> {
                 .is_some_and(|current| std::ptr::eq(Arc::as_ptr(current), expected.as_ptr()))
         }) && proof.sections.iter().all(|&section| {
             self.renderer
-                .as_ref()
+                .modern_ref()
                 .is_some_and(|renderer| renderer.has_section(section))
                 && !self.world.dirty_sections.contains(&section)
                 && !self.streaming.is_meshing(section)

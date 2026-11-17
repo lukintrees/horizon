@@ -236,7 +236,7 @@ impl Game<'_> {
     /// The loop ended: close the pads' output, save the world.
     pub(super) fn shut_down(&mut self) {
         if self.error.is_none()
-            && let Some(renderer) = &mut self.renderer
+            && let Some(renderer) = self.renderer.modern_mut()
         {
             renderer.drop_hdr_marker();
         }
@@ -405,7 +405,7 @@ impl ApplicationHandler for Game<'_> {
         drop(window_step);
         match self.new_renderer(window.clone()) {
             Ok(r) => {
-                self.renderer = Some(r);
+                self.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(r);
                 self.world_renderer_ready = true;
             }
             Err(e) => {

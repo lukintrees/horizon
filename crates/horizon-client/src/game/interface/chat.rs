@@ -992,7 +992,7 @@ impl Game<'_> {
         self.refresh_dynamic_registries();
         let size = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or([1280, 720], |r| [r.config.width, r.config.height]);
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let m = Measure(&self.gui.atlas.font);
@@ -1416,7 +1416,7 @@ impl Game<'_> {
     }
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
-        let height = self.renderer.as_ref().map_or(720.0, |r| {
+        let height = self.renderer.modern_ref().map_or(720.0, |r| {
             HudBatch::new(
                 [r.config.width, r.config.height],
                 self.settings.gui_scale_inputs(),
@@ -1429,7 +1429,7 @@ impl Game<'_> {
             registries: &self.ui.registries,
         };
         if self.ui.in_bed_chat && self.sleeping.is_some() {
-            let width = self.renderer.as_ref().map_or(1280.0, |r| {
+            let width = self.renderer.modern_ref().map_or(1280.0, |r| {
                 HudBatch::new(
                     [r.config.width, r.config.height],
                     self.settings.gui_scale_inputs(),
@@ -2239,7 +2239,7 @@ impl Game<'_> {
             return None;
         }
         let name = screenshot_name(&dir, &self.ui.screenshot_messages);
-        let renderer = self.renderer.as_mut()?;
+        let renderer = self.renderer.modern_mut()?;
         let path = dir.join(name);
         // A second shortcut before rendering replaces the queued frame. Release
         // that request's name: no readback will arrive to finish it.

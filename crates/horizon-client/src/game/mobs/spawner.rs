@@ -601,7 +601,7 @@ impl Game<'_> {
         // out of those sections isn't drawn, where it would have gone to the shadow pass alone.
         let shadow_sections = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .filter(|_| self.pack_ids.is_some() && self.pack_shadow_casters.0);
         for (key, (_, mob)) in &self.spawners.displays {
             let at = glam::DVec3::new(f64::from(key.0), f64::from(key.1), f64::from(key.2));

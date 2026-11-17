@@ -480,7 +480,7 @@ impl Game<'_> {
     /// computes them (`HudBatch::new`). Never asks for the renderer: before one
     /// exists, the window's own size serves.
     fn gui_frame_now(&self) -> ([u32; 2], GuiSize) {
-        let framebuffer = self.renderer.as_ref().map_or_else(
+        let framebuffer = self.renderer.modern_ref().map_or_else(
             || {
                 self.window.as_ref().map_or([1280, 720], |window| {
                     let size = window.inner_size();

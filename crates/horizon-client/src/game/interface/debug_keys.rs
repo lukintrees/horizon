@@ -367,7 +367,7 @@ impl Game<'_> {
             )]));
             draws.extend(charts);
             if self.debug_charts.lightmap
-                && let Some(r) = &self.renderer
+                && let Some(r) = self.renderer.modern_ref()
             {
                 draws.extend(horizon_client::debug_chart::lightmap(
                     &r.lightmap_pixels,
@@ -411,7 +411,7 @@ impl Game<'_> {
         let limit = self.framerate_limit();
         let present = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or("", |r| match r.config.present_mode {
                 wgpu::PresentMode::Immediate => " (immediate)",
                 wgpu::PresentMode::Mailbox => " (mailbox)",
@@ -425,7 +425,7 @@ impl Game<'_> {
         // Horizon: with frame generation running, the frames reaching the screen too.
         let generated = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .and_then(|r| r.frame_generation_share())
             .map_or(String::new(), |share| {
                 format!(
@@ -463,7 +463,7 @@ impl Game<'_> {
         d.line("Filtering: None");
         d.line(format!(
             "Terrain Rendering: {}",
-            if self.renderer.as_ref().is_some_and(|r| r.multi_draw) {
+            if self.renderer.modern_ref().is_some_and(|r| r.multi_draw) {
                 "multidrawindirect"
             } else {
                 "naive"
@@ -476,7 +476,7 @@ impl Game<'_> {
         d: &mut debug_overlay::Displayer,
         framebuffer: [i32; 2],
     ) {
-        if let Some(r) = self.renderer.as_ref() {
+        if let Some(r) = self.renderer.modern_ref() {
             d.group(
                 "system",
                 [format!(
@@ -544,7 +544,7 @@ impl Game<'_> {
         }
         // Horizon's own: HDR's output while the setting is on, under the GPU (a group of its
         // own would move others to the other column).
-        if let Some(r) = self.renderer.as_ref()
+        if let Some(r) = self.renderer.modern_ref()
             && r.output().requests_hdr(self.settings.horizon.hdr)
         {
             d.group("system", [r.hdr_line()]);
