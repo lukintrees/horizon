@@ -97,7 +97,8 @@ impl Frustum {
         Frustum { planes }
     }
     /// The frustum of a camera-relative `view_proj`, for tests outside this module.
-    #[cfg(test)]
+    /// The six planes of `view_proj`, each facing in. `Game` builds the frame
+    /// before either backend exists (`gfx::camera_frustum`).
     pub(crate) fn from_view_projection(view_proj: glam::Mat4) -> Frustum {
         Frustum {
             planes: super::frustum(view_proj),

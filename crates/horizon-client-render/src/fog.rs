@@ -474,6 +474,49 @@ pub fn update_rain_fog(
 pub fn settle_rain_fog(state: &mut FogState, rain: f32, sky_light: u8, biome_rains: bool) {
     state.rain_fog_multiplier = rain_fog_target(rain, sky_light, biome_rains);
 }
+/// The world's colour and (spherical start/end, cylindrical start/end) fog
+/// uniforms for one frame: what the modern renderer uploads and the legacy
+/// backend reads, so both agree. Screen, sky and cloud fog have contracts of
+/// their own.
+pub fn world_parameters(frame: &crate::gfx::Frame<'_>) -> ([f32; 4], [f32; 4]) {
+    if let Some(f) = frame.fog {
+        (
+            f.color,
+            [
+                f.environmental_start,
+                f.environmental_end,
+                f.render_distance_start,
+                f.render_distance_end,
+            ],
+        )
+    } else if frame.underwater {
+        (
+            [
+                frame.water_fog[0],
+                frame.water_fog[1],
+                frame.water_fog[2],
+                1.0,
+            ],
+            // `FogRenderer` in a fluid: a 96-block sphere about the eye.
+            [-8.0, 96.0, -8.0, 96.0],
+        )
+    } else {
+        let d = frame.distance;
+        (
+            [
+                frame.sky.fog_color[0],
+                frame.sky.fog_color[1],
+                frame.sky.fog_color[2],
+                1.0,
+            ],
+            // `FogRenderer`: render-distance fog starts at max(d - d/4, 0)... d.
+            {
+                let (start, end) = frame.environment_fog.unwrap_or((f32::MAX, f32::MAX));
+                [start, end, (d - d.min(64.0) * 0.25).max(0.0), d]
+            },
+        )
+    }
+}
 fn rgb(c: u32) -> [f32; 3] {
     [
         (c >> 16 & 255) as f32 / 255.0,

@@ -434,7 +434,7 @@ pub(crate) mod core_sky;
 pub(crate) mod core_text;
 mod cull;
 mod dx12_compiler;
-mod end_sky;
+pub mod end_sky;
 pub mod entity_skin;
 pub mod external;
 mod flat;
@@ -500,13 +500,13 @@ mod reuse;
 mod screenshot;
 pub use screenshot::{PendingScreenshot, ScreenshotSave};
 mod screenshot_readback;
-mod stars;
+pub mod stars;
 mod surface_setup;
 use surface_setup::{AdapterChoice, AdapterFailure, open_adapter, pick_adapter, set_up_surface};
 mod off_page;
 use off_page::move_off_page;
 pub mod submit;
-mod sunrise_fan;
+pub mod sunrise_fan;
 mod timing;
 pub mod translucency;
 pub(crate) mod upload;
@@ -529,41 +529,96 @@ mod world_views;
 /// `apply_fog` mixes, and what a shader pack that fogs its stages itself reads
 /// (`Frame.fog_environment`, `fog_render`).
 pub(crate) fn fog_uniform(frame: &Frame) -> ([f32; 4], [f32; 4]) {
-    if let Some(f) = frame.fog {
-        (
-            f.color,
-            [
-                f.environmental_start,
-                f.environmental_end,
-                f.render_distance_start,
-                f.render_distance_end,
-            ],
-        )
-    } else if frame.underwater {
-        (
-            [
-                frame.water_fog[0],
-                frame.water_fog[1],
-                frame.water_fog[2],
-                1.0,
-            ],
-            [-8.0, 96.0, -8.0, 96.0],
-        )
-    } else {
-        let d = frame.distance;
-        (
-            [
-                frame.sky.fog_color[0],
-                frame.sky.fog_color[1],
-                frame.sky.fog_color[2],
-                1.0,
-            ],
-            // FogRenderer: render-distance fog starts at max(d - 16, 0)... d.
-            {
-                let (start, end) = frame.environment_fog.unwrap_or((f32::MAX, f32::MAX));
-                [start, end, (d - d.min(64.0) * 0.25).max(0.0), d]
-            },
-        )
+    // One implementation for both backends (`fog::world_parameters`).
+    crate::fog::world_parameters(frame)
+}
+
+/// The title screen's own frame: the HUD, the panorama's yaw and pitch, and no
+/// world payload at all. The modern renderer draws the panorama cube map and
+/// the legacy one clears to a static colour, so neither inherits world geometry
+/// it would not draw. The defaults are `GameRenderer`'s loading screen ones, so
+/// the menu looks the same on both backends.
+pub fn menu_frame(hud: &crate::hud::HudBatch) -> Frame<'_> {
+    Frame {
+        weather: &[],
+        weather_time: crate::weather::Time::new(0, 0.0),
+        camera: DVec3::new(0.5, 100.0, 0.5),
+        yaw: 0.0,
+        pitch: 10.0,
+        fov_degrees: 85.0,
+        eye: DVec3::new(0.5, 100.0, 0.5),
+        eye_rotation: [0.0, 10.0],
+        first_person: true,
+        bob: Mat4::IDENTITY,
+        spin: Mat4::IDENTITY,
+        sky: crate::environment::Sky::default(),
+        shadow_scene_revision: (0, 0),
+        shadow_cache: false,
+        distance: 12.0,
+        detail_distance: 12.0,
+        depth_far: 1000.0,
+        underwater: false,
+        water_plane: None,
+        cave_culling: false,
+        title: true,
+        sky_blocked: false,
+        skybox: false,
+        end_sky: false,
+        end_sky_sprite: None,
+        boss_world_fog: false,
+        environment_fog: None,
+        water_fog: [0.0; 3],
+        fog: None,
+        dark_disc: false,
+        outline: Vec::new(),
+        outline_after_terrain: false,
+        outline_high_contrast: false,
+        pvp: Default::default(),
+        debug_lines: &[],
+        debug_lines_on_top: &[],
+        debug_crosshair: &[],
+        hud,
+        glint_alpha: 0.75,
+        glint_ticks: 0.0,
+        nether_lighting: false,
+        entities: &[],
+        static_block_entities: &[],
+        visible_static_block_entity_sections: &[],
+        static_block_entity_stats: Default::default(),
+        entity_motion: &[],
+        entity_motion_posed: &[],
+        entity_spans: &[],
+        skin: None,
+        glowing: &[],
+        dynamic_lights: &[],
+        colored_lights: &[],
+        emissive_layers: &[],
+        clouds: None,
+        lightning: Default::default(),
+        additive: &[],
+        see_through: &[],
+        world_primitives: Default::default(),
+        shadow_only: &[],
+        celestial: &[],
+        stars: None,
+        hand: &[],
+        hand_items: &[],
+        hand_fov_degrees: 70.0,
+        screen: &[],
+        pack: Default::default(),
+        border: None,
+        game_time: 0.0,
+        shader_game_time: 0.0,
+        end_portal_sprites: [[0.0; 4]; 2],
+        crumbling_sprite: [0.0; 4],
+        ticks: 0,
+        darkness: (0.0, 0.0),
+        night_vision: 0.0,
+        block_flicker: 0.0,
+        boss_darken: 0.0,
+        chunk_fade: 0.0,
+        post_effects: crate::post_chain::Request::none(),
+        menu_blur: None,
     }
 }
 
@@ -4689,6 +4744,13 @@ impl Renderer {
     /// Hand the window surface over to the renderer that replaces this one on
     /// the same device (it takes `spare_surface`).
     #[horizon_mod_api_macros::replaceable]
+    /// Whether this renderer draws to a target of its own rather than the
+    /// window's swapchain (`--offscreen`, a scaled screenshot). The common
+    /// facade reports a drawn offscreen frame as `FrameOutcome::Offscreen`.
+    pub fn is_offscreen(&self) -> bool {
+        self.offscreen.is_some()
+    }
+
     pub fn release_surface(&mut self) {
         self.frame_gen.stop();
         self.queue.wait();
@@ -6841,19 +6903,39 @@ impl Renderer {
     }
     #[horizon_mod_api_macros::replaceable]
     pub fn render(&mut self, frame: &Frame) -> Result<bool> {
+        self.render_with_menu(frame, None)
+    }
+    /// An explicit static menu: a title frame whose background is one colour
+    /// instead of the panorama cube map, with no resident world drawn. The
+    /// policy is the caller's; nothing is overridden for later frames.
+    pub fn render_static_menu(&mut self, frame: &Frame, clear: [f32; 4]) -> Result<bool> {
+        if !frame.title || !horizon_render_api::render_contract::MenuBackground::Static(clear).valid()
+        {
+            return Err("invalid static menu frame".into());
+        }
+        self.render_with_menu(frame, Some(clear))
+    }
+    fn render_with_menu(&mut self, frame: &Frame, menu_clear: Option<[f32; 4]>) -> Result<bool> {
         // A lost device cannot accept uploads either. Leave recovery to the
         // owner instead of submitting atlas patches to the invalid device.
         if self.device_lost() {
             return Err("the graphics device was lost".into());
         }
         if let Some(request) = self.capture.take() {
-            let result = self.write_capture(&request, frame);
-            self.capture_result = Some(result.map_err(|e| e.to_string()));
+            // The scene-capture format has no static-menu background field yet;
+            // never serialize a static image as a replayable panorama capture.
+            let result = if menu_clear.is_some() {
+                Err("static menu scene capture is not supported".to_string())
+            } else {
+                self.write_capture(&request, frame)
+                    .map_err(|e| e.to_string())
+            };
+            self.capture_result = Some(result);
         }
         let scaled = self.screenshot_size();
         let rendered = match scaled {
-            Some(size) => self.draw_scaled_frame(frame, size),
-            None => self.draw_frame(frame, None, self.output),
+            Some(size) => self.draw_scaled_frame(frame, size, menu_clear),
+            None => self.draw_frame(frame, None, self.output, menu_clear),
         };
         self.finish_prepared_frame();
         // A frame that was not drawn still submits the section copies and
@@ -6913,7 +6995,12 @@ impl Renderer {
     /// every pass sizes itself by `config`, which says `size` for this frame, the HUD
     /// keeps its layout at a larger scale, and the world is drawn at `size` (a Resolution
     /// Scale below 100% stays as low). The window keeps its last frame.
-    fn draw_scaled_frame(&mut self, frame: &Frame, size: [u32; 2]) -> Result<bool> {
+    fn draw_scaled_frame(
+        &mut self,
+        frame: &Frame,
+        size: [u32; 2],
+        menu_clear: Option<[f32; 4]>,
+    ) -> Result<bool> {
         let window = [self.config.width, self.config.height];
         let mut config = self.config.clone();
         [config.width, config.height] = size;
@@ -6957,7 +7044,7 @@ impl Renderer {
         let offscreen = std::mem::replace(&mut self.offscreen, target);
         let window_depth = std::mem::replace(&mut self.depth, depth);
         // The frame's own targets at `size` can run out of memory too.
-        let drawn = self.draw_frame(frame, Some(GpuChecks::push(&self.device)), output);
+        let drawn = self.draw_frame(frame, Some(GpuChecks::push(&self.device)), output, menu_clear);
         self.depth = window_depth;
         self.offscreen = offscreen;
         match hdr {
@@ -6982,6 +7069,7 @@ impl Renderer {
         frame: &Frame,
         checks: Option<GpuChecks>,
         output: output::EffectiveOutput,
+        menu_clear: Option<[f32; 4]>,
     ) -> Result<bool> {
         debug_assert_eq!(output.encoding, self.hdr.as_ref().map(|hdr| hdr.output));
         // Its steps as spans (HORIZON_SPIKES): each lap names the step that just ended.
@@ -7220,7 +7308,7 @@ impl Renderer {
             frame.camera,
         );
         let jittered = jitter * view_proj;
-        if frame.title {
+        if frame.title && menu_clear.is_none() {
             self.panorama.prepare(
                 &self.device,
                 &self.queue,
@@ -9019,7 +9107,9 @@ impl Renderer {
             .then(|| self.pack_post.as_ref().and_then(|p| p.1.as_ref()))
             .flatten()
             .and_then(|p| p.sky_clear());
-        let clear = if let Some([r, g, b, a]) = pack_sky_clear {
+        // An explicit static menu background wins over the pack's sky clear.
+        let sky_clear = menu_clear.or(pack_sky_clear);
+        let clear = if let Some([r, g, b, a]) = sky_clear {
             wgpu::Color {
                 r: f64::from(r),
                 g: f64::from(g),
@@ -9365,7 +9455,9 @@ impl Renderer {
                     }
                 }
                 if frame.title {
-                    self.panorama.draw(&mut pass);
+                    if menu_clear.is_none() {
+                        self.panorama.draw(&mut pass);
+                    }
                     pass.set_bind_group(0, &self.group, &[]);
                 } else if celestial_vertices > 0 || frame.end_sky {
                     pass.set_pipeline(&self.celestial.added);
@@ -11242,6 +11334,22 @@ pub(crate) fn square_downscale(pixels: &[u8], width: u32, height: u32, size: [u3
 }
 mod view_frustum;
 pub use view_frustum::Frustum;
+
+/// The flat-screen cull frustum for `size`, without a renderer. `Game` builds
+/// the world frame for either backend, and on the legacy route there is no
+/// wgpu device to ask [`Renderer::camera_frustum`]. `pose` is the view
+/// bob/spin applied between the lens and the rotation, as in a frame.
+pub fn camera_frustum(
+    size: [u32; 2],
+    fov_degrees: f32,
+    yaw: f32,
+    pitch: f32,
+    pose: Mat4,
+    far: f32,
+) -> Frustum {
+    let aspect = size[0] as f32 / size[1].max(1) as f32;
+    Frustum::from_view_projection(View::screen(yaw, pitch, fov_degrees, aspect, far).view_proj(pose))
+}
 
 #[cfg(feature = "test-support")]
 pub fn test_frustum(planes: [Vec4; 6]) -> JoinedFrusta {
