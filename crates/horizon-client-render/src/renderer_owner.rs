@@ -250,7 +250,7 @@ mod tests {
     fn empty_world_owner_refuses_submission_without_initializing_a_device() {
         let mut owner = RendererOwner::default();
         let mut order = SectionOrder::default();
-        let hud = crate::hud::HudBatch::new([64; 2]);
+        let hud = crate::hud::HudBatch::scratch([64; 2]);
         let source = crate::legacy_gfx::frame::tests::source(&hud);
         assert!(
             owner
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(facade.resource_generation(), Some(ResourceGeneration(77)));
         facade.resize([32; 2]).unwrap();
         assert_eq!(facade.size(), [32; 2]);
-        let mut hud = HudBatch::new([32; 2]);
+        let mut hud = HudBatch::scratch([32; 2]);
         hud.fill(&atlas, 0., 0., 32., 32., u32::MAX);
         assert_eq!(
             facade
@@ -357,7 +357,7 @@ mod bootstrap_tests {
         )
         .unwrap();
         assert_eq!(owner.backend(), Some(Backend::LegacyGl));
-        let mut batch = crate::hud::HudBatch::new([64; 2]);
+        let mut batch = crate::hud::HudBatch::scratch([64; 2]);
         batch.fill(&hud, 0., 0., 64., 64., u32::MAX);
         let menu = crate::frame::MenuFrame::static_color(&batch, [0., 0., 0., 1.]);
         let mut facade = owner

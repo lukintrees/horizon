@@ -33,7 +33,7 @@ fn pixel(renderer: &mut TerrainHudRenderer, key: SectionKey) -> Vec<u8> {
                 solid: &visible,
                 translucent: &[],
             },
-            &HudBatch::new([64; 2]),
+            &HudBatch::scratch([64; 2]),
         )
         .unwrap();
     renderer.read_rgba([32, 32, 1, 1]).unwrap()
