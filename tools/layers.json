@@ -40,6 +40,8 @@
     "horizon-system": "engine",
     "horizon-threads": "engine",
     "horizon-guest-stack": "engine",
+    "horizon-render-api": "engine",
+    "horizon-legacy-render": "engine",
     "horizon-world": "engine",
     "cargo-horizon-mod": "tool",
     "horizon-anticheat": "platform",

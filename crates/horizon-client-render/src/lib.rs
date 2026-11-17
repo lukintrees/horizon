@@ -75,6 +75,8 @@ pub mod dimension_transition;
 pub mod fluid_models;
 pub mod level_loading;
 pub mod light;
+// The CPU lightmap the modern renderer and the legacy one must agree on.
+pub mod lightmap;
 pub mod lod;
 pub mod logging;
 pub mod mark_sprite;
@@ -83,6 +85,10 @@ pub mod menu_style;
 pub mod mesher;
 pub mod minimap;
 pub mod mipmap;
+// The CPU bridges to `horizon-render-api` (also `gui_bridge`, `paged_hud` and
+// `render_bridge`): plain data, no wgpu or GL object, always built, so the legacy
+// backend and tests reach them without a feature.
+pub mod entity_bridge;
 pub mod mod_animations;
 pub mod mod_block_state_models;
 pub mod mod_browser;
@@ -111,6 +117,7 @@ pub mod pack_tags;
 pub mod packs;
 pub mod pad_cursor;
 pub mod pad_glyph;
+pub mod paged_hud;
 pub mod paged_maps;
 pub mod par;
 pub mod particles;
@@ -126,6 +133,7 @@ pub mod preedit;
 pub mod providers;
 pub mod pvp;
 pub mod pvp_hud;
+pub mod render_bridge;
 pub mod spectator_shaders;
 pub use horizon_assets::resource_source;
 pub mod api_context;

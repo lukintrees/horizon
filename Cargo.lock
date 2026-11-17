@@ -2006,6 +2006,7 @@ dependencies = [
  "horizon-hdr",
  "horizon-hooks",
  "horizon-items",
+ "horizon-legacy-render",
  "horizon-mod-api",
  "horizon-mod-api-macros",
  "horizon-mod-package",
@@ -2017,6 +2018,7 @@ dependencies = [
  "horizon-perf-format",
  "horizon-polytone",
  "horizon-protocol",
+ "horizon-render-api",
  "horizon-shader-api",
  "horizon-shaders",
  "horizon-system",
@@ -2213,6 +2215,13 @@ dependencies = [
 [[package]]
 name = "horizon-java-properties"
 version = "0.1.0"
+
+[[package]]
+name = "horizon-legacy-render"
+version = "0.1.0"
+dependencies = [
+ "horizon-render-api",
+]
 
 [[package]]
 name = "horizon-mcp"
@@ -2701,6 +2710,10 @@ dependencies = [
  "base64 0.22.1",
  "ring",
 ]
+
+[[package]]
+name = "horizon-render-api"
+version = "0.1.0"
 
 [[package]]
 name = "horizon-server"

@@ -1174,5 +1174,37 @@
     "path": "crates/horizon-world/tests/it/world_io.rs",
     "reason": "microbenchmark; run with --ignored --nocapture",
     "rationale": "Existing explicit manual runner by-hand in tools/ci/ignored-tests/manual-horizon-world.txt: microbenchmark; run with --ignored --nocapture. Not selected by daily shards."
+  },
+  {
+    "package": "horizon-legacy-render",
+    "target": "lib",
+    "test": "glx::tests::visible_glx_window_draws_resizes_pumps_bounded_input_and_reclaims_native_windows",
+    "path": "crates/horizon-legacy-render/src/glx/tests.rs",
+    "reason": "requires X11/GLX display (xvfb-run), Mesa llvmpipe and GL2 overrides",
+    "rationale": "Interactive window test: it maps a real GLX window on an X server, so it cannot run in a headless verify or daily shard. The EGL probe (tools/legacy_gl_smoke.py) covers the same renderer offscreen; run this by hand with xvfb-run and the Mesa GL2 overrides."
+  },
+  {
+    "package": "horizon-legacy-render",
+    "target": "lib",
+    "test": "glx::tests::visible_glx_physical_keys_and_unbounded_raw_motion_release_on_focus_and_drop",
+    "path": "crates/horizon-legacy-render/src/glx/tests.rs",
+    "reason": "requires Xvfb GLX, XI2 and libXtst; real server input, not framebuffer-only",
+    "rationale": "Device test: it injects real XInput2 raw motion and XTest key events into an X server, so it needs a live X server with XTEST and XI2 and cannot run in a headless shard. Run by hand with xvfb-run plus libXtst."
+  },
+  {
+    "package": "horizon-legacy-render",
+    "target": "lib",
+    "test": "renderer::stroke_tests::strokes_preserve_depth_fog_width_typed_layout_and_reclaim_every_mesh",
+    "path": "crates/horizon-legacy-render/src/renderer/stroke_tests.rs",
+    "reason": "requires Mesa OSMesa and explicit GL2 overrides",
+    "rationale": "Needs a desktop GL context: it renders through a real OSMesa context, which neither verify nor the daily runners provide. The EGL probe covers the same renderer (tools/legacy_gl_smoke.py, --shader-version 120); run this by hand where libOSMesa exists."
+  },
+  {
+    "package": "horizon-legacy-render",
+    "target": "lib",
+    "test": "renderer::reserve_tests::boot_reserve_cancellation_deletes_actual_partial_texture_names",
+    "path": "crates/horizon-legacy-render/src/renderer.rs",
+    "reason": "requires Mesa OSMesa; explicitly run by the GL2 CI job",
+    "rationale": "Needs a desktop GL context (OSMesa) to create real texture names, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists, or through the probe runner."
   }
 ]

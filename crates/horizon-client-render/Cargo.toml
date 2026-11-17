@@ -7,6 +7,11 @@ rust-version.workspace = true
 description = "The client's world data, rendering and screens: chunks, meshing, light, streaming, the renderer, the HUD, menus and settings; no gameplay"
 
 [dependencies]
+# The backend-neutral CPU frame contract: plain data the modern renderer and the
+# legacy OpenGL one both read. No wgpu, so it may sit below both.
+horizon-render-api = { path = "../horizon-render-api" }
+# The legacy desktop OpenGL 2.x backend, behind `legacy-gl`.
+horizon-legacy-render = { path = "../horizon-legacy-render", optional = true }
 horizon-guest-stack = { path = "../horizon-guest-stack" }
 # The settings stores of the crates above the engine (docs/layers.md, "Platform registries").
 horizon-hooks = { path = "../horizon-hooks" }
@@ -77,6 +82,10 @@ wgpu = { version = "30.0.1", default-features = false, features = ["dx12"] }
 wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 
 [features]
+# The legacy desktop OpenGL 2.x backend (horizon-legacy-render) as a dependency.
+# Nothing in the game constructs it yet: the CPU-side bridges in `render_bridge`,
+# `entity_bridge`, `gui_bridge` and `paged_hud` are always built and name no wgpu.
+legacy-gl = ["dep:horizon-legacy-render"]
 # Sound output: horizon-client's `audio` feature.
 audio = ["dep:cpal"]
 # Helpers horizon-client's tests build their fixtures with.
