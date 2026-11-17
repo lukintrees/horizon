@@ -119,7 +119,7 @@ impl RendererOwner {
     #[cfg(feature = "legacy-gl")]
     pub fn render_native_world(
         &mut self,
-        source: &crate::frame::Frame<'_>,
+        source: &crate::gfx::Frame<'_>,
         order: &mut SectionOrder,
         radius: i32,
         options: FrameOptions,
