@@ -981,12 +981,15 @@ stars также пройдены. Docs-only commit не меняет код; ч
 ## 19. Сборка и запуск backend'а для Windows 7 с Linux (измерено 2026-11-18)
 
 Это операционная памятка: как собрать legacy backend под Win7 с Linux-машины и что
-из этого сегодня действительно проверено. Числа и строки ниже сняты на этой машине
-(`mvp2-win7-docs`, `318214da68b`), а не взяты из планов выше.
+из этого сегодня действительно проверено. Числа и строки ниже сняты на этой машине:
+база — `mvp2-win7-docs` (`318214da68b`), сборка игры и её PE — коммиты
+`dc2fd86fe4c`/`92c2990ec87` ветки `mvp2-win7-build`, WGL/Wine — коммит
+`34baca46702` ветки `mvp2-wine-wgl` и повторный прогон их харнесса здесь. Ни
+одна строка не взята из планов выше.
 
 ### 19.1. Зачем вообще Win7
 
-Современный renderer — wgpu 30.1. На Windows он собирается только с `dx12`
+Современный renderer — wgpu 30.0.1. На Windows он собирается только с `dx12`
 (`crates/horizon-client-render/Cargo.toml:79`), а GL-путь wgpu требует desktop
 OpenGL 3.3 (`third_party/wgpu-hal/src/gles/adapter.rs:450`: «we minimum-version to
 GL 3.3»). Машина класса Radeon X1650 на Win7 SP1 x86 не даёт ни D3D12, ни GL 3.3:
@@ -1008,24 +1011,44 @@ nightly i686-win7-windows-gnu` отвечает:
 собираются с `-Zbuild-std`. MSVC-таргеты (`*-win7-windows-msvc`) на Linux только
 пишутся в кэш `check`; линковать их здесь нечем.
 
-### 19.3. Команды
+### 19.3. Команды: `tools/win7_build.py`
 
 C-линкер — mingw-w64 (`mingw-w64-gcc` на Arch, `gcc-mingw-w64-*` на Debian).
 Пакеты, которые нужны на этой машине, уже стоят: `i686-w64-mingw32-gcc`,
 `x86_64-w64-mingw32-gcc`, `objdump`.
 
-```sh
-# Проверка крейтов backend'а (быстро, без линковки exe):
-RUSTUP_TOOLCHAIN=nightly ~/.cargo/bin/cargo -Zbuild-std=std,panic_abort \
-  check --target x86_64-win7-windows-gnu -p horizon-legacy-render
+Рецепт живёт в `tools/win7_build.py` (ветка `mvp2-win7-build`, в `mvp2` пока
+нет). Это и есть front end; ниже — то, что он делает.
 
-# То же для 32-бит, реальная форма машины X1650:
-RUSTUP_TOOLCHAIN=nightly ~/.cargo/bin/cargo -Zbuild-std=std,panic_abort \
-  check --target i686-win7-windows-gnu -p horizon-legacy-render
+```sh
+python3 tools/win7_build.py                                   # оба таргета, крейты backend'а
+python3 tools/win7_build.py --target i686                     # только 32-бит, форма X1650
+python3 tools/win7_build.py --profile fast -p horizon-game \
+  --features legacy-gl                                        # вся игра, играбельный профиль
+python3 tools/win7_build.py --check -p horizon-game --features legacy-gl
 ```
 
-Обе команды проходят (`x86_64` ≈9 с, `i686` ≈16 с на второй прогон с тёплым
-кэшем), с одним `deprecated`-предупреждением в `wgl.rs`.
+Что он делает, по коду: выбирает rustup-toolchain (`--toolchain`, иначе
+`$RUSTUP_TOOLCHAIN`, иначе `nightly`) и экспортирует его как
+`RUSTUP_TOOLCHAIN`; экспортирует `CC_<triple>`, `CXX_<triple>`, `AR_<triple>`,
+`CARGO_TARGET_<TRIPLE>_LINKER` и `WINDRES` для mingw-инструментов таргета;
+печатает точную cargo-команду; после `build` читает subsystem-версию из
+PE-заголовка каждого `.exe` (сам, `struct.unpack_from` по optional header).
+`--target` по умолчанию `both`, пакеты — `horizon-legacy-render` и
+`horizon-render-api`, профиль — `dev` (`fast` — играбельный). Коды возврата:
+0 успех, 1 сборка упала, 2 аргументы, 3 нет компилятора, линкера или windres.
+
+Сырой эквивалент — то, что скрипт печатает:
+
+```sh
+RUSTUP_TOOLCHAIN=nightly ~/.cargo/bin/cargo -Zbuild-std=std,panic_abort \
+  build --profile fast --target i686-win7-windows-gnu \
+  -p horizon-game --features legacy-gl
+```
+
+Без экспортированных `CC_*` эта команда падает: cc-rs для `hidapi` берёт `cc`
+из `PATH` и компилирует `etc/hidapi/windows/hid.c` хост-компилятором. Именно
+поэтому скрипт, а не сырой cargo.
 
 `RUSTUP_TOOLCHAIN=nightly` и `~/.cargo/bin/cargo` важны: на этой машине `cargo`
 из `PATH` — это `/usr/bin/cargo` (stable 1.100.0 из дистрибутива), и он
@@ -1033,7 +1056,8 @@ RUSTUP_TOOLCHAIN=nightly ~/.cargo/bin/cargo -Zbuild-std=std,panic_abort \
 channel». `~/.cargo/bin/cargo` — rustup-прокси, он выбирает nightly по
 `RUSTUP_TOOLCHAIN`.
 
-Собрать exe целиком (probe, отдельный workspace без игрового графа зависимостей):
+Отдельный probe (`tools/legacy-gl-probe`, свой workspace без игрового графа
+зависимостей) собирается без скрипта:
 
 ```sh
 RUSTUP_TOOLCHAIN=nightly ~/.cargo/bin/cargo -Zbuild-std=std,panic_abort \
@@ -1041,47 +1065,61 @@ RUSTUP_TOOLCHAIN=nightly ~/.cargo/bin/cargo -Zbuild-std=std,panic_abort \
   --manifest-path tools/legacy-gl-probe/Cargo.toml
 ```
 
-Готовое exe: `target/i686-win7-windows-gnu/release/horizon-legacy-gl-probe.exe`.
+Две зависимости починили на `mvp2-win7-build`, чтобы GNU-линковка вообще
+прошла; без них `horizon-game` падает, а не собирается:
 
-Полную игру (`horizon-game`) с `--features legacy-gl` таким способом собрать
-**нельзя** без явного задания C-компилятора таргета: cc-rs для `hidapi` берёт
-`cc` из `PATH` и падает на `etc/hidapi/windows/hid.c`. Обёртка
-`tools/win7_build.py` (ветка `mvp2-win7-build`, ещё не в `mvp2`) экспортирует
-`CC_<target>`, `CXX_<target>`, `AR_<target>`, линкер и `WINDRES` и печатает
-subsystem-версию каждого полученного `.exe`; с ней граф доходит до линковки, но
-`horizon-game` всё ещё падает на `cannot find -lwindows` (нет
-`libwindows.a`/`windows.0.52.0` в mingw-w64 14.0.0 здесь). Это блокер сборки
-игры, а не крейтов backend'а. **Запуск `tools/win7_build.py` — это то, что ещё
-не завершено.**
+- `Cargo.lock`: `os_pipe` тянул `windows-sys` 0.45, у которого единственный
+  путь без raw-dylib — `#[link(name = "windows")]`, MSVC-импорт-библиотека,
+  которой mingw-w64 не поставляет; каждая GNU-линковка падала с
+  `cannot find -lwindows`. 0.52 линкует `windows.0.52.0`, который в mingw есть.
+- `horizon-threads/src/work.rs`: множитель id-кэша был 64-битным литералом
+  `usize` — на i686 это hard error (`overflowing_literals`). Теперь константа
+  усекается до ширины указателя.
+
+Плюс `wgl.rs`: `fetch_update` → `try_update` (stable с 1.95, `rust-version`
+workspace'а) — это было единственное `deprecated`-предупреждение Windows-сборки.
+
+CI этот путь не проверяет: ни один из 22 workflow в `.github/workflows` на
+`mvp2-win7-build` не упоминает `win7_build.py` или `*-win7-windows-gnu`, так что
+Windows-сборка снова сломается молча. Если её нужно держать зелёной, дешёвый
+шаг — job с `--check -p horizon-game --features legacy-gl`, затем проверка, что
+`pe_subsystem()` каждого exe ≤ (6, 1). Это предложение, а не существующий job.
 
 ### 19.4. Subsystem-версия PE: измерено, не предположено
 
 Загрузчик Win7 отказывает PE, у которого subsystem version выше 6.1; это поле —
-*минимальная* версия ОС, а не та, под которую собран код. Измерено
-`objdump -p <exe> | grep -iE 'subsystem|major'`:
+*минимальная* версия ОС, а не та, под которую собран код. Поэтому малое значение
+здесь — хорошо, а не подозрительно (в первой версии скрипта вывод читался
+наоборот; исправлено в `92c2990ec87`). Измерено `objdump -p <exe>` и тем же
+измерением, что печатает скрипт:
 
-| exe | `MajorSubsystemVersion` | загрузится на Win7 |
-| --- | --- | --- |
-| `i686-win7-windows-gnu` probe | **4.0** (PE32) | да |
-| `x86_64-win7-windows-gnu` probe | **5.2** (PE32+) | да |
+| exe | subsystem | PE | грузится на Win7 |
+| --- | --- | --- | --- |
+| probe `i686-win7-windows-gnu` | **4.0** | PE32 | да |
+| probe `x86_64-win7-windows-gnu` | **5.2** | PE32+ | да |
+| `horizon-client.exe` i686 (`--profile fast`, 214 МиБ) | **4.0** | PE32 | да |
+| `horizon-client.exe` x86_64 (`--profile fast`) | **5.2** | PE32+ | да |
 
 То есть эти таргеты уже объявляют 4.0/5.2, ниже 6.1, — отдельного линкерного
-флага для subsystem не требуется. Проверять это после каждой сборки дешево:
-`file` печатает `PE32 executable for MS Windows 4.00` прямо в первой строке.
+флага для subsystem не требуется, ни для probe, ни для игры. Проверять это
+после каждой сборки дешево: `file` печатает `PE32 executable for MS Windows
+4.00` прямо в первой строке.
 
-### 19.5. CRT: вот что реально ломает запуск на Win7
+### 19.5. CRT и API-sets: вот что реально ломает запуск на Win7
 
-Subsystem-версия — не единственное условие. Оба exe импортируют UCRT API-set
-(`api-ms-win-crt-heap-l1-1-0.dll` и восемь других): mingw-w64 здесь собран на
-UCRT (`/usr/i686-w64-mingw32/lib/libmsvcrt.a` побайтно совпадает с
-`libucrt.a`). На Win7 UCRT появляется только вместе с обновлением KB2999226 или
-старым vcredist; на голой системе его нет.
+Subsystem-версия — не единственное условие. Все четыре exe импортируют UCRT
+API-set — `api-ms-win-crt-heap-l1-1-0.dll` и другие: восемь наборов у
+64-битного probe, девять у 32-битного и девять у игры. mingw-w64 здесь собран на
+UCRT (`/usr/i686-w64-mingw32/lib/libmsvcrt.a` побайтно совпадает с `libucrt.a`).
+На Win7 UCRT появляется только вместе с обновлением KB2999226 или старым
+vcredist; на голой системе его нет.
 
 Это не решается одним флагом. `-mcrtdll=msvcrt-os` линкует обычную C-программу
 против `msvcrt.dll`, но для Rust-std `-C link-arg=-mcrtdll=msvcrt-os` результат
 не меняет: std уже собран против UCRT-импортов mingw-w64, и набор `api-ms-win-*`
-остаётся в таблице импорта. Убрать его можно только своим mingw-w64,
-собранным с `--with-default-msvcrt=msvcrt`, чего на этой машине нет. Поэтому:
+остаётся в таблице импорта. `+crt-static` тоже не помогает. Убрать его можно
+только своим mingw-w64, собранным с `--with-default-msvcrt=msvcrt`, чего на этой
+машине нет. Поэтому:
 
 - `python3 tools/check_imports.py <exe>` проходит (`exit 0`), но его allowlist —
   это Windows 10/11 (`tools/check_imports.py:18`), где `api-ms-win-*` есть, и
@@ -1089,43 +1127,82 @@ UCRT (`/usr/i686-w64-mingw32/lib/libmsvcrt.a` побайтно совпадае�
 - честный статус CRT на сегодня — **не проверено**; на целевой машине нужен
   либо KB2999226, либо mingw-сборка на `msvcrt.dll`.
 
-Заполнить измерением: собрать probe и прогнать на чистой Win7 SP1 x86 без
-обновлений; если он не стартует — это UCRT, и вывод один.
+У игры есть **вторая, независимая** проблема того же рода. Её `horizon-client.exe`
+статически импортирует три API-set DLL, которых нет ни в одном probe:
 
-### 19.6. WGL под Wine: 64-bit прошло, 32-bit нет
+| DLL | импортируемый символ | откуда |
+| --- | --- | --- |
+| `api-ms-win-core-path-l1-1-0.dll` | `PathCchStripPrefix` | `arboard` 3.7 → `windows-sys` 0.59 (`horizon-client-input`, буфер обмена) |
+| `api-ms-win-core-winrt-l1-1-0.dll` | `RoGetActivationFactory` | `windows` 0.62 / `windows-core` 0.62 (`horizon-dualsense`, `horizon-narrator`) |
+| `api-ms-win-core-winrt-error-l1-1-0.dll` | `RoOriginateErrorW` | там же |
 
-`tools/legacy_wgl_wine.py` (ветка `mvp2-wine-wgl`, ещё не в `mvp2`) собирает
-probe под Win7-таргет, создаёт свежий Wine-префикс и прогоняет два случая
-(GL 2.1/GLSL 120 и GL 2.0/GLSL 110). На этой машине (Wine 11.22, Mesa llvmpipe):
+Delay-import directory во всех четырёх exe пуст (`objdump -p` печатает
+`Entry d 00000000 00000000 Delay Import Directory`), то есть это статические
+импорты: загрузчик Windows ищет эти DLL до первой инструкции программы.
+`api-ms-win-core-winrt-*` — это WinRT, которого на Windows 7 нет вообще, а
+функции `PathCch*` появились в Windows 8. Значит, сегодняшняя игра не
+загрузится на Win7 даже с установленным UCRT. Это вывод из таблицы импорта
+(измерено) плюс известные версии, в которых эти API появились; на настоящей Win7
+не проверялось, и в §19.7 он стоит как непроверенный.
+
+Заполнить измерением: собрать probe (у него этих трёх импортов нет) и прогнать
+на чистой Win7 SP1 x86 без обновлений; если он не стартует — это UCRT.
+
+### 19.6. WGL под Wine: проходят оба варианта
+
+`tools/legacy_wgl_wine.py` (ветка `mvp2-wine-wgl`, в `mvp2` пока нет) собирает
+probe под Win7-таргет, создаёт свежий `mktemp`-Wine-префикс (никогда `~/.wine`),
+пинит его на Windows 7 через `HKCU\Software\Wine\Version=win7` и проверяет
+`reg query`, поднимает постоянный виртуальный десктоп Wine и прогоняет два
+случая (GL 2.1/GLSL 120 и GL 2.0/GLSL 110) через настоящий
+`Context::new("wgl", …)`, а не ручную настройку WGL.
+
+На этой машине (Wine 11.22, Mesa llvmpipe) прогон 2026-11-18:
 
 | цель | результат |
 | --- | --- |
-| `x86_64-win7-windows-gnu`, Wine 64-bit | **passed** оба случая: `context = WGL desktop OpenGL window`, `buffer_swap = true`, `gl_version = 2.1 / 2.0 Mesa 26.2.6-arch3.1`, `glsl_version = 1.20`, renderer `llvmpipe (LLVM 23.1.4, 256 bits)`, 7 checks и 25 backend outcomes |
-| `i686-win7-windows-gnu`, Wine | **failed**: `CreateWindowExW failed: File not found (2)` и `Invalid parameter (87)` |
+| `x86_64-win7-windows-gnu`, Wine | **passed** оба случая: `context = WGL desktop OpenGL window`, `buffer_swap = true`, `pointer_bits = 64`, `gl_version = 2.1 / 2.0 Mesa 26.2.6-arch3.1`, `glsl_version = 1.20`, renderer `llvmpipe (LLVM 23.1.4, 256 bits)`, 7 checks и 25 backend outcomes |
+| `i686-win7-windows-gnu`, Wine | **passed** оба случая, те же строки, `pointer_bits = 32`, 7 checks и 25 backend outcomes |
 
-Один и тот же 32-битный `horizon_client.exe` под Wine здесь запускается
-(`hello` печатается), так что Wine 32-bit сам по себе работает; падение — в
-создании окна WGL. Это ещё не разобрано. **Не записывать 32-bit WGL как
-прошедший.**
+32-бит — это форма реальной машины X1650, так что прошедший i686-прогон важнее
+64-битного: harness собирает probe именно под `i686-win7-windows-gnu` и запускает
+его в `WINEARCH=win64`-префиксе Wine, где 32-битные процессы идут через WoW64.
 
-Что доказывает 64-bit прогон: настоящий `wglCreateContext` на `CS_OWNDC`-окне,
+Запуск нашёл два настоящих бага WGL, оба исправлены на `mvp2-wine-wgl`:
+
+- pixel format просил 24 бита цвета и ни одного alpha, поэтому `glReadPixels`
+  отдавал alpha 255 везде и все проверки полупрозрачных наложений падали. Теперь
+  просится 32 бита с 8-битным destination alpha, как у EGL- и GLX-конфигов, а
+  формат без него отвергается.
+- `resize()` двигал окно, но не GL-drawable: Wine пересоздаёт drawable из
+  client rect только на present, поэтому GL продолжал рисовать в старый буфер, а
+  новая область читалась нулями. Теперь после `SetWindowPos` делается один
+  present, под проверкой живого контекста.
+
+Что доказывает прогон: настоящий `wglCreateContext` на `CS_OWNDC`-окне,
 разрешение символов через `wglGetProcAddress` с fallback в `opengl32.dll`
-(`crates/horizon-legacy-render/src/wgl.rs:516`), present и readback пикселя в
-Windows-PE-процессе. Что не доказывает: X1650 и её ICD. Wine отдаёт Mesa, а не
-драйвер ATI; `MESA_GL_VERSION_OVERRIDE` прибивает *объявленную* версию, а не
-поведение старого драйвера.
+(`crates/horizon-legacy-render/src/wgl.rs:516`) — `glCreateShader`,
+`glShaderSource` и `glGenBuffers` Wine не экспортирует из `opengl32.dll`, так
+что прошедший кадр доказывает и этот fallback, — present и readback пикселя в
+Windows-PE-процессе, на 32 и 64 битах.
+
+Что не доказывает: X1650 и её ICD. Wine отдаёт Mesa, а не драйвер ATI;
+`MESA_GL_VERSION_OVERRIDE` прибивает *объявленную* версию, а не поведение
+старого драйвера. И это probe, не игра: полный exe под Wine не запускался.
 
 ### 19.7. Что проверено, а что нет
 
 | Утверждение | Статус |
 | --- | --- |
-| `horizon-legacy-render` компилируется под `x86_64-win7-windows-gnu` | **да**, измерено здесь (`check`, 9 с) |
-| он же под `i686-win7-windows-gnu` | **да**, измерено здесь (16 с) |
+| `horizon-legacy-render` компилируется под `x86_64-win7-windows-gnu` | **да**, `check -p horizon-legacy-render` |
+| он же под `i686-win7-windows-gnu` | **да**, там же |
 | probe линкуется в PE32/PE32+ с subsystem 4.0/5.2 | **да**, `objdump -p` |
-| subsystem ≤ 6.1 гарантирует запуск на Win7 | **нет**: CRT всё ещё UCRT (§19.5) |
+| полная игра `horizon-game --features legacy-gl` собирается | **да**, `tools/win7_build.py --profile fast`, оба таргета; exe 214 МиБ |
+| её exe тоже объявляет 4.0/5.2 | **да**, тем же измерением скрипта |
+| subsystem ≤ 6.1 гарантирует запуск на Win7 | **нет**: CRT — это UCRT (§19.5) |
 | WGL-контекст и кадр под Wine, 64-bit | **да**, §19.6 |
-| WGL под Wine, 32-bit | **нет**, падает на `CreateWindowExW` |
-| полная игра `horizon-game` для Win7 собирается | **нет**, `cannot find -lwindows` |
+| WGL-контекст и кадр под Wine, 32-bit | **да**, §19.6 |
+| игра загрузится на Win7 с установленным UCRT | **не проверено**: в exe есть статические импорты WinRT/`api-ms-win-core-path` (§19.5) |
 | запуск на настоящем железе Win7 / X1650 | **не проверялось никогда** |
 
 ### 19.8. Что нужно на реальной Win7
@@ -1140,6 +1217,15 @@ Windows-PE-процессе. Что не доказывает: X1650 и её ICD
 - Контекст создаётся через legacy `wglCreateContext` (`wgl.rs:375`), без
   `WGL_ARB_create_context`/core profile — проверено чтением кода, ни одного
   `CreateContextAttribs` в крейте нет. Это ровно то, что даёт драйвер Win7-эпохи.
+- `KB2999226` (Universal C Runtime) — иначе не загрузятся `api-ms-win-crt-*`
+  импорты Rust-std (§19.5). Это минимум для probe.
+- Полной игре этого мало: до старта загрузчик ищет ещё
+  `api-ms-win-core-path-l1-1-0.dll`, `api-ms-win-core-winrt-l1-1-0.dll` и
+  `api-ms-win-core-winrt-error-l1-1-0.dll`, которых на Win7 нет (§19.5). Пока
+  они в таблице импорта, установка KB2999226 не поможет. Убрать их — работа по
+  коду (обновить `arboard`/`windows-sys`, сделать WinRT-путь `dualsense`/
+  `narrator` ленивым или под `#[cfg]` по версии ОС), а не по документации; здесь
+  она только записана.
 
 Запуск игры на таком железе — отдельный gate T02/O02; успешный Wine-прогон его
 не закрывает.

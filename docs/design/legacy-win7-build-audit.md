@@ -15,9 +15,10 @@
 а не объявление совместимости по успешному hosted build.
 
 **Статус:** target/distribution evidence и изолированный PE helper готовы;
-реальные Rust link и Win7 runtime здесь **не выполнялись**. Hardware gate
-Win7/X1650 открыт. Manifests, workflows, общая build policy и Game/GL wiring
-не изменялись.
+Rust-сборка обоих GNU-таргетов, включая полную игру, **выполнена 2026-11-18**
+(ветка `mvp2-win7-build`), WGL-путь прогнан под Wine на 32 и 64 битах (ветка
+`mvp2-wine-wgl`). Win7 runtime на настоящем железе здесь **не выполнялся**, и
+найденные API-set импорты (§19.5) держат hardware gate Win7/X1650 открытым.
 
 ## 1. Короткий результат
 
@@ -30,7 +31,8 @@ Win7/X1650 открыт. Manifests, workflows, общая build policy и Game/G
 | Native probe → полная игра | Это разные gates; независимый probe не проверяет game dependency closure |
 | Фактический MSRV полной игры на baseline | Не 1.90: `horizon-client` объявляет 1.90, но безусловно зависит от `horizon-mods` с `rust-version = "1.95"` |
 | PE helper | 8 unit tests проходят, включая отрицательные fixtures |
-| Rust compile/link в этой среде | **Крейты backend'а проверены 2026-11-18**: `check` обоих GNU-таргетов, probe линкуется в PE32/4.0 и PE32+/5.2 — [§19](opengl2-win7-x86.md), раздел «Сборка и запуск» |
+| Rust compile/link в этой среде | **Сделано 2026-11-18**: `check` обоих GNU-таргетов; probe и `horizon-client.exe --profile fast` линкуются в PE32/4.0 и PE32+/5.2 — [§19](opengl2-win7-x86.md) |
+| API-sets вне CRT | В `horizon-client.exe` статически импортируются WinRT и `api-ms-win-core-path` (§19.5); на Win7 их нет |
 | Win7 SP1 x86 + X1650 | Стенда нет; никакого runtime qualification нет |
 
 Первичные источники, прочитанные по точным версиям:
@@ -283,10 +285,18 @@ third-party binary не добавлен в репозиторий или test f
   UCRT и VCRedist нельзя считать автоматически установленными. Нужен x86 runtime,
   поддерживающий Win7, либо подтверждённый static CRT.
 - **Наблюдено 2026-11-18:** mingw-w64 14.0.0 на этой машине собран на UCRT
-  (`libmsvcrt.a` и `libucrt.a` побайтно равны), поэтому probe импортирует девять
-  `api-ms-win-crt-*` API-set DLL, которых на голой Win7 нет. `-mcrtdll=msvcrt-os`
+  (`libmsvcrt.a` и `libucrt.a` побайтно равны), поэтому probe импортирует восемь
+  (x86_64) или девять (i686) `api-ms-win-crt-*` API-set DLL, а игра — девять,
+  которых на голой Win7 нет. `-mcrtdll=msvcrt-os`
   чинит C-линковку, но не Rust-std: набор импортов не меняется. Подробности и
-  таблица — [§19.5](opengl2-win7-x86.md), раздел «Сборка и запуск».
+  таблица — [§19.5](opengl2-win7-x86.md).
+- **Сверх CRT, 2026-11-18:** `horizon-client.exe` статически импортирует
+  `api-ms-win-core-path-l1-1-0.dll` (`PathCchStripPrefix`, из `arboard`),
+  `api-ms-win-core-winrt-l1-1-0.dll` (`RoGetActivationFactory`) и
+  `api-ms-win-core-winrt-error-l1-1-0.dll` (`RoOriginateErrorW`, из
+  `windows` 0.62). Delay-import directory пуст, то есть загрузчик Win7 ищет их
+  до первой инструкции. У probe этих трёх импортов нет. Это отдельный блокер от
+  CRT: KB2999226 его не снимает.
 - Static CRT не убирает `kernel32`/другие OS imports. Новые SDK/import libraries могут
   ввести более новые dependencies; declared OS/subsystem version — только поле заголовка.
   Здесь `+crt-static` также не убирает UCRT-импорты.
