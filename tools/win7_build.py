@@ -24,7 +24,8 @@ mingw-w64's windres rather than an unprefixed `windres`.
 
 The exact cargo command (and the environment it gets) is printed before it runs.
 After a `build`, every `.exe` in that target's output directory is read as a PE
-image and its declared subsystem version is printed: 6.1 is Windows 7.
+image and its declared subsystem version is printed: 6.1 is Windows 7, and a value
+at or below it loads there (these targets declare 4.0 on i686 and 5.2 on x86_64).
 
 Exit status: 0 succeeded, 1 a build failed, 2 usage (argparse), 3 a compiler,
 linker or windres tool is missing for the requested target.
@@ -53,7 +54,8 @@ DEFAULT_PACKAGES = ("horizon-legacy-render", "horizon-render-api")
 
 PROFILES = ("dev", "fast", "release")
 
-# The lowest PE subsystem version Windows 7 accepts, for the summary line.
+# Windows 7's own version, for the summary line: a PE whose subsystem version is at
+# or below this one loads on Windows 7, a higher one refuses it.
 WINDOWS_7_VERSION = (6, 1)
 
 
@@ -164,7 +166,9 @@ def report_executables(directory: Path) -> None:
             continue
         (major, minor), subsystem = header
         kind = {2: "GUI", 3: "console"}.get(subsystem, f"subsystem {subsystem}")
-        verdict = "" if (major, minor) >= WINDOWS_7_VERSION else "  (below Windows 7)"
+        # The field is the *minimum* subsystem the loader must provide, so a value
+        # at or below Windows 7 is fine and anything above it would refuse Win7.
+        verdict = "" if (major, minor) <= WINDOWS_7_VERSION else "  (needs a newer Windows than 7)"
         print(f"{exe}: PE subsystem {major}.{minor} ({kind}){verdict}")
 
 
