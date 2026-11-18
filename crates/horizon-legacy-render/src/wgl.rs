@@ -251,7 +251,7 @@ pub struct Context {
 impl Context {
     fn create_window(size: [u32; 2]) -> Result<Self, String> {
         let serial = WINDOWS
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "window ID exhausted")?;
         let mut this = Self {
             instance: ptr::null_mut(),
