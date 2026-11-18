@@ -11,7 +11,7 @@ use horizon_render_api::{
 
 #[cfg(feature = "legacy-gl")]
 pub use horizon_legacy_render::{
-    MouseButton as NativeMouseButton, WindowEvent as NativeWindowEvent,
+    Context as NativeContext, MouseButton as NativeMouseButton, WindowEvent as NativeWindowEvent,
     WindowEvents as NativeWindowEvents,
 };
 

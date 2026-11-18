@@ -2,6 +2,7 @@
 //! tick (`execute`, `executeChain`), `BaseCommandBlock.performCommand`
 //! through the command system with the block's output, and
 //! `CommandBlockEditScreen` with what `handleSetCommandBlock` does with it.
+use crate::game::input_event::KeyEvent;
 use super::{Game, Screen, commands::execute::Source};
 use horizon_client::{
     chat::{ChatScreen, Commands},
@@ -16,7 +17,7 @@ use horizon_client::{
 use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 use {

@@ -1,13 +1,11 @@
+use crate::game::input_event;
 use super::{follow_keymap, follow_named_keymap};
 use horizon_client::{
     debug_keys::{DebugAction, DebugHost, DebugKeys, KeyAction, OpenScreen},
     keybinds::{self, KeyBinds},
 };
 use std::collections::HashSet;
-use winit::{
-    event::WindowEvent,
-    keyboard::{Key, KeyCode, NamedKey, NativeKeyCode, PhysicalKey},
-};
+use winit::keyboard::{Key, KeyCode, NamedKey, NativeKeyCode, PhysicalKey};
 
 // KeyEvent has private platform fields. Exercise the production mapping with its actual public
 // winit key fields, without creating a window or sending operating-system keyboard events.
@@ -140,7 +138,7 @@ fn ordinary_layout_keys_and_existing_escape_caps_remaps_are_preserved() {
         unidentified,
         PhysicalKey::Unidentified(NativeKeyCode::Unidentified)
     );
-    let mut focused = WindowEvent::Focused(false);
+    let mut focused = input_event::Event::Focused(false);
     follow_keymap(&mut focused);
-    assert!(matches!(focused, WindowEvent::Focused(false)));
+    assert!(matches!(focused, input_event::Event::Focused(false)));
 }

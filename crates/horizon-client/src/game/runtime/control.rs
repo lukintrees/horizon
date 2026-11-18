@@ -1,4 +1,5 @@
 //! Commands from the control socket (`horizon-ctl`), run on the game thread.
+use crate::game::input_event;
 use super::event_loop::EventLoopCtl;
 use super::{Game, Screen};
 use horizon_client::gfx::pack_timing;
@@ -687,7 +688,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    winit::event::WindowEvent::Focused(focused),
+                    input_event::Event::Focused(focused),
                     super::input_trace::InputOrigin::Agent,
                 );
                 ok()
@@ -1106,19 +1107,41 @@ impl Game<'_> {
                 ok()
             }
             "screenshot" => {
-                let renderer = self.renderer.modern_mut().ok_or("no renderer yet")?;
+                if self.renderer.modern_ref().is_none()
+                    && self.renderer.backend()
+                        != Some(horizon_client::render_contract::Backend::LegacyGl)
+                {
+                    return Err("no renderer yet".into());
+                }
                 if self.pending_screenshot.is_some() {
                     return Err("a screenshot is already pending".into());
                 }
                 arg(1)?;
                 // The rest of the line: a path may hold spaces.
                 let path = line.trim_start().strip_prefix("screenshot").unwrap_or("");
-                renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
-                    path: path.trim().into(),
-                    size: None,
-                    scaled: false,
-                    background: false,
-                });
+                let path = path.trim().into();
+                match self.renderer.modern_mut() {
+                    Some(renderer) => {
+                        renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
+                            path,
+                            size: None,
+                            scaled: false,
+                            background: false,
+                        });
+                    }
+                    // The native adapter keeps the request and reads the pixels back after
+                    // its next present: the same command, a different backend.
+                    None => {
+                        self.renderer
+                            .facade(Default::default(), Default::default())
+                            .ok_or("no renderer yet")?
+                            .request_screenshot(horizon_client::render_contract::ScreenshotRequest {
+                                path,
+                                size: None,
+                                scaled: false,
+                            })?;
+                    }
+                }
                 self.pending_screenshot = Some(reply.clone());
                 Ok(None)
             }
@@ -1682,6 +1705,70 @@ impl Game<'_> {
             .map_or((0, 0), |lod| lod.detail_progress());
         status["lod"]["detail_target_columns"] = wanted.into();
         status["lod"]["refined_target_columns"] = refined.into();
+        // The native GL2 backend's own identity: `horizon-ctl status` reads it to confirm the
+        // window is really the desktop GL one, and on which driver it runs. The modern owner
+        // says nothing here rather than a borrowed identity.
+        #[cfg(feature = "legacy-gl")]
+        {
+            let info = self.renderer.native_info();
+            status["legacy"] = match &info {
+                Some(info) if self.renderer.backend()
+                    == Some(horizon_client::render_contract::Backend::LegacyGl) =>
+                {
+                    // The tracked GPU payload and object counts, so a run says how much of the
+                    // native budget it drew with instead of leaving it to guesswork.
+                    let (used, free, sections) = self
+                        .renderer
+                        .native_usage()
+                        .map_or((Default::default(), Default::default(), 0), |u| u);
+                    // The interest table's own usage: resident tickets, queued completions,
+                    // retained payload bytes. A view that keeps meshing forever shows here.
+                    let stream = self.renderer.native_stream_usage();
+                    json!({
+                        "confirmed": true,
+                        "backend": "legacy-gl",
+                        "gl_version": info.gl_version,
+                        "glsl_version": info.glsl_version,
+                        "vendor": info.vendor,
+                        "renderer": info.renderer,
+                        "gpu": {
+                            "texture_bytes": used.texture_bytes,
+                            "mesh_bytes": used.mesh_bytes,
+                            "textures": used.textures,
+                            "meshes": used.meshes,
+                            "free_texture_bytes": free.texture_bytes,
+                            "free_mesh_bytes": free.mesh_bytes,
+                            "resident_sections": sections,
+                        },
+                        "stream": stream.map(|u| json!({
+                            "slots": u.slots,
+                            "pending": u.pending,
+                            "bytes": u.bytes,
+                            "removals": u.removals,
+                        })),
+                    })
+                }
+                _ => json!({
+                    "confirmed": false,
+                    "backend": null,
+                    "gl_version": null,
+                    "glsl_version": null,
+                    "vendor": null,
+                    "renderer": null,
+                }),
+            };
+        }
+        #[cfg(not(feature = "legacy-gl"))]
+        {
+            status["legacy"] = json!({
+                "confirmed": false,
+                "backend": null,
+                "gl_version": null,
+                "glsl_version": null,
+                "vendor": null,
+                "renderer": null,
+            });
+        }
         status["pending_uploads"] = self.pending_uploads.len().into();
         status["destroying"] = json!(destroying);
         status["physical_keys"] = json!(physical_keys);

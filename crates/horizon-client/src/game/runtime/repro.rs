@@ -15,6 +15,7 @@
 //!   world/                single player only: the world when it started
 //!   README.txt
 //! ```
+use crate::game::input_event;
 use super::event_loop::EventLoopCtl;
 use super::input_trace::{InputOrigin, TraceEvent, TraceKind};
 use super::{Game, Screen};
@@ -33,7 +34,7 @@ use std::{
 };
 use winit::{
     dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseScrollDelta, TouchPhase, WindowEvent},
+    event::{DeviceId, ElementState, MouseScrollDelta, TouchPhase},
     window::WindowId,
 };
 
@@ -1262,7 +1263,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    WindowEvent::MouseInput {
+                    input_event::Event::MouseInput {
                         device_id,
                         state,
                         button,
@@ -1280,7 +1281,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    WindowEvent::MouseWheel {
+                    input_event::Event::MouseWheel {
                         device_id,
                         delta,
                         phase: TouchPhase::Moved,
@@ -1293,7 +1294,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    WindowEvent::CursorMoved {
+                    input_event::Event::CursorMoved {
                         device_id,
                         position: PhysicalPosition::new(x, y),
                     },

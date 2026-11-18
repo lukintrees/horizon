@@ -7,6 +7,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
         font::Font,
         legacy_gfx::{ResourceLimits, test_assets},
     };
+    use horizon_assets::resource_source::ResourceSource;
     use horizon_render_api::{
         render_contract::ResourceGeneration, resource_contract::TerrainAtlasLimits,
     };
@@ -36,7 +37,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
     writer.finish().unwrap();
     let mut atlas = HudAtlas::boot();
     atlas.font = Font::load(
-        &root.0,
+        &ResourceSource::directory(root.0.clone()),
         &Default::default(),
         &[],
         (atlas.width, atlas.height),
@@ -119,7 +120,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
     assert_ne!(atlas.font.epoch(), changed_epoch);
     assert!(atlas.font.take_patches().is_empty());
     assert_eq!(renderer.resource_generation(), Some(ResourceGeneration(77)));
-    let mut hud = HudBatch::new([64; 2]);
+    let mut hud = HudBatch::scratch([64; 2]);
     hud.text(&atlas, "Ж", 8., 8., u32::MAX, false);
     assert!(!hud.vertices.is_empty());
     assert_eq!(hud.patches.len(), 1);
@@ -147,7 +148,7 @@ fn staged_asset_commit_resets_glyphs_only_on_success_and_draws_unicode_patches()
         .unwrap();
     assert_ne!(atlas.font.epoch(), epoch);
     assert!(atlas.font.take_patches().is_empty());
-    let mut rebuilt = HudBatch::new([64; 2]);
+    let mut rebuilt = HudBatch::scratch([64; 2]);
     rebuilt.text(&atlas, "Ж", 8., 8., u32::MAX, false);
     assert_eq!(rebuilt.patches.len(), 1);
     RendererFacade::legacy(

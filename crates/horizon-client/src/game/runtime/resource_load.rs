@@ -56,6 +56,9 @@ pub(super) fn synchronous_startup(options: &Options) -> bool {
         || options.world_frames.is_some()
         || options.benchmark.is_some()
         || options.control.is_some()
+        // The native GL2 owner has no wgpu loading window to hand a context over from: it
+        // creates its own context after the load, as a headless run does.
+        || options.renderer.is_native()
         || !options.execution_role.is_client()
         || std::env::var_os("HORIZON_SCREEN_BUILD_FIXTURE").is_some()
         || std::env::var_os("HORIZON_DISPENSE_FIXTURE").is_some()

@@ -122,6 +122,40 @@ class Ctl:
         args += ["--timeout", str(max(1, int(timeout)))]
         return self.command(*args)
 
+    def wait_world_drawn(self, timeout: float) -> dict[str, Any]:
+        """Wait until the world is actually on screen, not merely "loaded".
+
+        `wait-for loaded` holds while no chunk job is queued, which is true again
+        between the first chunk arriving and the rest being requested: a
+        screenshot then catches the game still saying "Loading terrain...".
+        The world counts as drawn when the native owner holds resident sections,
+        the screen is playing and the mesh stage stops moving for a few polls.
+        """
+        deadline = time.monotonic() + timeout
+        stable, last = 0, None
+        while time.monotonic() < deadline:
+            status = self.command("status")
+            legacy = status.get("legacy") or {}
+            gpu = legacy.get("gpu") or {}
+            stages = status.get("streaming") or {}
+            drawn = (
+                status.get("screen") == "playing"
+                and (gpu.get("resident_sections") or 0) > 0
+                and (status.get("chunks") or 0) > 0
+            )
+            meshing = stages.get("meshing")
+            stable = stable + 1 if drawn and meshing == last else 0
+            last = meshing
+            if stable >= 3:
+                return status
+            time.sleep(0.5)
+        raise Failure(
+            "the world never settled into a drawn frame within "
+            f"{timeout}s: screen {status.get('screen')!r}, "
+            f"resident sections {(gpu or {}).get('resident_sections')}, "
+            f"chunks {status.get('chunks')}, meshing {last}"
+        )
+
 
 def legacy_evidence(status: dict[str, Any]) -> dict[str, Any]:
     """The context's own confirmation, or why this run is not a legacy run.
@@ -151,14 +185,14 @@ def legacy_evidence(status: dict[str, Any]) -> dict[str, Any]:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    game = args.game or ROOT / lab.cargo_target() / "fast" / "horizon-game"
+    game = args.game or ROOT / lab.cargo_target() / "fast" / "horizon-client"
     ctl = args.ctl or game.with_name("horizon-ctl")
     for path, what in ((game, "game binary"), (ctl, "horizon-ctl")):
         if not Path(path).is_file():
             raise Failure(f"{what} not found at {path}: build it first "
                           f"(cargo build --profile fast -p horizon-game --features legacy-gl)")
     resources = Path(args.resources)
-    if not (resources / "minecraft").is_dir():
+    if not (resources / "assets" / "minecraft").is_dir():
         raise Failure(f"prepared resources not found at {resources} (tools/lab.py prepare)")
 
     root = Path(tempfile.mkdtemp(prefix="horizon-legacy-mvp-"))
@@ -212,7 +246,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         status = control.command("status")
         report["checkpoints"]["status"] = True
-        report["legacy"] = legacy_evidence(status)
+        # The socket answers as soon as the control server starts, which is before the native
+        # context exists: the backend's own report is what this run waits for.
+        deadline = time.monotonic() + args.timeout
+        while True:
+            try:
+                report["legacy"] = legacy_evidence(status)
+                break
+            except Failure:
+                if time.monotonic() > deadline:
+                    raise
+            time.sleep(0.25)
+            status = control.command("status")
         report["checkpoints"]["legacy"] = True
 
         control.wait_for("screen", "title", args.timeout)
@@ -221,15 +266,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         control.command("screenshot", report["menu_screenshot"])
 
         if args.open_world:
-            control.command("open", args.open_world, "creative")
+            # `open WORLD [SEED] [creative]`: the seed slot is positional, so creative
+            # needs one in front of it.
+            control.command("open", args.open_world, "0", "creative")
             control.wait_for("loaded", None, args.timeout)
             report["checkpoints"]["world_loaded"] = True
+            # `loaded` clears between the first chunk and the rest arriving; the
+            # screenshot is only written once the frame really has terrain.
+            status = control.wait_world_drawn(args.timeout)
+            report["checkpoints"]["world_drawn"] = True
             report["world_screenshot"] = str(folders["artifacts"] / "world.png")
             control.command("screenshot", report["world_screenshot"])
             state = control.command("state")
             report["player"] = state.get("player")
-            chunks = control.command("status").get("chunks")
-            report["chunks"] = chunks
+            report["chunks"] = status.get("chunks")
+            report["legacy_gpu"] = (status.get("legacy") or {}).get("gpu")
 
         control.command("quit")
         process.wait(timeout=60)

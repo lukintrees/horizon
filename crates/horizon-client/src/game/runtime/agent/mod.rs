@@ -6,6 +6,7 @@
 #[path = "agent_navigation.rs"]
 mod navigation;
 
+use crate::game::input_event;
 use super::event_loop::EventLoopCtl;
 use super::{Game, Screen};
 use horizon_client::actions::Action;
@@ -28,7 +29,7 @@ use std::{
 };
 use winit::{
     dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
+    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase},
     keyboard::KeyCode,
 };
 
@@ -1068,7 +1069,7 @@ impl Game<'_> {
             self.handle_window_event(
                 event_loop,
                 id,
-                WindowEvent::CursorMoved {
+                input_event::Event::CursorMoved {
                     device_id,
                     position,
                 },
@@ -1078,7 +1079,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    WindowEvent::MouseInput {
+                    input_event::Event::MouseInput {
                         device_id,
                         state: ElementState::Pressed,
                         button,
@@ -1090,7 +1091,7 @@ impl Game<'_> {
         self.handle_window_event(
             event_loop,
             id,
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 device_id,
                 state: ElementState::Released,
                 button,
@@ -1667,7 +1668,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    WindowEvent::CursorMoved {
+                    input_event::Event::CursorMoved {
                         device_id,
                         position,
                     },
@@ -1677,7 +1678,7 @@ impl Game<'_> {
                     self.handle_window_event(
                         event_loop,
                         id,
-                        WindowEvent::MouseWheel {
+                        input_event::Event::MouseWheel {
                             device_id,
                             delta: MouseScrollDelta::LineDelta(0.0, steps.signum()),
                             phase: TouchPhase::Moved,

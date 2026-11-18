@@ -95,6 +95,10 @@ pub mod legacy_gfx;
 pub mod native_loading;
 pub mod renderer_facade;
 pub mod renderer_owner;
+// The contract vocabulary the owner, the facade and Game's native branches name
+// (`Backend`, `FrameOutcome`, `FrameOptions`, `PointerMode`): plain data, no
+// backend behind it.
+pub use horizon_render_api::{platform_contract, render_contract, resource_contract};
 // The CPU bridges to `horizon-render-api` (also `gui_bridge`, `paged_hud` and
 // `render_bridge`): plain data, no wgpu or GL object, always built, so the legacy
 // backend and tests reach them without a feature.

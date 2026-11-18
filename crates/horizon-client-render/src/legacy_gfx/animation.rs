@@ -192,7 +192,11 @@ impl Animations {
             .checked_add(scratch.max(decoded))
             .is_none_or(|n| n > limit)
         {
-            return Err("animation staging/decoded-page budget exceeded".into());
+            return Err(format!(
+                "animation staging/decoded-page budget exceeded: {} retained + {} scratch/pages over {limit}",
+                retained,
+                scratch.max(decoded)
+            ));
         }
         let mut work = Work {
             terrain: Vec::new(),

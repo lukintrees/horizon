@@ -59,7 +59,7 @@ mod tests {
     use super::*;
     #[test]
     fn menu_requests_do_not_inherit_world_payloads() {
-        let hud = HudBatch::new([64; 2]);
+        let hud = HudBatch::scratch([64; 2]);
         let frame = crate::gfx::menu_frame(&hud);
         assert!(frame.title);
         assert!(!frame.skybox);
@@ -78,7 +78,7 @@ mod tests {
     }
     #[test]
     fn resize_and_nonfinite_layout_require_a_fresh_request() {
-        let mut hud = HudBatch::new([64; 2]);
+        let mut hud = HudBatch::scratch([64; 2]);
         assert!(
             MenuFrame::static_color(&hud, [0.; 4])
                 .validate_target([64; 2])
