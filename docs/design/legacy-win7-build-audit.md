@@ -30,7 +30,7 @@ Win7/X1650 открыт. Manifests, workflows, общая build policy и Game/G
 | Native probe → полная игра | Это разные gates; независимый probe не проверяет game dependency closure |
 | Фактический MSRV полной игры на baseline | Не 1.90: `horizon-client` объявляет 1.90, но безусловно зависит от `horizon-mods` с `rust-version = "1.95"` |
 | PE helper | 8 unit tests проходят, включая отрицательные fixtures |
-| Rust compile/link в этой среде | Не запускался: `rustc`, `cargo`, `rustup` и MSVC SDK/linker отсутствуют |
+| Rust compile/link в этой среде | **Крейты backend'а проверены 2026-11-18**: `check` обоих GNU-таргетов, probe линкуется в PE32/4.0 и PE32+/5.2 — [§19](opengl2-win7-x86.md), раздел «Сборка и запуск» |
 | Win7 SP1 x86 + X1650 | Стенда нет; никакого runtime qualification нет |
 
 Первичные источники, прочитанные по точным версиям:
@@ -282,8 +282,14 @@ third-party binary не добавлен в репозиторий или test f
 - `msvcrt.dll` существует в Win7, но нужная функция/версия этим не гарантируется;
   UCRT и VCRedist нельзя считать автоматически установленными. Нужен x86 runtime,
   поддерживающий Win7, либо подтверждённый static CRT.
+- **Наблюдено 2026-11-18:** mingw-w64 14.0.0 на этой машине собран на UCRT
+  (`libmsvcrt.a` и `libucrt.a` побайтно равны), поэтому probe импортирует девять
+  `api-ms-win-crt-*` API-set DLL, которых на голой Win7 нет. `-mcrtdll=msvcrt-os`
+  чинит C-линковку, но не Rust-std: набор импортов не меняется. Подробности и
+  таблица — [§19.5](opengl2-win7-x86.md), раздел «Сборка и запуск».
 - Static CRT не убирает `kernel32`/другие OS imports. Новые SDK/import libraries могут
   ввести более новые dependencies; declared OS/subsystem version — только поле заголовка.
+  Здесь `+crt-static` также не убирает UCRT-импорты.
 - Existing `tools/check_imports.py` содержит Windows 10/11 system allowlist. Его success
   нельзя переиспользовать как Win7 allowlist или как доказательство CRT deployment.
 
