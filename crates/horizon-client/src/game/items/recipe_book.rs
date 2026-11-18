@@ -281,7 +281,7 @@ impl Game<'_> {
         }
     }
     /// A key press while the search box has focus.
-    pub(super) fn recipe_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn recipe_key(&mut self, event: &crate::game::input_event::KeyEvent) {
         use winit::keyboard::PhysicalKey;
         if let Some(shortcut) = self.edit_shortcut(event) {
             self.recipe_shortcut(shortcut);

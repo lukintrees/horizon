@@ -1,4 +1,5 @@
 //! Core gameplay regression tests.
+use crate::game::input_event;
 use mod_api::ServerHost;
 #[test]
 #[ignore = "daily"]
@@ -190,7 +191,7 @@ fn client_modifier_snapshot_tracks_focus_loss() {
         assert!(snapshot.alt());
         assert!(!snapshot.control());
         assert!(!snapshot.super_key());
-        game.handle_window_event_inner(&TestLoop, WindowEvent::Focused(false));
+        game.handle_window_event_inner(&TestLoop, input_event::Event::Focused(false));
         assert_eq!((game as &dyn ClientHost).modifiers().bits, 0);
         assert_eq!(snapshot.bits, 5);
     });

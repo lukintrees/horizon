@@ -15,7 +15,21 @@ impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
             base_bytes: 128 << 20,
-            terrain: TerrainAtlasLimits::default(),
+            terrain: TerrainAtlasLimits {
+                // A section is drawn as one GL mesh per (atlas page, pass): the more pages the
+                // 1301 vanilla block sprites need, the more objects and draw calls one section
+                // costs. At 64 px sprites and a 1 px border, a 512 px page holds 49 of them, so
+                // the set needs 27 pages and a section can split into ~27 solid meshes -- a
+                // radius-12 view then passes the backend's mesh object limit. 1024 px holds 225
+                // and needs 6 pages, and 4 MiB per page keeps the uploaded total near the old
+                // one. 2048 is the largest texture some GL2-era cards (Radeon X1xxx) accept, so
+                // 1024 leaves the smaller page size those drivers are sure of.
+                page_size: 1024,
+                max_pages: 32,
+                max_layers: 32768,
+                // One decoded page (4 MiB) plus the borrowed layer table.
+                staging_bytes: 8 << 20,
+            },
         }
     }
 }

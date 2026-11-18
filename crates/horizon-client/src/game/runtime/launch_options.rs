@@ -112,19 +112,11 @@ impl Renderer {
         }
     }
     /// Whether the window is drawn by the desktop OpenGL 2 backend.
-    #[allow(
-        dead_code,
-        reason = "native renderer construction is a later batch; the flag already names it"
-    )]
     pub(super) fn is_native(self) -> bool {
         self == Self::NativeGl2
     }
     /// The menu background the backend can draw: the native one has no panorama
     /// yet, so its menus are an explicit flat colour rather than a silent swap.
-    #[allow(
-        dead_code,
-        reason = "native renderer construction is a later batch; the flag already names it"
-    )]
     pub(super) fn menu_background(self) -> horizon_client::renderer_facade::MenuBackground {
         match self {
             Self::Modern => horizon_client::renderer_facade::MenuBackground::Panorama,

@@ -7,6 +7,8 @@ use horizon_render_api::render_contract::{Backend, FrameOptions, VisibleSections
 mod native_streaming;
 #[cfg(feature = "legacy-gl")]
 pub use native_streaming::{NativeStream, UploadBudget as NativeUploadBudget};
+#[cfg(feature = "legacy-gl")]
+use native_streaming::fitted_radius;
 
 mod visibility;
 pub use visibility::SectionOrder;
@@ -14,6 +16,17 @@ pub use visibility::SectionOrder;
 #[derive(Default)]
 pub struct RendererOwner {
     inner: Owner,
+}
+
+/// What a native GL driver calls itself (`status.legacy`, the run report). Plain strings: the
+/// probe and the tests read them without a GL context.
+#[cfg(feature = "legacy-gl")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeInfo {
+    pub vendor: String,
+    pub renderer: String,
+    pub gl_version: String,
+    pub glsl_version: String,
 }
 #[derive(Default)]
 enum Owner {
@@ -70,6 +83,57 @@ impl RendererOwner {
         )?
         .commit()?;
         Ok(Self::from_legacy(renderer))
+    }
+    /// The GL driver behind a native owner, for `status` and the run report: which GL and
+    /// GLSL version answered, and who wrote the driver. Never invented for the modern one.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_info(&self) -> Option<NativeInfo> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        let identity = renderer.identity();
+        Some(NativeInfo {
+            vendor: identity.vendor.clone(),
+            renderer: identity.renderer.clone(),
+            gl_version: identity.version.clone(),
+            glsl_version: identity.glsl.clone(),
+        })
+    }
+    /// The largest view the native interest table can hold around a level of `sections`
+    /// vertical sections, in chunks, and the table's capacity: `None` for the modern owner,
+    /// whose interest is its own plan's.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_view_limit(&self, sections: usize) -> Option<(i32, usize)> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        let slots = renderer.stream_capacity().slots;
+        Some((fitted_radius(sections, slots), slots))
+    }
+    /// What the native owner's GPU budget holds and what is left of it, so a run can say how
+    /// close to the tracked payload limit it drew.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_usage(
+        &self,
+    ) -> Option<(
+        horizon_legacy_render::Stats,
+        horizon_legacy_render::Stats,
+        usize,
+    )> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        let (used, free) = renderer.gpu_usage();
+        Some((used, free, renderer.resident_sections()))
+    }
+    /// The native section interest table's own usage: how many residency tickets it holds,
+    /// how many completions wait for upload, and the bytes they retained.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_stream_usage(&self) -> Option<horizon_render_api::streaming::Usage> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        renderer.stream_usage()
     }
     pub fn backend(&self) -> Option<Backend> {
         match self.inner {

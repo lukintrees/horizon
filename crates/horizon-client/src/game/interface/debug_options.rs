@@ -11,7 +11,8 @@ use horizon_client::{
     text::Text,
     ui::{self, EditBox, Scroll},
 };
-use winit::event::{ElementState, KeyEvent};
+use crate::game::input_event::KeyEvent;
+use winit::event::ElementState;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `HeaderAndFooterLayout(this, 61, 33)`.

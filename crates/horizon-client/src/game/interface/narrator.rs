@@ -2,6 +2,7 @@
 //! opened with the client, closed with it, and kept in step with the options
 //! it reads (`Options.narrator`, `getFinalSoundSourceVolume(VOICE)`); and its
 //! `NARRATOR_TOGGLE` toast.
+use crate::game::input_event;
 use super::{Game, Screen};
 use horizon_client::{
     clipboard,
@@ -12,7 +13,8 @@ use horizon_client::{
     toasts::SystemToast,
 };
 use horizon_narrator::{Status, screen::Trigger};
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use crate::game::input_event::KeyEvent;
+use winit::event::{ElementState, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `Minecraft`'s constructor: `new GameNarrator`, then
@@ -119,25 +121,25 @@ pub(super) fn is_hotkey(
 /// shortcuts (fullscreen, screenshots, debug keys) never get here.
 pub(super) fn narrate_input(
     narration: &mut ScreenNarrator,
-    event: &WindowEvent,
+    event: &input_event::Event,
     cursor: (f32, f32),
 ) {
     match event {
-        WindowEvent::KeyboardInput { event, .. } => {
+        input_event::Event::KeyboardInput { event, .. } => {
             if let PhysicalKey::Code(key) = event.physical_key {
                 narrate_key(narration, key, event.state == ElementState::Pressed);
             } else if event.state == ElementState::Pressed {
                 narration.keyboard_action();
             }
         }
-        WindowEvent::MouseInput { state, button, .. } => {
+        input_event::Event::MouseInput { state, button, .. } => {
             narration.set_input(InputType::Mouse);
             if *state == ElementState::Pressed {
                 narration.mouse_pressed(cursor, *button == MouseButton::Left);
             }
         }
-        WindowEvent::MouseWheel { .. } => narration.mouse_action(),
-        WindowEvent::CursorMoved { .. } => narration.mouse_moved(),
+        input_event::Event::MouseWheel { .. } => narration.mouse_action(),
+        input_event::Event::CursorMoved { .. } => narration.mouse_moved(),
         _ => {}
     }
 }

@@ -1,5 +1,6 @@
 //! winit's `ApplicationHandler` for the game window: window and device events, shutting down,
 //! and the idle step (`about_to_wait`).
+use crate::game::input_event;
 use super::*;
 
 impl Game<'_> {
@@ -16,21 +17,21 @@ impl Game<'_> {
 /// A key, a modifier, a click, the wheel, the pointer or the input method. Resize and close are
 /// not, so a person can still close the window. A modifier change counts: `reconcile` would
 /// release a Shift or Ctrl the run holds.
-fn is_input(event: &WindowEvent) -> bool {
+fn is_input(event: &input_event::Event) -> bool {
     matches!(
         event,
-        WindowEvent::KeyboardInput { .. }
-            | WindowEvent::ModifiersChanged(_)
-            | WindowEvent::MouseInput { .. }
-            | WindowEvent::MouseWheel { .. }
-            | WindowEvent::CursorMoved { .. }
-            | WindowEvent::Ime(_)
+        input_event::Event::KeyboardInput { .. }
+            | input_event::Event::ModifiersChanged(_)
+            | input_event::Event::MouseInput { .. }
+            | input_event::Event::MouseWheel { .. }
+            | input_event::Event::CursorMoved { .. }
+            | input_event::Event::Ime(_)
     )
 }
 
 /// A person's input during a scripted run is dropped. What the run itself sends (the control
 /// socket, a replay, the game's own) still plays.
-fn locks_out(origin: input_trace::InputOrigin, scripted: bool, event: &WindowEvent) -> bool {
+fn locks_out(origin: input_trace::InputOrigin, scripted: bool, event: &input_event::Event) -> bool {
     scripted && origin == input_trace::InputOrigin::User && is_input(event)
 }
 
@@ -40,10 +41,10 @@ fn locks_out(origin: input_trace::InputOrigin, scripted: bool, event: &WindowEve
 fn held_focus(
     origin: input_trace::InputOrigin,
     scripted: bool,
-    event: &WindowEvent,
+    event: &input_event::Event,
 ) -> Option<bool> {
     match event {
-        WindowEvent::Focused(focused) if scripted && origin == input_trace::InputOrigin::User => {
+        input_event::Event::Focused(focused) if scripted && origin == input_trace::InputOrigin::User => {
             Some(*focused)
         }
         _ => None,
@@ -68,18 +69,18 @@ enum Unclaimed {
 fn at_unclaimed(
     origin: input_trace::InputOrigin,
     unclaimed: bool,
-    event: &WindowEvent,
+    event: &input_event::Event,
 ) -> Unclaimed {
     if !unclaimed || origin != input_trace::InputOrigin::User {
         return Unclaimed::Passes;
     }
     match event {
-        WindowEvent::MouseInput {
+        input_event::Event::MouseInput {
             state: ElementState::Pressed,
             ..
         } => Unclaimed::Claims,
-        WindowEvent::CursorMoved { .. } => Unclaimed::Passes,
-        WindowEvent::Focused(_) => Unclaimed::Dropped,
+        input_event::Event::CursorMoved { .. } => Unclaimed::Passes,
+        input_event::Event::Focused(_) => Unclaimed::Dropped,
         _ if is_input(event) => Unclaimed::Dropped,
         _ => Unclaimed::Passes,
     }
@@ -91,10 +92,10 @@ fn at_unclaimed(
 fn held_modifiers(
     origin: input_trace::InputOrigin,
     unclaimed: bool,
-    event: &WindowEvent,
+    event: &input_event::Event,
 ) -> Option<winit::event::Modifiers> {
     match event {
-        WindowEvent::ModifiersChanged(modifiers)
+        input_event::Event::ModifiersChanged(modifiers)
             if unclaimed && origin == input_trace::InputOrigin::User =>
         {
             Some(*modifiers)
@@ -110,15 +111,15 @@ impl Game<'_> {
         &mut self,
         event_loop: &dyn EventLoopCtl,
         id: WindowId,
-        event: WindowEvent,
+        event: input_event::Event,
         origin: input_trace::InputOrigin,
     ) {
         let input = matches!(
             event,
-            WindowEvent::KeyboardInput { .. }
-                | WindowEvent::MouseInput { .. }
-                | WindowEvent::MouseWheel { .. }
-                | WindowEvent::Ime(_)
+            input_event::Event::KeyboardInput { .. }
+                | input_event::Event::MouseInput { .. }
+                | input_event::Event::MouseWheel { .. }
+                | input_event::Event::Ime(_)
         );
         self.with_user_input(input, |game| {
             game.handle_window_event_as(event_loop, id, event, origin);
@@ -129,14 +130,15 @@ impl Game<'_> {
         &mut self,
         event_loop: &dyn EventLoopCtl,
         id: WindowId,
-        mut event: WindowEvent,
+        mut event: input_event::Event,
         origin: input_trace::InputOrigin,
     ) {
         // A headless game has no window: its events (the frame, the control socket's input)
-        // carry `WindowId::dummy()`.
+        // carry `WindowId::dummy()`. So does the native GL one, whose events its own producer
+        // makes; neither has a winit id to match.
         let ours = match &self.window {
             Some(w) => w.id() == id,
-            None => self.options.headless,
+            None => self.options.headless || self.options.renderer.is_native(),
         };
         if !ours {
             return;
@@ -158,7 +160,7 @@ impl Game<'_> {
         }
         follow_keymap(&mut event);
         // MacosUtil.setCtrlClickEmulatesRightClick: Control + left click is a right click.
-        if let WindowEvent::MouseInput { state, button, .. } = &mut event
+        if let input_event::Event::MouseInput { state, button, .. } = &mut event
             && *button == MouseButton::Left
             && self.right_click_emulation.is_right_click(
                 *state == ElementState::Pressed,
@@ -171,19 +173,19 @@ impl Game<'_> {
         // Who caused it, before the event is handled: the trace wants the
         // window's own keys, never the ones the socket made up.
         self.trace_window_event(origin, &event);
-        if let WindowEvent::KeyboardInput { event, .. } = &event
+        if let input_event::Event::KeyboardInput { event, .. } = &event
             && let PhysicalKey::Code(key) = event.physical_key
         {
             if event.state == ElementState::Pressed {
                 self.physical_keys.insert(key);
-                horizon_client::keybinds::learn_layout(event);
+                horizon_client::keybinds::learn_layout(event.physical_key, &event.key_without_modifiers());
             } else {
                 self.physical_keys.remove(&key);
             }
         }
         if matches!(
             &event,
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 state: ElementState::Pressed,
                 ..
             }
@@ -191,7 +193,7 @@ impl Game<'_> {
         {
             self.pad.keyboard_took_over = true;
         }
-        if let WindowEvent::MouseInput { state, button, .. } = &event {
+        if let input_event::Event::MouseInput { state, button, .. } = &event {
             if *state == ElementState::Pressed {
                 self.physical_buttons.insert(*button);
             } else {
@@ -199,7 +201,7 @@ impl Game<'_> {
             }
         }
         let mouse = if !self.pad_synthetic_input()
-            && let WindowEvent::MouseInput { state, button, .. } = &event
+            && let input_event::Event::MouseInput { state, button, .. } = &event
         {
             Some((
                 glfw_button(*button),
@@ -217,11 +219,11 @@ impl Game<'_> {
             }
         }
         if mouse.is_some()
-            && let WindowEvent::MouseInput { state, button, .. } = &event
+            && let input_event::Event::MouseInput { state, button, .. } = &event
         {
             self.mod_mappings_button(*button, *state == ElementState::Pressed);
         }
-        let resized = matches!(event, WindowEvent::Resized(_));
+        let resized = matches!(event, input_event::Event::Resized(_));
         self.handle_window_event_inner(event_loop, event);
         if resized {
             self.notify_window_resize();
@@ -315,7 +317,10 @@ impl Game<'_> {
         if self.pending_save.is_some() {
             return;
         }
-        horizon_client::spans::time("pads", || self.poll_pads(event_loop));
+        // Controllers read winit's device events; the native window has none to read.
+        if !self.options.renderer.is_native() {
+            horizon_client::spans::time("pads", || self.poll_pads(event_loop));
+        }
         self.settle_after_run(event_loop);
         self.pause_if_inactive();
         if let Some(limit) = self.options.time_limit()
@@ -333,21 +338,24 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    WindowEvent::RedrawRequested,
+                    input_event::Event::RedrawRequested,
                     input_trace::InputOrigin::Game,
                 );
             } else {
                 w.request_redraw();
             }
-        } else if self.options.headless {
-            // The headless loop paces the frames itself (`run_headless`).
+        } else if self.options.headless || self.options.renderer.is_native() {
+            // The native GL window has no winit loop to ask for a redraw: the game draws one
+            // frame per pass, as a headless run does.
             self.handle_window_event(
                 event_loop,
                 WindowId::dummy(),
-                WindowEvent::RedrawRequested,
+                input_event::Event::RedrawRequested,
                 input_trace::InputOrigin::Game,
             );
-            return;
+            if self.options.headless {
+                return;
+            }
         }
         // Consume the last frame's result: a hidden compositor may stop sending
         // redraws altogether, leaving a successful result stale indefinitely.
@@ -422,10 +430,11 @@ impl ApplicationHandler for Game<'_> {
         self.previous = Instant::now();
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let event: input_event::Event = event.into();
         let key = if self.window.as_ref().is_some_and(|w| w.id() == id)
             && !self.scripted_run()
             && !self.unclaimed_window
-            && let WindowEvent::KeyboardInput {
+            && let input_event::Event::KeyboardInput {
                 event,
                 is_synthetic: false,
                 ..
@@ -435,9 +444,8 @@ impl ApplicationHandler for Game<'_> {
         } else {
             None
         };
-        self.handle_window_event(event_loop, id, event, input_trace::InputOrigin::User);
+        self.handle_window_event(event_loop, id, event.clone(), input_trace::InputOrigin::User);
         if let Some((event, modifiers)) = key {
-            use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
             let name = match event.physical_key {
                 PhysicalKey::Code(code) => horizon_client::keybinds::key_name(code),
                 PhysicalKey::Unidentified(_) => None,
@@ -509,25 +517,25 @@ mod tests {
     use winit::keyboard::ModifiersState;
 
     // A key's `KeyEvent` can't be made outside winit; these are the person's other inputs.
-    fn inputs() -> Vec<WindowEvent> {
+    fn inputs() -> Vec<input_event::Event> {
         let device_id = DeviceId::dummy();
         vec![
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 device_id,
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
             },
-            WindowEvent::MouseWheel {
+            input_event::Event::MouseWheel {
                 device_id,
                 delta: MouseScrollDelta::LineDelta(0.0, 1.0),
                 phase: TouchPhase::Moved,
             },
-            WindowEvent::CursorMoved {
+            input_event::Event::CursorMoved {
                 device_id,
                 position: PhysicalPosition::new(10.0, 20.0),
             },
-            WindowEvent::ModifiersChanged(Modifiers::from(ModifiersState::empty())),
-            WindowEvent::Ime(Ime::Commit("a".into())),
+            input_event::Event::ModifiersChanged(Modifiers::from(ModifiersState::empty())),
+            input_event::Event::Ime(Ime::Commit("a".into())),
         ]
     }
 
@@ -550,8 +558,8 @@ mod tests {
     #[test]
     fn a_person_can_still_close_the_window() {
         for event in [
-            WindowEvent::CloseRequested,
-            WindowEvent::Resized(PhysicalSize::new(854, 480)),
+            input_event::Event::CloseRequested,
+            input_event::Event::Resized(PhysicalSize::new(854, 480)),
         ] {
             assert!(!locks_out(InputOrigin::User, true, &event), "{event:?}");
             assert_eq!(
@@ -565,7 +573,7 @@ mod tests {
     #[test]
     fn only_a_persons_press_claims_an_agents_window() {
         let device_id = DeviceId::dummy();
-        let press = WindowEvent::MouseInput {
+        let press = input_event::Event::MouseInput {
             device_id,
             state: ElementState::Pressed,
             button: MouseButton::Left,
@@ -576,20 +584,20 @@ mod tests {
         );
         // The focus alone claims nothing, and the game doesn't hear of it.
         for focused in [true, false] {
-            let event = WindowEvent::Focused(focused);
+            let event = input_event::Event::Focused(focused);
             assert_eq!(
                 at_unclaimed(InputOrigin::User, true, &event),
                 Unclaimed::Dropped
             );
         }
-        let release = WindowEvent::MouseInput {
+        let release = input_event::Event::MouseInput {
             device_id,
             state: ElementState::Released,
             button: MouseButton::Left,
         };
         for event in inputs().into_iter().skip(1).chain([release]) {
             let want = match event {
-                WindowEvent::CursorMoved { .. } => Unclaimed::Passes,
+                input_event::Event::CursorMoved { .. } => Unclaimed::Passes,
                 _ => Unclaimed::Dropped,
             };
             assert_eq!(
@@ -599,8 +607,8 @@ mod tests {
             );
         }
         for event in [
-            WindowEvent::CloseRequested,
-            WindowEvent::Resized(PhysicalSize::new(854, 480)),
+            input_event::Event::CloseRequested,
+            input_event::Event::Resized(PhysicalSize::new(854, 480)),
         ] {
             assert_eq!(
                 at_unclaimed(InputOrigin::User, true, &event),
@@ -613,19 +621,19 @@ mod tests {
     #[test]
     fn a_persons_modifiers_are_kept_for_the_claim() {
         let shift = Modifiers::from(ModifiersState::SHIFT);
-        let event = WindowEvent::ModifiersChanged(shift);
+        let event = input_event::Event::ModifiersChanged(shift);
         assert_eq!(held_modifiers(InputOrigin::User, true, &event), Some(shift));
         assert_eq!(held_modifiers(InputOrigin::User, false, &event), None);
         assert_eq!(held_modifiers(InputOrigin::Agent, true, &event), None);
         assert_eq!(
-            held_modifiers(InputOrigin::User, true, &WindowEvent::Focused(true)),
+            held_modifiers(InputOrigin::User, true, &input_event::Event::Focused(true)),
             None
         );
     }
 
     #[test]
     fn the_agent_still_drives_its_unclaimed_window() {
-        let events = inputs().into_iter().chain([WindowEvent::Focused(true)]);
+        let events = inputs().into_iter().chain([input_event::Event::Focused(true)]);
         for event in events {
             for origin in [InputOrigin::Agent, InputOrigin::Game] {
                 assert_eq!(
@@ -639,7 +647,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_window_hears_everything() {
-        let events = inputs().into_iter().chain([WindowEvent::Focused(true)]);
+        let events = inputs().into_iter().chain([input_event::Event::Focused(true)]);
         for event in events {
             assert_eq!(
                 at_unclaimed(InputOrigin::User, false, &event),
@@ -652,7 +660,7 @@ mod tests {
     #[test]
     fn a_persons_focus_change_waits_for_the_run_to_end() {
         for focused in [true, false] {
-            let event = WindowEvent::Focused(focused);
+            let event = input_event::Event::Focused(focused);
             assert_eq!(held_focus(InputOrigin::User, true, &event), Some(focused));
             assert_eq!(held_focus(InputOrigin::User, false, &event), None);
             assert!(!locks_out(InputOrigin::User, true, &event));

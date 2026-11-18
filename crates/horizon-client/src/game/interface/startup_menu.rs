@@ -1,5 +1,6 @@
 //! The interactive title before world resources exist. Uses only the menu
 //! atlas/panorama; transfers the actual screen and queued entry to Game.
+use crate::game::input_event;
 use super::event_loop::EventLoopCtl;
 use super::key_focus::{self, Act};
 use super::*;
@@ -8,7 +9,8 @@ use horizon_client::{
     options_ui::{Event, OptionsUi, Page},
     widgets::{Kind, Target},
 };
-use winit::{event::KeyEvent, keyboard::ModifiersState};
+use crate::game::input_event::KeyEvent;
+use winit::keyboard::ModifiersState;
 
 #[derive(Default)]
 pub(super) struct StartupMenu {
@@ -889,12 +891,12 @@ impl Loading {
     /// The real mouse before the screen takes it: a move, a press or a
     /// scroll hands the pointer back from the keyboard (a press or a scroll
     /// where the mouse left it), and a left press focuses what it lands on.
-    fn menu_key_focus_mouse(&mut self, event: &WindowEvent) {
+    fn menu_key_focus_mouse(&mut self, event: &input_event::Event) {
         match event {
-            WindowEvent::CursorMoved { .. } => {
+            input_event::Event::CursorMoved { .. } => {
                 self.menu.key_focus_release();
             }
-            WindowEvent::MouseInput { state, button, .. } => {
+            input_event::Event::MouseInput { state, button, .. } => {
                 if self.menu.key_focus_release() {
                     self.update_menu_cursor();
                 }
@@ -910,7 +912,7 @@ impl Loading {
                         .map(|t| t.rect);
                 }
             }
-            WindowEvent::MouseWheel { .. } if self.menu.key_focus_release() => {
+            input_event::Event::MouseWheel { .. } if self.menu.key_focus_release() => {
                 self.update_menu_cursor();
             }
             _ => {}
@@ -1081,7 +1083,7 @@ impl Loading {
         self.menu.cursor = at;
         let was = std::mem::replace(&mut self.menu.key_synthetic, true);
         for state in [ElementState::Pressed, ElementState::Released] {
-            let click = WindowEvent::MouseInput {
+            let click = input_event::Event::MouseInput {
                 device_id: DeviceId::dummy(),
                 state,
                 button: MouseButton::Left,
@@ -1096,9 +1098,9 @@ impl Loading {
     pub(super) fn menu_event(
         &mut self,
         event_loop: &dyn EventLoopCtl,
-        event: WindowEvent,
+        event: input_event::Event,
     ) -> Result<()> {
-        if let WindowEvent::KeyboardInput { event, .. } = &event
+        if let input_event::Event::KeyboardInput { event, .. } = &event
             && let PhysicalKey::Code(key) = event.physical_key
         {
             if event.state == ElementState::Pressed {
@@ -1107,7 +1109,7 @@ impl Loading {
                 self.menu.physical_keys.remove(&key);
             }
         }
-        if let WindowEvent::KeyboardInput { event, .. } = &event {
+        if let input_event::Event::KeyboardInput { event, .. } = &event {
             self.menu_narrator_hotkey(event);
         }
         // The real mouse takes the pointer back from the keyboard's focus.
@@ -1117,14 +1119,14 @@ impl Loading {
         }
         // Fullscreen (F11) is the window's: not the screen's input; the
         // keyboard's own clicks aren't the mouse.
-        let f11 = matches!(&event, WindowEvent::KeyboardInput { event, .. }
+        let f11 = matches!(&event, input_event::Event::KeyboardInput { event, .. }
             if event.physical_key == PhysicalKey::Code(KeyCode::F11));
         if !f11 && !synthetic {
             super::narrator::narrate_input(&mut self.menu.narration, &event, self.menu.cursor);
         }
         // Screen.keyPressed: Tab, the arrows and Enter move and press the
         // focus, unless the focused widget or the screen keeps them.
-        if let WindowEvent::KeyboardInput {
+        if let input_event::Event::KeyboardInput {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
@@ -1134,7 +1136,7 @@ impl Loading {
             return Ok(());
         }
         match event {
-            WindowEvent::CloseRequested => {
+            input_event::Event::CloseRequested => {
                 if !self.settings.quit_shortcuts
                     && horizon_client::input::is_quit_shortcut_down(
                         self.menu.modifiers,
@@ -1146,17 +1148,17 @@ impl Loading {
                 self.save_menu_settings();
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => {
+            input_event::Event::Resized(size) => {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
                 self.apply_menu_settings();
             }
-            WindowEvent::RedrawRequested => self.draw(),
-            WindowEvent::ModifiersChanged(modifiers) => self.menu.modifiers = modifiers.state(),
+            input_event::Event::RedrawRequested => self.draw(),
+            input_event::Event::ModifiersChanged(modifiers) => self.menu.modifiers = modifiers.state(),
             // `PackSelectionScreen.onFilesDrop`: a pack dropped on the window
             // joins the Create New World screen's data packs.
-            WindowEvent::DroppedFile(path) => {
+            input_event::Event::DroppedFile(path) => {
                 let batch = HudBatch::new(self.menu_size(), self.settings.gui_scale_inputs());
                 let handled = self.menu.options_open
                     && self.gui.as_ref().is_some_and(|gui| {
@@ -1170,7 +1172,7 @@ impl Loading {
                     title.drop_file(path);
                 }
             }
-            WindowEvent::Focused(false) => {
+            input_event::Event::Focused(false) => {
                 self.menu.modifiers = ModifiersState::empty();
                 self.menu.physical_keys.clear();
                 self.menu.dragging = false;
@@ -1181,7 +1183,7 @@ impl Loading {
                 let events = self.menu.options.release();
                 self.menu_option_events(events);
             }
-            WindowEvent::KeyboardInput { event, .. }
+            input_event::Event::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && self.menu.pending.is_some() =>
             {
                 if event.physical_key == PhysicalKey::Code(KeyCode::Escape) {
@@ -1189,7 +1191,7 @@ impl Loading {
                 }
             }
             _ if self.gui.is_none() || self.menu.pending.is_some() => {}
-            WindowEvent::KeyboardInput { event, .. } if self.menu.win.is_some() => {
+            input_event::Event::KeyboardInput { event, .. } if self.menu.win.is_some() => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     let pressed = event.state == ElementState::Pressed;
                     if code == KeyCode::Escape && pressed {
@@ -1201,9 +1203,9 @@ impl Loading {
                     }
                 }
             }
-            WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
+            input_event::Event::MouseInput { .. } | input_event::Event::MouseWheel { .. }
                 if self.menu.win.is_some() => {}
-            WindowEvent::CursorMoved { position, .. } => {
+            input_event::Event::CursorMoved { position, .. } => {
                 self.menu.pointer = (position.x, position.y);
                 self.update_menu_cursor();
                 if self.menu.options_open && self.menu.dragging {
@@ -1218,7 +1220,7 @@ impl Loading {
                     title.drag_field(&self.gui.as_ref().unwrap().atlas, self.menu.cursor.0);
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } if self.menu.options_open => {
+            input_event::Event::MouseInput { state, button, .. } if self.menu.options_open => {
                 if state == ElementState::Pressed && self.menu.options.selected_key.is_some() {
                     self.menu.options.modifiers = glfw_modifiers(self.menu.modifiers);
                     let events = self.menu.options.bind_mouse(&mut self.settings, button);
@@ -1234,7 +1236,7 @@ impl Loading {
                     }
                 }
             }
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
@@ -1267,7 +1269,7 @@ impl Loading {
             }
             // AbstractSelectionList.mouseClicked: a world row takes a click
             // of any button, so the middle one selects it without joining.
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Middle,
                 ..
@@ -1281,7 +1283,7 @@ impl Loading {
                     );
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => {
+            input_event::Event::MouseWheel { delta, .. } => {
                 let raw = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => (p.y / 30.0) as f32,
@@ -1306,7 +1308,7 @@ impl Loading {
                     title.scroll_worlds(amount, self.menu.cursor, (batch.width, batch.height));
                 }
             }
-            WindowEvent::KeyboardInput { event, .. }
+            input_event::Event::KeyboardInput { event, .. }
                 if event.state == ElementState::Released && self.menu.options_open =>
             {
                 if let PhysicalKey::Code(key) = event.physical_key {
@@ -1315,7 +1317,7 @@ impl Loading {
                     self.menu_option_events(events);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+            input_event::Event::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 if event.physical_key == PhysicalKey::Code(KeyCode::F11) {
                     self.settings.fullscreen = !self.settings.fullscreen;
                     self.apply_menu_settings();
@@ -1714,7 +1716,7 @@ mod tests {
         loading.vanilla_root = root.clone();
         loading.open_menu_options(Page::Packs);
         loading
-            .menu_event(&Loop, WindowEvent::DroppedFile(source.join("Startup pack")))
+            .menu_event(&Loop, input_event::Event::DroppedFile(source.join("Startup pack")))
             .unwrap();
         assert!(
             loading
@@ -1759,7 +1761,7 @@ mod tests {
             game.open_options_at(true, Page::Packs);
             game.handle_window_event_inner(
                 &Loop,
-                WindowEvent::DroppedFile(source.join("Game pack")),
+                input_event::Event::DroppedFile(source.join("Game pack")),
             );
             assert!(game.ui.options.pack_screen.as_ref().unwrap().confirming());
             assert!(!packs::packs_dir().join("Game pack").exists());

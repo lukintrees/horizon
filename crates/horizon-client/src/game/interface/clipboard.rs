@@ -2,7 +2,7 @@
 //! shortcuts of `EditBox`, `MultiLineEditBox` and `TextFieldHelper`.
 use super::*;
 use horizon_client::clipboard::{self, EditShortcut};
-use winit::event::KeyEvent;
+use crate::game::input_event::KeyEvent;
 
 impl Game<'_> {
     /// Runs `f` with `user_input` saying whether it handles input, then restores it, so a
@@ -224,7 +224,7 @@ mod tests {
                 game.handle_window_event(
                     &NoEventLoop,
                     winit::window::WindowId::dummy(),
-                    winit::event::WindowEvent::MouseInput {
+                    crate::game::input_event::Event::MouseInput {
                         device_id: winit::event::DeviceId::dummy(),
                         state: winit::event::ElementState::Pressed,
                         button: winit::event::MouseButton::Left,

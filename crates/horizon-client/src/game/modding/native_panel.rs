@@ -824,7 +824,7 @@ impl Game<'_> {
             && self.panel.search.as_ref().is_some_and(|s| s.focused)
     }
     /// A key press while the search box has focus.
-    pub(super) fn mod_browser_key(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn mod_browser_key(&mut self, event: &crate::game::input_event::KeyEvent) {
         use winit::keyboard::PhysicalKey;
         let shortcut = self.edit_shortcut(event);
         let ctrl = self.has_control_down();

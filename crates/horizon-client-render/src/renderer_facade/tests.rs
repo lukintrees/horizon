@@ -10,7 +10,7 @@ use horizon_render_api::atlas::{SpriteSize, build_page, pack_atlas};
 #[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
 fn real_facade_preserves_offscreen_outcome_pixels_and_explicit_rejection() {
     let atlas = HudAtlas::boot();
-    let mut hud = HudBatch::new([64; 2]);
+    let mut hud = HudBatch::scratch([64; 2]);
     hud.fill(&atlas, 0., 0., 64., 64., u32::MAX);
     let layout = pack_atlas(
         &[SpriteSize {
@@ -73,7 +73,7 @@ fn game_section_lifecycle_uses_dimension_minimum_and_reclaims_old_columns() {
     };
     use horizon_render_api::{IDENTITY, scene::SceneFrame};
     let atlas = HudAtlas::boot();
-    let hud = HudBatch::new([64; 2]);
+    let hud = HudBatch::scratch([64; 2]);
     let layout = pack_atlas(
         &[SpriteSize {
             width: 1,
@@ -170,7 +170,7 @@ fn static_menu_is_explicit_preserves_world_and_rejects_panorama_without_clearing
     };
     use horizon_render_api::{IDENTITY, scene::SceneFrame};
     let atlas = HudAtlas::boot();
-    let mut hud = HudBatch::new([64; 2]);
+    let mut hud = HudBatch::scratch([64; 2]);
     hud.fill(&atlas, 0., 0., 16., 16., u32::MAX);
     let layout = pack_atlas(
         &[SpriteSize {
@@ -220,7 +220,7 @@ fn static_menu_is_explicit_preserves_world_and_rejects_panorama_without_clearing
                 solid: &[[0; 3]],
                 translucent: &[],
             },
-            &HudBatch::new([64; 2]),
+            &HudBatch::scratch([64; 2]),
         )
         .unwrap();
     assert_eq!(
@@ -272,7 +272,7 @@ fn static_menu_is_explicit_preserves_world_and_rejects_panorama_without_clearing
             .is_err()
     );
     assert_eq!(renderer.read_rgba([0, 0, 64, 64]).unwrap(), before);
-    let empty = HudBatch::new([32; 2]);
+    let empty = HudBatch::scratch([32; 2]);
     {
         let mut facade = RendererFacade::legacy(&mut renderer, visible, options);
         facade.resize([32; 2]).unwrap();
@@ -280,7 +280,7 @@ fn static_menu_is_explicit_preserves_world_and_rejects_panorama_without_clearing
             .render_menu(&MenuFrame::static_color(&empty, clear))
             .unwrap();
         assert_eq!(facade.resident_sections(), 1);
-        let old_layout = HudBatch::new([64; 2]);
+        let old_layout = HudBatch::scratch([64; 2]);
         assert!(
             facade
                 .render_menu(&MenuFrame::static_color(&old_layout, clear))
@@ -350,7 +350,7 @@ fn native_screenshot_completes_once_before_present_and_survives_rejection_resize
         ([info.width, info.height], data)
     };
     let atlas = HudAtlas::boot();
-    let mut hud = HudBatch::new([64, 32]);
+    let mut hud = HudBatch::scratch([64, 32]);
     // Top half of the centre square: survives the icon crop, tests GL row inversion.
     hud.fill(&atlas, 16., 0., 32., 16., u32::MAX);
     let layout = pack_atlas(
@@ -497,7 +497,7 @@ fn native_screenshot_completes_once_before_present_and_survives_rejection_resize
         facade.resize([128, 64]).unwrap();
         // Revalidate the source budget after a resize; no readback/file allocation.
         facade
-            .render_menu(&MenuFrame::static_color(&HudBatch::new([128, 64]), clear))
+            .render_menu(&MenuFrame::static_color(&HudBatch::scratch([128, 64]), clear))
             .unwrap();
         assert!(
             facade
@@ -513,7 +513,7 @@ fn native_screenshot_completes_once_before_present_and_survives_rejection_resize
             .request_screenshot(request("after.png", None, false))
             .unwrap();
         facade
-            .render_menu(&MenuFrame::static_color(&HudBatch::new([32, 16]), clear))
+            .render_menu(&MenuFrame::static_color(&HudBatch::scratch([32, 16]), clear))
             .unwrap();
         assert_eq!(facade.take_screenshot_result(), Some(Ok([32, 16])));
     }
@@ -611,7 +611,7 @@ fn native_resource_factory_streams_stable_layers_hud_and_generation_without_mode
         solid: &[[0; 3]],
         translucent: &[],
     };
-    renderer.render(&scene, &HudBatch::new([64; 2])).unwrap();
+    renderer.render(&scene, &HudBatch::scratch([64; 2])).unwrap();
     assert_eq!(
         renderer.read_rgba([16, 32, 1, 1]).unwrap(),
         [255, 0, 0, 255]
@@ -620,7 +620,7 @@ fn native_resource_factory_streams_stable_layers_hud_and_generation_without_mode
         renderer.read_rgba([48, 32, 1, 1]).unwrap(),
         [0, 255, 0, 255]
     );
-    let mut hud = HudBatch::new([64; 2]);
+    let mut hud = HudBatch::scratch([64; 2]);
     hud.fill(&atlas, 0., 0., 16., 16., u32::MAX);
     {
         let mut facade = RendererFacade::legacy(&mut renderer, visible, options);

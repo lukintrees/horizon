@@ -1,5 +1,6 @@
 //! The mouse in play: the look it turns, the pointer grab (`MouseHandler.grabMouse` /
 //! `releaseMouse`), the cursor icon, and pausing a world whose window loses focus.
+use crate::game::input_event;
 use super::*;
 
 fn studio_suppresses_focus_pause(replay_active: bool, freecam_active: bool) -> bool {
@@ -180,6 +181,39 @@ impl Game<'_> {
             // InputQuirks.RESTORE_KEY_STATE_AFTER_MOUSE_GRAB is off (macOS).
             self.restore_held_keys();
         }
+        // The native window's pointer is the GL backend's: it grabs, frees and hides it, and
+        // there is no winit window to warp. Raw motion has no warp event to ignore, so the
+        // shared MouseHandler is primed to keep its first real delta.
+        #[cfg(feature = "legacy-gl")]
+        if self.options.renderer.is_native() {
+            use horizon_client::platform_contract::PointerMode;
+            let mode = if capture {
+                PointerMode::Relative
+            } else {
+                PointerMode::Free
+            };
+            let result = match self
+                .renderer
+                .facade(Default::default(), Default::default())
+            {
+                Some(mut renderer) => renderer.set_native_pointer_mode(mode),
+                None if !capture => Ok(()),
+                None => Err("native pointer requires an owner".into()),
+            };
+            self.capture_mode = None;
+            self.captured = capture && result.is_ok();
+            self.mouse = Default::default();
+            self.mouse.set_ignore_first_move();
+            self.mouse
+                .on_move(0., 0., 0., 0., self.focused, self.captured);
+            // A pointer the server will not hand over (another window holds the focus, a
+            // compositor refused the grab) leaves the game with the pointer free, as a failed
+            // winit `set_cursor_grab` does; it is not a reason to stop the frame loop.
+            if let Err(error) = result {
+                log::warn!("Horizon: native pointer stays free: {error}");
+            }
+            return;
+        }
         let Some(window) = &self.window else { return };
         let size = self.renderer.modern_ref().map_or_else(
             || window.inner_size().into(),
@@ -293,7 +327,7 @@ impl Game<'_> {
             self.handle_window_event(
                 event_loop,
                 id,
-                WindowEvent::Focused(focused),
+                input_event::Event::Focused(focused),
                 input_trace::InputOrigin::User,
             );
         }
@@ -301,7 +335,7 @@ impl Game<'_> {
             self.handle_window_event(
                 event_loop,
                 id,
-                WindowEvent::ModifiersChanged(modifiers),
+                input_event::Event::ModifiersChanged(modifiers),
                 input_trace::InputOrigin::User,
             );
         }
@@ -321,7 +355,7 @@ impl Game<'_> {
             self.handle_window_event(
                 event_loop,
                 id,
-                WindowEvent::Focused(focused),
+                input_event::Event::Focused(focused),
                 input_trace::InputOrigin::User,
             );
         }

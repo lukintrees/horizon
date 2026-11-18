@@ -109,18 +109,35 @@ impl NativeStream {
             ) {
                 self.interest_radius = Some(streamer.radius);
             } else {
-                self.error = Some("native view exceeds section interest capacity; select a smaller render distance before world entry".into());
+                // The interest table holds what it holds; a view past it would starve
+                // sections forever. Draw the largest view that fits and say so once, rather
+                // than ending the run: the player can still play and lower the distance.
+                let fit = fitted_radius(
+                    world.layout().sections(),
+                    renderer.stream_limits().slots,
+                );
+                if self.interest_radius != Some(fit) {
+                    log::warn!(
+                        "Horizon: the native view of {} chunks does not fit the section interest \
+                         table; drawing {fit} chunks until the render distance is lowered",
+                        streamer.radius
+                    );
+                }
+                self.interest_radius = Some(fit);
             }
         }
         if self.error.is_none() {
+            // Interest, admission and pruning all use the fitted radius: a column outside it
+            // would be a ticket the table cannot keep.
+            let view_radius = self.interest_radius.unwrap_or(streamer.radius);
             let mut hook = Hook {
                 state: self,
                 renderer,
-                view: (streamer.center, streamer.radius),
+                view: (streamer.center, view_radius),
                 budget,
             };
             hook.synchronize_membership(world);
-            hook.prune(world, streamer.center, streamer.radius);
+            hook.prune(world, streamer.center, view_radius);
             if hook.state.error.is_none() {
                 let (unexpected, removed) = streamer.update_admitted(world, &mut hook);
                 unloaded = removed;
@@ -131,7 +148,7 @@ impl NativeStream {
                     hook.fail("native admission produced unstamped uploads".into());
                 }
                 hook.synchronize_membership(world);
-                hook.prune(world, streamer.center, streamer.radius);
+                hook.prune(world, streamer.center, view_radius);
                 if hook.state.error.is_none()
                     && let Err(error) = hook.renderer.drain_streaming(budget.jobs, budget.bytes)
                 {
@@ -234,6 +251,15 @@ impl Hook<'_> {
             .collect();
         self.revoke(gone, world);
     }
+}
+/// The largest radius whose whole view the interest table can hold around a level of
+/// `sections` vertical sections. The table counts every section of a drawn column, so a
+/// column is `sections` slots and a radius needs one slot per section of its in-view columns.
+pub(super) fn fitted_radius(sections: usize, slots: usize) -> i32 {
+    (0..=256)
+        .rev()
+        .find(|&radius| interest_fits(radius, sections, slots))
+        .unwrap_or(0)
 }
 fn interest_fits(radius: i32, sections: usize, slots: usize) -> bool {
     if radius == 0 {
@@ -348,6 +374,26 @@ mod tests {
         assert!(!interest_fits(i32::MAX, 1, usize::MAX));
         assert!(!interest_fits(2, 0, 4096));
         assert!(!interest_fits(2, 24, 24));
+    }
+    #[test]
+    fn a_view_past_the_table_fits_the_largest_radius_that_holds_every_column() {
+        // Every radius up to the fitted one holds its whole view; the next one does not.
+        for (sections, slots) in [(24, 4096), (24, 16384), (16, 4096)] {
+            let fit = fitted_radius(sections, slots);
+            assert!(interest_fits(fit, sections, slots), "{sections}/{slots}");
+            assert!(
+                !interest_fits(fit + 1, sections, slots),
+                "{sections}/{slots} stops at {fit}"
+            );
+        }
+        // Vanilla's 24-section overworld: 4096 slots is the old radius 6; 16384 (682 columns)
+        // reaches 13, past the default render distance of 12.
+        assert_eq!(fitted_radius(24, 4096), 6);
+        assert_eq!(fitted_radius(24, 16384), 13);
+        assert!(fitted_radius(24, 16384) >= 12);
+        // A table that cannot even hold one column draws nothing rather than erroring.
+        assert_eq!(fitted_radius(0, 4096), 0);
+        assert_eq!(fitted_radius(24, 0), 0);
     }
     #[test]
     fn interest_distance_is_shared_and_overflow_safe_on_teleports() {

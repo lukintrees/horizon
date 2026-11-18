@@ -3,10 +3,11 @@
 //! number; Escape or the key again closes it. The game doesn't pause and nothing is sent to the
 //! game server.
 
+use crate::game::input_event;
 use crate::game::{Game, Screen};
 use horizon_client::{hud::HudBatch, text::Text};
 use std::time::{Duration, Instant};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// Emotes on the wheel.
@@ -84,9 +85,9 @@ impl Game<'_> {
 
     /// A window event while the wheel is open: the emote key let go, or a left click. True when
     /// the wheel took it.
-    pub(in crate::game) fn emote_wheel_event(&mut self, event: &WindowEvent) -> bool {
+    pub(in crate::game) fn emote_wheel_event(&mut self, event: &input_event::Event) -> bool {
         match event {
-            WindowEvent::KeyboardInput { event, .. }
+            input_event::Event::KeyboardInput { event, .. }
                 if event.state == ElementState::Released
                     && matches!(event.physical_key, PhysicalKey::Code(key)
                         if self.settings.keys.translate(key) == Some(Ok(KeyCode::KeyB))) =>
@@ -94,7 +95,7 @@ impl Game<'_> {
                 self.emote_wheel_released();
                 true
             }
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..

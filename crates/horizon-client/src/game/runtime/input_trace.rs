@@ -8,6 +8,7 @@
 //!
 //! The events are also what a repro recording writes to `inputs.jsonl`
 //! (game/runtime/repro.rs).
+use crate::game::input_event;
 use super::{Game, Screen};
 use horizon_client::{Result, keybinds};
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 use winit::{
-    event::{ElementState, MouseScrollDelta, WindowEvent},
+    event::{ElementState, MouseScrollDelta},
     keyboard::PhysicalKey,
 };
 
@@ -435,12 +436,12 @@ impl Game<'_> {
 
     /// Keep the window events that are input. Agent-made window events are left
     /// out: the control-socket line that caused them is recorded instead.
-    pub(super) fn trace_window_event(&mut self, origin: InputOrigin, event: &WindowEvent) {
+    pub(super) fn trace_window_event(&mut self, origin: InputOrigin, event: &input_event::Event) {
         if origin == InputOrigin::Agent || !self.tracing_input() {
             return;
         }
         match event {
-            WindowEvent::KeyboardInput {
+            input_event::Event::KeyboardInput {
                 event,
                 is_synthetic,
                 ..
@@ -470,7 +471,7 @@ impl Game<'_> {
                     },
                 );
             }
-            WindowEvent::MouseInput { state, button, .. } => self.note_input(
+            input_event::Event::MouseInput { state, button, .. } => self.note_input(
                 origin,
                 TraceKind::Mouse {
                     button: keybinds::mouse_name(*button),
@@ -480,7 +481,7 @@ impl Game<'_> {
                     },
                 },
             ),
-            WindowEvent::MouseWheel { delta, .. } => {
+            input_event::Event::MouseWheel { delta, .. } => {
                 let (x, y, lines) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => (f64::from(*x), f64::from(*y), true),
                     MouseScrollDelta::PixelDelta(p) => (p.x, p.y, false),
@@ -489,7 +490,7 @@ impl Game<'_> {
             }
             // GUI clicks land where the pointer is; in the world the pointer is
             // grabbed and turns the view through `device_event` instead.
-            WindowEvent::CursorMoved { position, .. } if self.screen != Screen::Playing => {
+            input_event::Event::CursorMoved { position, .. } if self.screen != Screen::Playing => {
                 self.note_input(
                     origin,
                     TraceKind::Cursor {

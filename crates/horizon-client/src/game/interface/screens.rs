@@ -30,7 +30,7 @@ impl Screen {
 
 impl Game<'_> {
     /// A press on a screen that `takes_presses`, to that screen.
-    pub(super) fn screen_press(&mut self, event: &winit::event::KeyEvent) {
+    pub(super) fn screen_press(&mut self, event: &crate::game::input_event::KeyEvent) {
         match self.screen {
             Screen::Social => self.social_key(event),
             Screen::CommandBlock => self.command_block_key(event),

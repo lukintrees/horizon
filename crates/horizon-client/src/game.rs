@@ -873,8 +873,8 @@ fn portal_ticket_can_expire(
 /// `caps:swapescape`. For the keys whose meaning the keymap may remap, take the code
 /// from the keysym the keymap resolved instead. This includes function keys on
 /// remapped media rows; ordinary character bindings still use their physical key.
-fn follow_keymap(event: &mut WindowEvent) {
-    if let WindowEvent::KeyboardInput { event, .. } = event {
+fn follow_keymap(event: &mut input_event::Event) {
+    if let input_event::Event::KeyboardInput { event, .. } = event {
         follow_named_keymap(&event.logical_key, &mut event.physical_key);
     }
 }
@@ -1150,6 +1150,12 @@ struct Game<'a> {
     /// The window's picture: the modern wgpu renderer, the opt-in legacy GL2 one
     /// (`--renderer native-gl2`), or none before either is built.
     renderer: horizon_client::renderer_owner::RendererOwner,
+    /// The native GL2 world's per-frame visibility scratch and its streaming scheduler. A
+    /// modern owner uses neither: the renderer's own walk and upload path serve it.
+    #[cfg(feature = "legacy-gl")]
+    native_section_order: horizon_client::renderer_owner::SectionOrder,
+    #[cfg(feature = "legacy-gl")]
+    native_streaming: horizon_client::renderer_owner::NativeStream,
     /// Avoid an endless rebuild loop if the new device is lost as well.
     last_device_recovery: Option<Instant>,
     /// CPU geometry storage retained across frames, including empty/title frames.
@@ -8065,6 +8071,83 @@ impl Game<'_> {
         })
     }
 
+    /// A menu frame of the configured backend: the modern one's panorama, or the native
+    /// one's explicit flat colour. The outcome says whether a window saw it.
+    pub(super) fn submit_menu_frame(
+        &mut self,
+        hud: &HudBatch,
+    ) -> Result<horizon_client::render_contract::FrameOutcome> {
+        use horizon_client::render_contract::FrameOutcome;
+        // The modern submission needs its own device and a title-oriented frame; the native
+        // one takes the menu request directly. A build without the backend never gets here:
+        // `--renderer native-gl2` refuses to start.
+        if self.renderer.has_modern() {
+            let menu = horizon_client::renderer_facade::MenuFrame::panorama(hud, 0., 10.);
+            let Some(renderer) = self.renderer.modern_mut() else {
+                return Ok(FrameOutcome::Deferred);
+            };
+            horizon_client::renderer_facade::render_menu_modern(renderer, &menu)
+                .map(|drawn| {
+                    if drawn {
+                        FrameOutcome::Presented
+                    } else {
+                        FrameOutcome::Deferred
+                    }
+                })
+        } else {
+            let background = self.options.renderer.menu_background();
+            let menu = match background {
+                horizon_client::renderer_facade::MenuBackground::Panorama => {
+                    horizon_client::renderer_facade::MenuFrame::panorama(hud, 0., 10.)
+                }
+                horizon_client::renderer_facade::MenuBackground::Static(clear) => {
+                    horizon_client::renderer_facade::MenuFrame::static_color(hud, clear)
+                }
+            };
+            let Some(mut renderer) = self
+                .renderer
+                .facade(Default::default(), Default::default())
+            else {
+                return Ok(FrameOutcome::Deferred);
+            };
+            // A minimized window has no drawable: its zero-sized progress HUD must not become
+            // a validation error while a save is draining.
+            if renderer.size().contains(&0) {
+                return Ok(FrameOutcome::Deferred);
+            }
+            let outcome = renderer.render_menu(&menu)?;
+            if !self.options.offscreen && outcome == FrameOutcome::Offscreen {
+                return Err("native window submission completed offscreen".into());
+            }
+            Ok(outcome)
+        }
+    }
+
+    /// The native producer's relative pointer motion, in the shape `device_event` applies for
+    /// winit: the same gate (a save, a scripted run, an unclaimed window, a screen), the same
+    /// `MouseHandler.onMove` with the pointer grabbed, once per frame.
+    #[cfg(feature = "legacy-gl")]
+    pub(super) fn native_relative_motion(&mut self, x: f64, y: f64) {
+        if self.pending_save.is_none()
+            && !self.scripted_run()
+            && !self.unclaimed_window
+            && self.captured
+            && self.focused
+            && self.keyboard_mouse
+            && (!self.options.offscreen || self.split_window)
+            && self.screen == Screen::Playing
+            && x.is_finite()
+            && y.is_finite()
+        {
+            self.note_input(
+                input_trace::InputOrigin::User,
+                input_trace::TraceKind::Motion { x, y },
+            );
+            self.mouse.on_move(0.0, 0.0, x, y, true, true);
+            self.last_input = Instant::now();
+        }
+    }
+
     /// Build the complete frame before handing its borrowed geometry and lighting to
     /// the consumer. Tests use the same boundary as GPU submission.
     fn render_with(
@@ -8112,11 +8195,8 @@ impl Game<'_> {
                         screen_info::tr("upgradeWorld.title", &[]),
                     )
                 });
-                if let Some(renderer) = self.renderer.modern_mut() {
-                    let mut hud = HudBatch::new(
-                        [renderer.config.width, renderer.config.height],
-                        self.settings.gui_scale_inputs(),
-                    );
+                if let Some(size) = self.renderer.size() {
+                    let mut hud = HudBatch::new(size, self.settings.gui_scale_inputs());
                     horizon_client::level_loading::draw_file_fixer(
                         &mut hud,
                         &self.gui.atlas,
@@ -8125,7 +8205,9 @@ impl Game<'_> {
                     );
                     pr.lap("pr_loading");
                     drop(prepare);
-                    return renderer.render(&loading_frame(&hud));
+                    return self
+                        .submit_menu_frame(&hud)
+                        .map(|outcome| outcome.was_presented());
                 }
                 return Ok(false);
             }
@@ -8136,11 +8218,8 @@ impl Game<'_> {
             horizon_client::widgets::begin_screen(|| {
                 screen_info::level_loading(progress, &screen_info::tr)
             });
-            if let Some(renderer) = self.renderer.modern_mut() {
-                let mut hud = HudBatch::new(
-                    [renderer.config.width, renderer.config.height],
-                    self.settings.gui_scale_inputs(),
-                );
+            if let Some(size) = self.renderer.size() {
+                let mut hud = HudBatch::new(size, self.settings.gui_scale_inputs());
                 let (w, h) = (hud.width, hud.height);
                 horizon_client::ui::menu_background(
                     &mut hud,
@@ -8169,20 +8248,18 @@ impl Game<'_> {
                 );
                 pr.lap("pr_loading");
                 drop(prepare);
-                return renderer.render(&loading_frame(&hud));
+                return self
+                    .submit_menu_frame(&hud)
+                    .map(|outcome| outcome.was_presented());
             }
             return Ok(false);
         }
         if self.pending_entry.is_some() {
-            if let (Some(renderer), Some(loader)) = (self.renderer.modern_mut(), &self.rest_loader)
-            {
+            if let (Some(size), Some(loader)) = (self.renderer.size(), &self.rest_loader) {
                 horizon_client::widgets::begin_screen(|| {
                     screen_info::level_loading(Some(loader.progress.fraction()), &screen_info::tr)
                 });
-                let mut hud = HudBatch::new(
-                    [renderer.config.width, renderer.config.height],
-                    self.settings.gui_scale_inputs(),
-                );
+                let mut hud = HudBatch::new(size, self.settings.gui_scale_inputs());
                 horizon_client::level_loading::draw_progress(
                     &mut hud,
                     &self.gui.atlas,
@@ -8191,18 +8268,17 @@ impl Game<'_> {
                 );
                 pr.lap("pr_loading");
                 drop(prepare);
-                return renderer.render(&loading_frame(&hud));
+                return self
+                    .submit_menu_frame(&hud)
+                    .map(|outcome| outcome.was_presented());
             }
             return Ok(false);
         }
         // A pack reload covers the frame with its progress
         // (`LoadingOverlay`) until `drive_pack_reload` applies it.
         if let Some(reload) = &self.pack_reload {
-            if let Some(renderer) = self.renderer.modern_mut() {
-                let mut hud = HudBatch::new(
-                    [renderer.config.width, renderer.config.height],
-                    self.settings.gui_scale_inputs(),
-                );
+            if let Some(size) = self.renderer.size() {
+                let mut hud = HudBatch::new(size, self.settings.gui_scale_inputs());
                 horizon_client::level_loading::draw_loading_overlay(
                     &mut hud,
                     &self.gui.atlas,
@@ -8212,18 +8288,33 @@ impl Game<'_> {
                 );
                 pr.lap("pr_loading");
                 drop(prepare);
-                return renderer.render(&loading_frame(&hud));
+                return self
+                    .submit_menu_frame(&hud)
+                    .map(|outcome| outcome.was_presented());
             }
             return Ok(false);
         }
-        let Some(size) = self
-            .renderer
-            .modern_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        // The native GL2 owner has no panorama and no wgpu frame: a frame that asks for one (the
+        // title, or a screen waiting on a server) is its own submission, with the native
+        // backend's flat colour under the same HUD. The world below has a second one.
+        #[cfg(feature = "legacy-gl")]
+        if self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl)
+            && self.shows_panorama()
+        {
+            return native_startup::draw_menu(self).map(|outcome| outcome.was_presented());
+        }
+        let Some(size) = self.renderer.size() else {
             return Ok(false);
         };
         pr.lap("pr_setup");
+        // The native GL2 adapter draws the classic passes and refuses the others before
+        // submission rather than dropping a requested one. This is that same set reclaimed
+        // where it is produced, so a native frame asks for none of them: clouds, chunk fade,
+        // menu blur, post chains, the 3D debug lines and crosshair, GPU-posed entities,
+        // glowing silhouettes, dynamic/coloured lights, emissive layers, the world border
+        // and the water mirror. The modern path keeps every one of them.
+        let native =
+            self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl);
         let alpha = self.frame_world_partial_tick();
         // Camera.getCameraEntityPartialTicks: the view, the hand and the
         // player's own model stay smooth while the level is frozen.
@@ -8413,7 +8504,7 @@ impl Game<'_> {
         } else {
             native_visuals::FrameVisuals::default()
         };
-        let emissive_layers = if self.title.is_none() {
+        let emissive_layers = if self.title.is_none() && !native {
             let mut requests = Vec::new();
             self.native_emissive(&mut requests);
             // Native mods' overlays first, then the packs' OptiFine emissive blocks.
@@ -8444,9 +8535,22 @@ impl Game<'_> {
             let scale = HudBatch::new(size, self.settings.gui_scale_inputs()).scale;
             crosshair.debug_crosshair(at, view_pitch, view_yaw, scale);
         }
-        let debug_lines = horizon_client::gizmos::camera_relative(&lines, at, view);
-        let debug_lines_on_top = horizon_client::gizmos::camera_relative(&on_top, at, view);
-        let debug_crosshair = horizon_client::gizmos::camera_relative(&crosshair.on_top, at, view);
+        // The native adapter has no 3D debug pass: it gets none to refuse.
+        let debug_lines = if native {
+            Vec::new()
+        } else {
+            horizon_client::gizmos::camera_relative(&lines, at, view)
+        };
+        let debug_lines_on_top = if native {
+            Vec::new()
+        } else {
+            horizon_client::gizmos::camera_relative(&on_top, at, view)
+        };
+        let debug_crosshair = if native {
+            Vec::new()
+        } else {
+            horizon_client::gizmos::camera_relative(&crosshair.on_top, at, view)
+        };
         // LevelExtractor.extractBlockOutline: model translucency controls draw order;
         // no outline when an entity is targeted (Minecraft.hitResult an EntityHitResult).
         let mut outline_after_terrain = false;
@@ -8598,13 +8702,17 @@ impl Game<'_> {
         pr.lap("pr_hud");
         self.locator_camera =
             (!title).then_some((camera.to_array(), view_yaw, view_pitch, fov_degrees));
-        let mut requested_post_effects = self.requested_post_effects();
+        let mut requested_post_effects = if native {
+            Vec::new()
+        } else {
+            self.requested_post_effects()
+        };
         // The packs' Polytone post chains, after vanilla's (#11486).
         let game_ticks = self.world.game_time as f64 + alpha;
         let delta_ticks = (game_ticks - self.polytone_post_ticks).clamp(0.0, 20.0) as f32;
         self.polytone_post_ticks = game_ticks;
-        let polytone_extras = match (&self.pack.polytone_post, &polytone_frame) {
-            (Some(post), Some(frame)) => {
+        let polytone_extras = match (&self.pack.polytone_post, &polytone_frame, native) {
+            (Some(post), Some(frame), false) => {
                 let view = bob * spin * horizon_client::camera::view_matrix(yaw, pitch);
                 let globals = horizon_client::polytone_post::PolyGlobals {
                     // 26.3's reverse-Z projection, as the world's (and its depth) is.
@@ -8743,12 +8851,12 @@ impl Game<'_> {
         } else {
             Vec::new()
         };
-        let border = (!title)
+        let border = (!title && !native)
             .then(|| self.border_draw(camera.to_array(), alpha as f32))
             .flatten();
         let see_through = std::mem::take(&mut self.see_through_vertices);
         pr.lap("pr_weather_border");
-        if title {
+        if title || native {
             self.dynamic_lights.clear();
         } else {
             self.gather_dynamic_lights(camera, alpha);
@@ -8774,7 +8882,7 @@ impl Game<'_> {
             &mut world_geometry,
             &mut entities,
         );
-        let colored_lights = if self.title.is_none() {
+        let colored_lights = if self.title.is_none() && !native {
             visuals.finish(self, camera)
         } else {
             Vec::new()
@@ -8787,7 +8895,13 @@ impl Game<'_> {
         let entity_spans = std::mem::take(self.entity_spans.get_mut());
         let entity_motion = std::mem::take(self.entity_motion.get_mut());
         let entity_motion_posed = std::mem::take(self.entity_motion_posed.get_mut());
-        let glowing = std::mem::take(self.glowing_vertices.get_mut());
+        let glowing = if native {
+            // A glare someone asked for still drains: the vertices belong to this frame.
+            self.glowing_vertices.get_mut().clear();
+            Vec::new()
+        } else {
+            std::mem::take(self.glowing_vertices.get_mut())
+        };
         let shadow_only = std::mem::take(self.shadow_only_vertices.get_mut());
         let skin = std::mem::take(self.skin_frame.get_mut());
         let frame = Frame {
@@ -8852,7 +8966,8 @@ impl Game<'_> {
             hud: &hud,
             glint_alpha: self.glint_frame.alpha,
             glint_ticks: self.glint_frame.scroll_ticks(),
-            clouds: (!title
+            clouds: (!native
+                && !title
                 && self.overworld_skybox()
                 && horizon_client::clouds::visible(&self.settings.clouds, sky.cloud_color[3]))
             .then(|| self.gui.atlas.sprites.get("horizon/white"))
@@ -8874,7 +8989,9 @@ impl Game<'_> {
             entity_motion: &entity_motion,
             entity_motion_posed: &entity_motion_posed,
             entity_spans: &entity_spans,
-            skin: skin.pending().then_some(&skin),
+            // The native adapter poses entities on the CPU: a GPU wait-frame is nothing
+            // it can draw, so it is not asked for one.
+            skin: (!native && skin.pending()).then_some(&skin),
             glowing: &glowing,
             dynamic_lights: &self.dynamic_lights,
             colored_lights: &colored_lights,
@@ -8916,7 +9033,8 @@ impl Game<'_> {
             boss_darken: self
                 .boss_overlay
                 .darken_amount(self.clock.fraction() as f32),
-            menu_blur: self.menu_blur(),
+            // No blur pass in the native adapter.
+            menu_blur: if native { None } else { self.menu_blur() },
             post_effects: horizon_client::post_chain::Request {
                 effects: &requested_post_effects,
                 root: &self.pack.source,
@@ -8938,14 +9056,47 @@ impl Game<'_> {
                     ..Default::default()
                 },
             },
-            chunk_fade: self.settings.chunk_fade,
+            // The adapter draws sections at full opacity and has no fade pass.
+            chunk_fade: if native { 0. } else { self.settings.chunk_fade },
         };
         pr.lap("pr_frame");
         // Renderer encoding and GPU waiting belong to render, not prepare.
         drop(prepare);
         let debug_passes = self.debug_lists_gpu_passes();
         let mut prepared_draws = std::mem::take(&mut *self.prepared_model_draws.borrow_mut());
-        let result = match self.renderer.modern_mut() {
+        let result = match self.renderer.backend() {
+            Some(horizon_client::render_contract::Backend::LegacyGl) => {
+                #[cfg(feature = "legacy-gl")]
+                {
+                    horizon_client::spans::time("renderer", || {
+                        self.renderer.render_native_world(
+                            &frame,
+                            &mut self.native_section_order,
+                            self.streaming.radius,
+                            horizon_client::render_contract::FrameOptions {
+                                gamma: self.settings.gamma,
+                                fullbright: self.settings.extras.fullbright,
+                            },
+                        )
+                    })
+                    .and_then(|outcome| {
+                        // A window that asked for a picture did not get it offscreen.
+                        if outcome == horizon_client::render_contract::FrameOutcome::Offscreen
+                            && !self.options.offscreen
+                        {
+                            Err("native world window submission completed offscreen".into())
+                        } else {
+                            Ok(outcome
+                                != horizon_client::render_contract::FrameOutcome::Deferred)
+                        }
+                    })
+                }
+                #[cfg(not(feature = "legacy-gl"))]
+                {
+                    Err("native owner requires the legacy-gl client feature".into())
+                }
+            }
+            _ => match self.renderer.modern_mut() {
             Some(renderer) => {
                 use horizon_client::client_perf::request::GpuSwitch;
                 let capture_gpu = self.profile.gpu();
@@ -8964,6 +9115,7 @@ impl Game<'_> {
                 consume(renderer, &frame)
             }
             None => Err("renderer".into()),
+            },
         };
         prepared_draws.clear();
         *self.prepared_model_draws.borrow_mut() = prepared_draws;
@@ -9008,38 +9160,38 @@ impl Game<'_> {
     /// shortcut, a special case) never reaches a controller. If a player could want it on one, give
     /// it a handler both can call and a `gamepad::Route` (screenshot and fullscreen do this). A
     /// screen's own raw keys, text and mods' key hooks stay raw on purpose.
-    fn handle_window_event_inner(&mut self, event_loop: &dyn EventLoopCtl, mut event: WindowEvent) {
+    fn handle_window_event_inner(&mut self, event_loop: &dyn EventLoopCtl, mut event: input_event::Event) {
         let pressed = match &event {
-            WindowEvent::KeyboardInput { event, .. } => {
+            input_event::Event::KeyboardInput { event, .. } => {
                 event.state == ElementState::Pressed && !event.repeat
             }
-            WindowEvent::MouseInput { state, .. } => *state == ElementState::Pressed,
+            input_event::Event::MouseInput { state, .. } => *state == ElementState::Pressed,
             _ => false,
         };
         if pressed && !self.pad.menu.synthetic {
             self.pad_radial_cancel();
         }
-        if let WindowEvent::Focused(false) = &event {
+        if let input_event::Event::Focused(false) = &event {
             self.modifiers = winit::keyboard::ModifiersState::empty();
             self.physical_keys.clear();
             self.physical_buttons.clear();
             self.drag_button = None;
         }
-        if let WindowEvent::ModifiersChanged(m) = &event {
+        if let input_event::Event::ModifiersChanged(m) = &event {
             self.update_modifiers(m.state());
         }
-        if let WindowEvent::Focused(false) = &event {
+        if let input_event::Event::Focused(false) = &event {
             self.update_modifiers(winit::keyboard::ModifiersState::empty());
             self.debug_keys.reset();
         }
         // Pack drops on the resource-pack and Create New World screens.
-        if let WindowEvent::DroppedFile(path) = &event {
+        if let input_event::Event::DroppedFile(path) = &event {
             self.drop_pack_file(path);
         }
         // GLFW never hands a field the keys an input method consumes: while a
         // composition is open, and the Enter or Escape that ends it (winit on
         // Windows still sends that one right after `Ime::Commit`).
-        if let WindowEvent::KeyboardInput {
+        if let input_event::Event::KeyboardInput {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
@@ -9052,7 +9204,7 @@ impl Game<'_> {
         // keypad: a `WM_CHAR` after the Alt is released) reaches winit as a key event with no
         // physical key. GLFW's char callback types it in the focused text field (`charTyped`),
         // and every screen's key handler here would drop it for want of a key code.
-        if let WindowEvent::KeyboardInput {
+        if let input_event::Event::KeyboardInput {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
@@ -9070,7 +9222,7 @@ impl Game<'_> {
         }
         // Fullscreen is a window shortcut, before screens consume keyboard input.
         // Not Alt or Super on their own: leaving the window isn't playing with the keyboard.
-        if let WindowEvent::KeyboardInput { event, .. } = &event
+        if let input_event::Event::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
             && !event.repeat
             && !matches!(
@@ -9082,7 +9234,7 @@ impl Game<'_> {
         {
             self.pad.keyboard_took_over = true;
         }
-        if let WindowEvent::KeyboardInput { event, .. } = &event
+        if let input_event::Event::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
             && let PhysicalKey::Code(key) = event.physical_key
             && horizon_client::keybinds::key_name(key)
@@ -9098,7 +9250,7 @@ impl Game<'_> {
         // A screenshot is a window shortcut too: vanilla takes it before a
         // screen or a text box consumes the key (`handleGlobalKeyPress`), so
         // it works with chat, a sign or a book open.
-        if let WindowEvent::KeyboardInput { event, .. } = &event
+        if let input_event::Event::KeyboardInput { event, .. } = &event
             && event.state == ElementState::Pressed
             && let PhysicalKey::Code(key) = event.physical_key
         {
@@ -9108,7 +9260,7 @@ impl Game<'_> {
             }
         }
         // KeyboardHandler.keyPress: the debug keys come before the game's.
-        if let WindowEvent::KeyboardInput {
+        if let input_event::Event::KeyboardInput {
             event: key_event, ..
         } = &event
             && let PhysicalKey::Code(key) = key_event.physical_key
@@ -9125,22 +9277,22 @@ impl Game<'_> {
         }
         // KeyboardHandler.keyPress: the narrator hotkey, on every screen and
         // in game, before the screen takes the key.
-        if let WindowEvent::KeyboardInput { event, .. } = &event {
+        if let input_event::Event::KeyboardInput { event, .. } = &event {
             self.narrator_hotkey(event);
         }
         if matches!(
             event,
-            WindowEvent::KeyboardInput { .. }
-                | WindowEvent::MouseInput { .. }
-                | WindowEvent::MouseWheel { .. }
-                | WindowEvent::CursorMoved { .. }
+            input_event::Event::KeyboardInput { .. }
+                | input_event::Event::MouseInput { .. }
+                | input_event::Event::MouseWheel { .. }
+                | input_event::Event::CursorMoved { .. }
         ) {
             self.last_input = Instant::now();
         }
         if !self.pad_synthetic_input()
             && matches!(
                 event,
-                WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
+                input_event::Event::MouseInput { .. } | input_event::Event::MouseWheel { .. }
             )
         {
             self.reassert_pointer_capture();
@@ -9159,7 +9311,7 @@ impl Game<'_> {
         {
             let upgrade = starting.handle.upgrade();
             match &event {
-                WindowEvent::CursorMoved { position, .. } => {
+                input_event::Event::CursorMoved { position, .. } => {
                     if let Some(r) = self.renderer.modern_ref() {
                         let b = HudBatch::new(
                             [r.config.width, r.config.height],
@@ -9168,7 +9320,7 @@ impl Game<'_> {
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                     }
                 }
-                WindowEvent::MouseInput {
+                input_event::Event::MouseInput {
                     state: ElementState::Pressed,
                     button: MouseButton::Left,
                     ..
@@ -9182,12 +9334,12 @@ impl Game<'_> {
                 }
                 _ => {}
             }
-            if matches!(&event, WindowEvent::KeyboardInput { .. }) {
+            if matches!(&event, input_event::Event::KeyboardInput { .. }) {
                 return;
             }
         }
         if self.pending_entry.is_some()
-            && matches!(&event, WindowEvent::KeyboardInput { event, .. }
+            && matches!(&event, input_event::Event::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed
                     && event.physical_key == PhysicalKey::Code(KeyCode::Escape))
         {
@@ -9198,9 +9350,9 @@ impl Game<'_> {
         if (self.pending_entry.is_some() || self.integrated_starting.is_some())
             && !matches!(
                 &event,
-                WindowEvent::CloseRequested
-                    | WindowEvent::Resized(_)
-                    | WindowEvent::RedrawRequested
+                input_event::Event::CloseRequested
+                    | input_event::Event::Resized(_)
+                    | input_event::Event::RedrawRequested
             )
         {
             return;
@@ -9210,17 +9362,17 @@ impl Game<'_> {
         if self.pack_reload.is_some()
             && !matches!(
                 &event,
-                WindowEvent::CloseRequested
-                    | WindowEvent::Focused(_)
-                    | WindowEvent::Resized(_)
-                    | WindowEvent::RedrawRequested
+                input_event::Event::CloseRequested
+                    | input_event::Event::Focused(_)
+                    | input_event::Event::Resized(_)
+                    | input_event::Event::RedrawRequested
             )
         {
             return;
         }
         if self.pending_save.is_some() {
             match event {
-                WindowEvent::CloseRequested => {
+                input_event::Event::CloseRequested => {
                     if !self.settings.quit_shortcuts
                         && horizon_client::input::is_quit_shortcut_down(
                             self.modifiers,
@@ -9231,18 +9383,18 @@ impl Game<'_> {
                     }
                     self.pending_save.as_mut().unwrap().quit = true;
                 }
-                WindowEvent::Focused(focused) => {
+                input_event::Event::Focused(focused) => {
                     self.focused = focused;
                     if !focused {
                         self.capture(false);
                     }
                 }
-                WindowEvent::Resized(size) => {
+                input_event::Event::Resized(size) => {
                     if let Some(r) = self.renderer.modern_mut() {
                         r.resize(size.width, size.height);
                     }
                 }
-                WindowEvent::RedrawRequested => {
+                input_event::Event::RedrawRequested => {
                     if let Err(error) = self.render_closing_save() {
                         self.error = Some(error);
                         self.exit_on_error(event_loop);
@@ -9270,7 +9422,7 @@ impl Game<'_> {
         // screens keep theirs while no box has focus: Space presses a button
         // there, and the box that opens must not take its character.
         let mut typed: Option<String> = None;
-        if let WindowEvent::KeyboardInput {
+        if let input_event::Event::KeyboardInput {
             event: key_event, ..
         } = &mut event
             && key_event.state == ElementState::Pressed
@@ -9319,7 +9471,7 @@ impl Game<'_> {
         }
         // Screen.keyPressed: Tab, the arrows and Enter move and press the
         // menu's focus, unless the focused widget or the screen keeps them.
-        if let WindowEvent::KeyboardInput {
+        if let input_event::Event::KeyboardInput {
             event: key_event, ..
         } = &event
             && key_event.state == ElementState::Pressed
@@ -9336,7 +9488,7 @@ impl Game<'_> {
         // the Pre lets the input through, fired after the arms ran.
         let mut mouse_post: Option<native_hooks::ScreenMousePost> = None;
         let result: Result<()> = (|| {
-            if let WindowEvent::MouseInput { state, button, .. } = &event
+            if let input_event::Event::MouseInput { state, button, .. } = &event
                 && !self.pad_synthetic_input()
             {
                 self.track_drag_button(*button, *state == ElementState::Pressed);
@@ -9345,7 +9497,7 @@ impl Game<'_> {
             if self.screen == Screen::EmoteWheel && self.emote_wheel_event(&event) {
                 return Ok(());
             }
-            if let WindowEvent::KeyboardInput { event, .. } = &event
+            if let input_event::Event::KeyboardInput { event, .. } = &event
                 && event.state == ElementState::Released
                 && let PhysicalKey::Code(key) = event.physical_key
                 && self.screen_key_released(key)
@@ -9355,7 +9507,7 @@ impl Game<'_> {
                 self.mapped_key_event(key, false, false)?;
                 return Ok(());
             }
-            if let WindowEvent::KeyboardInput { event, .. } = &event
+            if let input_event::Event::KeyboardInput { event, .. } = &event
                 && event.state == ElementState::Released
                 && self.screen == Screen::Options
                 && let PhysicalKey::Code(key) = event.physical_key
@@ -9371,7 +9523,7 @@ impl Game<'_> {
             // arms below (which hold the container hotkey and the sort and
             // header buttons too) see it. A click the pad or the keyboard's
             // focus made up is not the mouse: it fires nothing.
-            if let WindowEvent::MouseInput { state, button, .. } = &event
+            if let input_event::Event::MouseInput { state, button, .. } = &event
                 && !self.pad_synthetic_input()
                 && let Some(screen) = self.screen_view_now()
             {
@@ -9402,7 +9554,7 @@ impl Game<'_> {
             }
             self.key_focus_mouse_press(&event);
             match event {
-                WindowEvent::CloseRequested => {
+                input_event::Event::CloseRequested => {
                     if !self.settings.quit_shortcuts
                         && horizon_client::input::is_quit_shortcut_down(
                             self.modifiers,
@@ -9415,20 +9567,20 @@ impl Game<'_> {
                     self.begin_closing_save(true)?;
                 }
                 // Input method composition: the committed text types like a key's text.
-                WindowEvent::Ime(winit::event::Ime::Commit(text)) => self.ime_commit(&text),
-                WindowEvent::Ime(winit::event::Ime::Preedit(text, cursor)) => {
+                input_event::Event::Ime(winit::event::Ime::Commit(text)) => self.ime_commit(&text),
+                input_event::Event::Ime(winit::event::Ime::Preedit(text, cursor)) => {
                     self.ime_preedit(&text, cursor)
                 }
-                WindowEvent::Ime(winit::event::Ime::Disabled) => {
+                input_event::Event::Ime(winit::event::Ime::Disabled) => {
                     horizon_client::preedit::set_preedit(None)
                 }
-                WindowEvent::Resized(size) => {
+                input_event::Event::Resized(size) => {
                     if let Some(r) = self.renderer.modern_mut() {
                         r.resize(size.width, size.height);
                     }
                     self.observe_fullscreen();
                 }
-                WindowEvent::Focused(focused) => {
+                input_event::Event::Focused(focused) => {
                     self.focused = focused;
                     self.focus_lost = (!focused).then(Instant::now);
                     if focused {
@@ -9467,7 +9619,7 @@ impl Game<'_> {
                         self.regrab_on_refocus = held;
                     }
                 }
-                WindowEvent::CursorMoved { position, .. } => {
+                input_event::Event::CursorMoved { position, .. } => {
                     if let Some(r) = self.renderer.modern_ref() {
                         let b = HudBatch::new(
                             [r.config.width, r.config.height],
@@ -9527,9 +9679,9 @@ impl Game<'_> {
                         }
                     }
                 }
-                WindowEvent::MouseWheel { .. }
+                input_event::Event::MouseWheel { .. }
                     if self.screen == Screen::Playing && self.replay.driver.is_some() => {}
-                WindowEvent::MouseWheel { delta, .. } => {
+                input_event::Event::MouseWheel { delta, .. } => {
                     let (raw_x, raw_y) = match delta {
                         MouseScrollDelta::LineDelta(x, y) => (f64::from(x), f64::from(y)),
                         MouseScrollDelta::PixelDelta(p) => (p.x / 30.0, p.y / 30.0),
@@ -9672,29 +9824,29 @@ impl Game<'_> {
                         self.advancements_scroll(scaled(raw_x) as f32, d);
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } if self.command_prompt.is_some() => {
+                input_event::Event::MouseInput { state, button, .. } if self.command_prompt.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.command_prompt_click();
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } if self.link_prompt.is_some() => {
+                input_event::Event::MouseInput { state, button, .. } if self.link_prompt.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.link_prompt_click();
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } if self.code_of_conduct.is_some() => {
+                input_event::Event::MouseInput { state, button, .. } if self.code_of_conduct.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.code_of_conduct_click()?;
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. }
+                input_event::Event::MouseInput { state, button, .. }
                     if self.server_packs.prompt.is_some() =>
                 {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.pack_prompt_click()?;
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } if self.dialog_open() => {
+                input_event::Event::MouseInput { state, button, .. } if self.dialog_open() => {
                     if button == MouseButton::Left {
                         if state == ElementState::Pressed {
                             self.dialog_click()?;
@@ -9704,13 +9856,13 @@ impl Game<'_> {
                     }
                 }
                 // ConnectScreen's Cancel, under the prompts and dialogs above.
-                WindowEvent::MouseInput { state, button, .. } if self.remote_loading() => {
+                input_event::Event::MouseInput { state, button, .. } if self.remote_loading() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.connect_screen_click()?;
                     }
                 }
-                WindowEvent::MouseInput { .. } if self.screen == Screen::Win => {}
-                WindowEvent::MouseInput { state, button, .. } if self.screen == Screen::Options => {
+                input_event::Event::MouseInput { .. } if self.screen == Screen::Win => {}
+                input_event::Event::MouseInput { state, button, .. } if self.screen == Screen::Options => {
                     if self.options_waiting_for_key() && state == ElementState::Pressed {
                         self.options_bind_mouse(button)?;
                     } else if matches!(button, MouseButton::Left | MouseButton::Right) {
@@ -9720,7 +9872,7 @@ impl Game<'_> {
                         )?;
                     }
                 }
-                WindowEvent::MouseInput {
+                input_event::Event::MouseInput {
                     state: ElementState::Released,
                     button: MouseButton::Left,
                     ..
@@ -9730,7 +9882,7 @@ impl Game<'_> {
                         title.release_field();
                     }
                 }
-                WindowEvent::MouseInput {
+                input_event::Event::MouseInput {
                     state,
                     button: MouseButton::Left,
                     ..
@@ -9760,7 +9912,7 @@ impl Game<'_> {
                 // click of any button, so the middle one selects its row
                 // without joining (only the left click's play icon or its
                 // click on the selected row does that).
-                WindowEvent::MouseInput {
+                input_event::Event::MouseInput {
                     state: ElementState::Pressed,
                     button: MouseButton::Middle,
                     ..
@@ -9775,8 +9927,8 @@ impl Game<'_> {
                         title.select_world_at(self.cursor.0, self.cursor.1, (b.width, b.height));
                     }
                 }
-                WindowEvent::MouseInput { .. } if self.title_input_active() => {}
-                WindowEvent::MouseInput { state, button, .. } if self.book.is_some() => {
+                input_event::Event::MouseInput { .. } if self.title_input_active() => {}
+                input_event::Event::MouseInput { state, button, .. } if self.book.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         let size = self
                             .renderer
@@ -9786,7 +9938,7 @@ impl Game<'_> {
                         self.book_click(size);
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } if self.sign_edit.is_some() => {
+                input_event::Event::MouseInput { state, button, .. } if self.sign_edit.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         let size = self
                             .renderer
@@ -9796,7 +9948,7 @@ impl Game<'_> {
                         self.sign_edit_click(size);
                     }
                 }
-                WindowEvent::MouseInput { state, button, .. } => {
+                input_event::Event::MouseInput { state, button, .. } => {
                     let pressed = state == ElementState::Pressed;
                     if self.studio_mouse_input(pressed, button) {
                         return Ok(());
@@ -9967,7 +10119,7 @@ impl Game<'_> {
                     }
                 }
                 // ConfirmScreen.keyPressed: Escape answers no, once its delay is over.
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::Dead && self.ui.death_confirm.is_some() =>
                 {
                     if event.state == ElementState::Pressed
@@ -9981,14 +10133,14 @@ impl Game<'_> {
                     }
                 }
                 // ConfirmScreen.keyPressed: Escape answers no.
-                WindowEvent::KeyboardInput { event, .. } if self.command_prompt.is_some() => {
+                input_event::Event::KeyboardInput { event, .. } if self.command_prompt.is_some() => {
                     if event.state == ElementState::Pressed
                         && let PhysicalKey::Code(key) = event.physical_key
                     {
                         self.command_prompt_key(key);
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.link_prompt.is_some() => {
+                input_event::Event::KeyboardInput { event, .. } if self.link_prompt.is_some() => {
                     if event.state == ElementState::Pressed
                         && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
                     {
@@ -9996,15 +10148,15 @@ impl Game<'_> {
                     }
                 }
                 // CodeOfConductScreen.shouldCloseOnEsc is false: no key leaves the screen.
-                WindowEvent::KeyboardInput { .. } if self.code_of_conduct.is_some() => {}
-                WindowEvent::KeyboardInput { event, .. } if self.server_packs.prompt.is_some() => {
+                input_event::Event::KeyboardInput { .. } if self.code_of_conduct.is_some() => {}
+                input_event::Event::KeyboardInput { event, .. } if self.server_packs.prompt.is_some() => {
                     if event.state == ElementState::Pressed
                         && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
                     {
                         self.answer_pack_prompt(false)?;
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.dialog_open() => {
+                input_event::Event::KeyboardInput { event, .. } if self.dialog_open() => {
                     let shortcut = self.edit_shortcut(&event);
                     if event.state == ElementState::Pressed
                         && let PhysicalKey::Code(key) = event.physical_key
@@ -10012,7 +10164,7 @@ impl Game<'_> {
                         self.dialog_key(key, shortcut, event.text.as_deref())?
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::Chat && self.title.is_none() =>
                 {
                     if let PhysicalKey::Code(key) = event.physical_key {
@@ -10024,13 +10176,13 @@ impl Game<'_> {
                         }
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.sign_edit.is_some() => {
+                input_event::Event::KeyboardInput { event, .. } if self.sign_edit.is_some() => {
                     self.sign_edit_key(&event)
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.book.is_some() => {
+                input_event::Event::KeyboardInput { event, .. } if self.book.is_some() => {
                     self.book_key(&event)
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::Creative
                         && self.creative_screen.tab().search
                         && !self.mod_browser_typing()
@@ -10060,7 +10212,7 @@ impl Game<'_> {
                         self.creative_search_edit(event.text.as_deref());
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.recipe_search_focused()
                         && event.state == ElementState::Pressed
                         && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
@@ -10068,7 +10220,7 @@ impl Game<'_> {
                     // The recipe book's search box takes every key but Escape.
                     self.recipe_key(&event);
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.mod_browser_typing()
                         && event.state == ElementState::Pressed
                         && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
@@ -10076,7 +10228,7 @@ impl Game<'_> {
                     // A mod's item panel's search box, as the recipe book's.
                     self.mod_browser_key(&event);
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.station_typing()
                         && event.state == ElementState::Pressed
                         && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
@@ -10092,23 +10244,23 @@ impl Game<'_> {
                         self.station_text(event.text.as_deref(), backspace);
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::WorldOptions
                         && !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) =>
                 {
                     self.world_options_key(&event)
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::Win => {
+                input_event::Event::KeyboardInput { event, .. } if self.screen == Screen::Win => {
                     self.win_key(&event)?
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen.takes_presses() && event.state == ElementState::Pressed =>
                 {
                     self.screen_press(&event)
                 }
                 // Options consumes presses; releases still reach the bound
                 // gameplay mapping below, including sneak/sprint toggles.
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::Options && event.state == ElementState::Pressed =>
                 {
                     if let Some(shortcut) = self.edit_shortcut(&event)
@@ -10120,7 +10272,7 @@ impl Game<'_> {
                         self.options_key(key, event.text.as_deref())?;
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::Paused
                         && event.state == ElementState::Pressed
                         && self.pause_menu
@@ -10133,7 +10285,7 @@ impl Game<'_> {
                         self.pause_key(key)?;
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. }
+                input_event::Event::KeyboardInput { event, .. }
                     if self.screen == Screen::Dead && event.state == ElementState::Pressed =>
                 {
                     if let PhysicalKey::Code(key) = event.physical_key {
@@ -10143,7 +10295,7 @@ impl Game<'_> {
                         self.death_key(key)?;
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } if self.title_input_active() => {
+                input_event::Event::KeyboardInput { event, .. } if self.title_input_active() => {
                     if event.state == ElementState::Pressed {
                         if let Some(shortcut) = self.edit_shortcut(&event) {
                             self.title_shortcut(shortcut);
@@ -10240,7 +10392,7 @@ impl Game<'_> {
                         }
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } => {
+                input_event::Event::KeyboardInput { event, .. } => {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
@@ -10277,7 +10429,7 @@ impl Game<'_> {
                     }
                     self.mapped_key_event(key, event.state == ElementState::Pressed, event.repeat)?;
                 }
-                WindowEvent::RedrawRequested => {
+                input_event::Event::RedrawRequested => {
                     horizon_client::spans::time("recover_device", || self.recover_device())?;
                     self.observe_fullscreen();
                     self.sync_ime();
@@ -10409,6 +10561,18 @@ impl Game<'_> {
                                 self.finish_screenshot(&result, None);
                                 Some(result)
                             }
+                        })
+                        // The native adapter writes its own PNG and reports the size; a failure
+                        // nobody asked for is logged below like the modern one's.
+                        .or_else(|| {
+                            (self.renderer.backend()
+                                == Some(horizon_client::render_contract::Backend::LegacyGl))
+                            .then(|| {
+                                self.renderer
+                                    .facade(Default::default(), Default::default())
+                                    .and_then(|mut facade| facade.take_screenshot_result())
+                            })
+                            .flatten()
                         });
                     if let Some(result) = &finished
                         && let Some(reply) = self.pending_screenshot.take()
@@ -10741,6 +10905,10 @@ impl<'a> Game<'a> {
             window: None,
             resize_state: None,
             renderer: Default::default(),
+            #[cfg(feature = "legacy-gl")]
+            native_section_order: Default::default(),
+            #[cfg(feature = "legacy-gl")]
+            native_streaming: Default::default(),
             last_device_recovery: None,
             entity_vertices: Vec::new(),
             dynamic_lights: Vec::new(),
@@ -11470,6 +11638,17 @@ pub(crate) fn run_with(
         loaded.entity_models,
     )?;
     if let Some(mut game) = game {
+        // `--renderer native-gl2`: the desktop GL window, its menu and its frame pump. The
+        // modern route never reaches a native owner, so this check cannot shadow it.
+        if game.options.renderer.is_native() {
+            #[cfg(feature = "legacy-gl")]
+            {
+                native_startup::initialize(&mut game)?;
+                return native_startup::run(game);
+            }
+            #[cfg(not(feature = "legacy-gl"))]
+            return Err("this build has no native GL2 backend".into());
+        }
         // Minecraft.onGameLoadFinished: a start that made it this far is clean.
         if game.options.execution_role.is_client() {
             game.settings.file.set(

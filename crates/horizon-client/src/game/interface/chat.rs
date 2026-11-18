@@ -46,10 +46,8 @@ fn horizon_profiler_args<'a>(
         .is_none_or(|tree| tree.has_horizon_profiler())
         .then_some(args)
 }
-use winit::{
-    event::KeyEvent,
-    keyboard::{KeyCode, PhysicalKey},
-};
+use crate::game::input_event::KeyEvent;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `base` with extra client-local commands added: each a literal taking the
 /// rest of the line as typed (`Dispatcher::with_mod_commands`), so the chat

@@ -74,16 +74,36 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            stream_slots: 4096,
+            // One interest slot per section of every column inside the view. 4096 held a
+            // radius-6 view of the 24-section overworld and left the default (12) unfittable;
+            // 16384 holds 682 columns, which is radius 13: the whole default view, with the
+            // fitted radius as the ceiling rather than a crash (native_streaming::fitted_radius).
+            stream_slots: 16384,
             stream_pending: 64,
             stream_bytes: 8 << 20,
             animation_sprites: 4096,
             animation_frames: 65536,
             animation_source_bytes: 32 << 20,
-            animation_staging_bytes: 8 << 20,
+            // One tick's changed sprites plus the decoded HUD pages they touch: the shipped
+            // atlas spreads its animations over about a dozen 1 MiB pages, so a cap below that
+            // fails the first animation tick of a world in normal resources.
+            animation_staging_bytes: 32 << 20,
             screenshot_bytes: 16 << 20,
-            gpu: Budget::default(),
-            sections: 1024,
+            gpu: Budget {
+                // Tracked payload ceilings, not a VRAM claim: the staged atlas already asks for
+                // 256 MiB before a single frame, so textures below that refuse the real pack.
+                texture_bytes: 256 << 20,
+                // Measured on llvmpipe: ~120 KiB of mesh payload per resident section, and a
+                // radius-12 view keeps a few thousand of them resident. The old 32 MiB default
+                // held ~270 sections -- it drew radius 6 and then failed the frame that needed
+                // one more upload (`no transient mesh capacity`). A small machine lowers the
+                // render distance, which lowers what this budget actually holds.
+                mesh_bytes: 512 << 20,
+            },
+            // Resident sections the scene holds. A radius-12 view of the 24-section overworld
+            // has ~533 columns and several non-air sections each; the old 1024 roofed a view
+            // the supported render distances routinely exceed.
+            sections: 8192,
             section_vertices: 262144,
             gui_vertices: 262144,
             entity_vertices: 262144,
@@ -343,6 +363,16 @@ impl TerrainHudRenderer {
     }
     pub fn resident_sections(&self) -> usize {
         self.world.section_count()
+    }
+    /// The tracked GPU payload and object counts in use, and what the frame can still take:
+    /// `status` reports them so a run says how close the native budget is, never an estimate.
+    pub fn gpu_usage(&self) -> (horizon_legacy_render::Stats, horizon_legacy_render::Stats) {
+        let backend = self.world.backend();
+        (backend.stats(), backend.remaining())
+    }
+    /// The interest table the view must fit: slots, pending completions, retained bytes.
+    pub fn stream_capacity(&self) -> horizon_render_api::streaming::Limits {
+        self.stream_limits()
     }
     pub fn size(&self) -> [u32; 2] {
         self.world.backend().context().size()
