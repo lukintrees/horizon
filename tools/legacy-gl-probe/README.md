@@ -3,8 +3,10 @@
 Stage 0 of the [X1650 / Win7 x86 plan](../../docs/design/opengl2-win7-x86.md).
 This is **not a game renderer**. It needs no Minecraft resources, Java, wgpu,
 Cargo registry downloads or real player data. It has Linux EGL/OSMesa and native
-Windows WGL paths. **Only Linux runtime is verified**; Win7 PE32 linking/loading,
-WGL execution, window presentation, input and ATI driver compatibility remain unverified.
+Windows WGL paths. Linux runs on Mesa llvmpipe; the WGL path runs end to end under
+Wine 11 (see [Windows WGL bootstrap](#windows-wgl-bootstrap-runs-under-wine)).
+Win7 PE32 linking/loading, a real Radeon ICD and ATI-specific limits remain
+unverified.
 
 The independent Cargo workspace avoids building the game's dependency graph. Unsafe
 FFI now lives in the reusable `horizon-legacy-render` crate; the game's `forbid(unsafe_code)` policy is unchanged. Contexts
@@ -107,13 +109,21 @@ only, no application source used). Binaries/downloads stayed under ignored
 `.local/legacy-gl/`; reports/builds under ignored `target/`. Nothing is bundled
 into the game or copied into the public tree.
 
-## Windows WGL bootstrap (added, not runtime-verified)
+## Windows WGL bootstrap (runs under Wine)
 
 The WGL context owns a `CS_OWNDC` window, a double-buffered RGBA/depth pixel format
 and a legacy `wglCreateContext` context. No EGL, GL3 core profile, modern context
 extensions, winit, Vulkan or DX12 are involved. The window is briefly shown before
 readback (hidden windows have no reliable pixel-ownership guarantee). Keep it
 unobscured on the real test machine. No long-lived event loop or input test exists.
+
+The pixel format requests 32 color bits with an 8-bit destination alpha channel,
+as the EGL and GLX configs do. With 24 RGB bits and no alpha, `glReadPixels`
+reported alpha 255 everywhere and the translucent-overlay checks failed; the
+driver's reported `cAlphaBits` is now part of the accepted-format test. `resize`
+presents once after `SetWindowPos`: Wine only rebuilds the GL drawable from the
+client rect at a present, so without it GL kept drawing into the old, smaller
+buffer and the new area read back as zeros.
 
 `wglGetProcAddress` null/1/2/3/-1 results are never called. The loader falls back to
 `GetProcAddress` on the already loaded `opengl32.dll`, as required for GL1 exports
@@ -452,3 +462,41 @@ Final own CI [41811072027](https://github.com/lukintrees/horizon/actions/runs/41
 including two sky CPU tests, 15 actual-game GPU fixtures, full-client check/game
 Clippy, 3x26 independent readbacks, 39 executed Windows x86 workspace tests and
 ordinary x86 probe linking. Docs-only follow-up does not change tested code.
+
+## Wine WGL execution (2026-11-18)
+
+The WGL path now runs, not only compiles. `tools/legacy_wgl_wine.py` builds the
+probe for a Windows 7 GNU target (`x86_64-win7-windows-gnu` or the 32-bit
+`i686-win7-windows-gnu`, both with `-Zbuild-std=std,panic_abort`), creates a fresh
+isolated Wine 11 prefix, pins it to Windows 7 (verified: `cmd /c ver` reports
+6.1.7601), and runs both GL 2.1/GLSL120 and GL 2.0/GLSL110 cases. Each case must
+pass the triangle checks and 25 backend outcomes (every one except
+`backend_context_isolation`, which the probe only emits for the offscreen
+backends), report `target_os: windows`, a `WGL desktop OpenGL window` context, a
+successful `buffer_swap`, GL 2.x, GLSL 1.20, and non-empty vendor/renderer.
+
+What this proves: a real `wglCreateContext` on a `CS_OWNDC` Win32 window, the
+`horizon-legacy-render` `driver.rs`/`wgl_address.rs` resolution path (including
+`wglGetProcAddress` for every GL2 symbol), a present, and a pixel read back — all
+in a Windows PE process, 64-bit and 32-bit.
+
+What it does not prove: Wine's GL is the host's Mesa/llvmpipe (`llvmpipe (LLVM
+23.1.4, 256 bits)` here), not an X1650. `LIBGL_ALWAYS_SOFTWARE`/`GALLIUM_DRIVER`
+and the `MESA_GL_VERSION_OVERRIDE`/`MESA_GLSL_VERSION_OVERRIDE` pins reach the
+same Mesa the Linux runner uses, so this is a GL2 *code path* proof, not driver
+compatibility. Wine stubs or reimplements parts of Win32 and `opengl32`; its
+pixel-format selection, `SwapBuffers` and window-manager behaviour are Wine's, not
+Microsoft's or ATI's. Real Win7 x86 with a Radeon X1650 and its ICD is still
+untested.
+
+The probe resizes down to 1x1. A host window manager (KWin over Xwayland here)
+clamps a real window to a minimum size asynchronously, so the harness runs a
+persistent Wine virtual desktop (`explorer /desktop=...`) that the host WM sees as
+one toplevel; without it the 1x1 resize reports a clamped client rect and fails
+for a reason unrelated to WGL.
+
+```sh
+python3 tools/legacy_wgl_wine.py                  # x86_64, both GL2 modes
+python3 tools/legacy_wgl_wine.py --arch x86       # 32-bit PE32, both modes
+python3 -m unittest tests.test_legacy_wgl_wine    # the pass/fail rules, no Wine
+```

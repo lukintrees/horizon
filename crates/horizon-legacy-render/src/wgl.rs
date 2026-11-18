@@ -339,7 +339,15 @@ impl Context {
                 size: size_of::<PixelFormat>() as u16,
                 version: 1,
                 flags: 0x0004 | 0x0020 | 0x0001, // DRAW_TO_WINDOW | SUPPORT_OPENGL | DOUBLEBUFFER
-                color_bits: 24,
+                color_bits: 32,
+                // Destination alpha, as the EGL and GLX configs request: without it
+                // the framebuffer reports alpha 255 everywhere, so a translucent
+                // overlay's `glReadPixels` is opaque. Blending to alpha is part of
+                // the contract, so the 32-bit color buffer carries an 8-bit alpha
+                // channel (32 = R8+G8+B8+A8), not merely 24 RGB bits.
+                // cRedBits, cRedShift, ... in that interleaved order; cAlphaBits
+                // is index 6 and is checked against what the driver reported.
+                channel_bits_and_shifts: [8, 16, 8, 8, 8, 0, 8, 24],
                 depth_bits: 24,
                 ..PixelFormat::default() // TYPE_RGBA, MAIN_PLANE
             };
@@ -364,6 +372,7 @@ impl Context {
             if actual.flags & requested.flags != requested.flags
                 || actual.pixel_type != 0
                 || actual.depth_bits < 16
+                || actual.channel_bits_and_shifts[6] < 8 // cAlphaBits
             {
                 return Err(
                     "driver has no suitable double-buffered RGBA/depth pixel format".into(),
@@ -463,6 +472,18 @@ impl crate::ContextImpl for Context {
             self.state.programmatic_resize.set(previous);
             if result == 0 {
                 return Err(failure("SetWindowPos"));
+            }
+            // The window resize is not the drawable resize: Wine (the only WGL
+            // runtime this backend has been exercised on) rebuilds the GL drawable
+            // from the client rect only when the swap chain is presented. Without
+            // this, `resize` publishes the new size while GL keeps drawing into the
+            // old, smaller buffer, so the new area reads back as untouched zeros.
+            // Present once, after the window has its new size, so Wine rebuilds the
+            // drawable to match. Only after the context exists: the initial sizing
+            // in `create_window` runs before any context. Back buffer contents are
+            // unspecified after a resize anyway; the caller redraws the whole frame.
+            if !self.context.is_null() && SwapBuffers(self.dc) == 0 {
+                return Err(failure("SwapBuffers"));
             }
         }
         self.refresh_size()
