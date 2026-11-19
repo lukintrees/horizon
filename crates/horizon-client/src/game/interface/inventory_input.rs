@@ -459,8 +459,12 @@ impl Game<'_> {
                 self.inv_drag = None;
                 self.throw_click(right, input);
             }
-            (Release::Click(input), Target::Slot(slot)) if self.inv_drag.is_some() => {
-                // The drag never reached a slot: a plain click where it ends.
+            (Release::Click(input), Target::Slot(slot)) => {
+                // `mouseReleased` over a slot with a carried stack sends the PICKUP
+                // that puts it down, whether or not a drag ran in between. Sending it
+                // only when `inv_drag` was set left a plain press-move-release with
+                // the stack stuck on the cursor: a press picks up, and nothing ever
+                // drops it.
                 self.inv_drag = None;
                 if !self.click_open_inventory(Some(slot), i32::from(right), input) {
                     self.click_inventory(right);

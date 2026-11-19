@@ -197,6 +197,12 @@ impl Game<'_> {
                 .facade(Default::default(), Default::default())
             {
                 Some(mut renderer) => renderer.set_native_pointer_mode(mode),
+                // A server thread's `Game` (single player's own, a LAN host's, a dedicated
+                // server's) has no window and no pointer: the shared gameplay code still
+                // reaches here when a container opens or a world closes. Leaving the pointer
+                // alone is what the winit path does for a game with no window, and the window
+                // that a client of that server draws into keeps its own.
+                None if self.serving.is_some() || self.options.dedicated.is_some() => Ok(()),
                 None if !capture => Ok(()),
                 None => Err("native pointer requires an owner".into()),
             };
@@ -360,8 +366,14 @@ impl Game<'_> {
             );
         }
         // Outside a run, a window whose grab is the system's holds it exactly while the game
-        // has it grabbed; only a run leaves the two apart.
-        if !self.internal_grab() && self.captured != self.capture_mode.is_some() {
+        // has it grabbed; only a run leaves the two apart. The native GL2 window grabs the
+        // pointer itself (`set_native_pointer_mode`) and has no winit grab to compare against:
+        // reconciling it here would re-run `capture` every frame, resetting the mouse
+        // accumulator before a frame could turn the view (#mouse-look).
+        if !self.options.renderer.is_native()
+            && !self.internal_grab()
+            && self.captured != self.capture_mode.is_some()
+        {
             let grab = self.captured;
             self.captured = self.capture_mode.is_some();
             self.capture(grab);
