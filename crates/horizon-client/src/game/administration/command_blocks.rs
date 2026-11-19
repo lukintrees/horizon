@@ -832,10 +832,7 @@ impl Game<'_> {
                 return;
             }
         }
-        let size = self
-            .renderer
-            .modern_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let fallback;
         let buttons = match self.built_command_block(b.width, b.height) {

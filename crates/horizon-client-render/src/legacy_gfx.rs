@@ -20,6 +20,8 @@ use horizon_render_api::{
 
 mod animation;
 mod asset_snapshot;
+mod block_entities;
+pub use block_entities::NativeBlockEntities;
 mod crumbling;
 pub(crate) mod gizmos;
 mod outline;
@@ -53,6 +55,13 @@ pub struct Limits {
     /// Combined source + icon RGBA buffers, excluding PNG codec overhead.
     pub screenshot_bytes: usize,
     pub gpu: Budget,
+    /// Mesh budget that resident sections may never spend. Every frame allocates
+    /// its entities, particles, hand and outline from the same ledger, and they
+    /// are transient: a view that fills the ledger to the last byte leaves the
+    /// frame with no capacity at all (`no transient mesh capacity for legacy
+    /// frame`, on the render thread, with a world already loaded). Streaming
+    /// stops short of this reserve instead.
+    pub transient_mesh_bytes: usize,
     pub sections: usize,
     pub section_vertices: usize,
     pub gui_vertices: usize,
@@ -94,13 +103,20 @@ impl Default for Limits {
                 // Tracked payload ceilings, not a VRAM claim: the staged atlas already asks for
                 // 256 MiB before a single frame, so textures below that refuse the real pack.
                 texture_bytes: 256 << 20,
-                // Measured on llvmpipe: ~120 KiB of mesh payload per resident section, and a
-                // radius-12 view keeps a few thousand of them resident. The old 32 MiB default
-                // held ~270 sections -- it drew radius 6 and then failed the frame that needed
-                // one more upload (`no transient mesh capacity`). A small machine lowers the
-                // render distance, which lowers what this budget actually holds.
+                // Measured on llvmpipe: ~147 KiB of tracked payload per resident section, and a
+                // radius-12 view of the overworld keeps ~3.6k of them -- 530 MiB, just past this.
+                // The old 32 MiB default held ~270 sections: it drew radius 6 and then failed the
+                // frame that needed one more upload. Raising this further only moves the wall;
+                // what keeps a view larger than it playable is that streaming stops below the
+                // frame's reserve and draws one chunk less (native_streaming::relieve_pressure).
+                // A small machine lowers the render distance, which lowers what this holds, and
+                // the Win7 x86 build must keep this modest: it is system address space there.
                 mesh_bytes: 512 << 20,
             },
+            // Six collections' worth of the measured section payload, so a view at the
+            // ledger's edge still draws its entities, hand, outline and crumbling overlay.
+            // Charged to streaming before it, never after.
+            transient_mesh_bytes: 32 << 20,
             // Resident sections the scene holds. A radius-12 view of the 24-section overworld
             // has ~533 columns and several non-air sections each; the old 1024 roofed a view
             // the supported render distances routinely exceed.
@@ -173,11 +189,22 @@ pub struct TerrainHudRenderer {
     resource_generation: Option<horizon_render_api::render_contract::ResourceGeneration>,
     animations: animation::Animations,
     streaming: Option<streaming::State>,
+    /// Chests, signs, pots and the rest: what each resident section holds, kept beside its
+    /// quads exactly as the modern `gfx::Renderer` keeps it, so the game's one block-entity
+    /// producer draws them on either backend.
+    block_entities: block_entities::Resident,
     screen: screen::Resources,
     pub(crate) screenshots: screenshot::State,
 }
 fn diagnostic(error: impl std::fmt::Debug) -> String {
     format!("legacy terrain/HUD: {error:?}")
+}
+/// Mesh payload resident sections may occupy out of `ledger`, leaving `transient`
+/// for the frame's own entities, particles, hand and outline. The reserve is capped
+/// at an eighth of the ledger, so a tiny test ledger still admits a section instead
+/// of reserving it all for transients: this is a headroom policy for real scenes.
+pub(crate) fn residency_limit(ledger: usize, transient: usize) -> usize {
+    ledger - transient.min(ledger / 8)
 }
 
 impl TerrainHudRenderer {
@@ -243,6 +270,7 @@ impl TerrainHudRenderer {
             resource_generation: None,
             animations: animation::Animations::default(),
             streaming: None,
+            block_entities: block_entities::Resident::default(),
             screen: screen::Resources::default(),
             screenshots: screenshot::State::new(limits.screenshot_bytes),
         })
@@ -302,8 +330,16 @@ impl TerrainHudRenderer {
 
     pub fn upload_section(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
         self.unstamped_sections()?;
+        self.upload_mesh(key, mesh)
+    }
+    /// The one upload path both the stamped stream and the direct probes take: the quads
+    /// go to the GPU scene, and what the section holds goes to the block-entity store,
+    /// before either can be drawn.
+    fn upload_mesh(&mut self, key: SectionKey, mesh: &SectionMesh) -> Result<(), String> {
         render_bridge::upload_section(&mut self.world, key, mesh, self.limits.section_vertices)
-            .map_err(diagnostic)
+            .map_err(diagnostic)?;
+        self.block_entities.set(key, &mesh.block_entities);
+        Ok(())
     }
     /// Game keys use section Y relative to the dimension minimum, unlike the
     /// zero-origin low-level probes. Require the layout before accepting them.
@@ -340,6 +376,7 @@ impl TerrainHudRenderer {
         self.world
             .reset_sections(layout.min_y())
             .map_err(diagnostic)?;
+        self.block_entities.clear();
         self.game_layout = Some(layout);
         Ok(())
     }
@@ -350,12 +387,15 @@ impl TerrainHudRenderer {
         self.unstamped_sections()?;
         for (x, z) in columns {
             self.world.unload_column([x, z]).map_err(diagnostic)?;
+            self.block_entities.remove_column(x, z);
         }
         Ok(())
     }
     pub fn unload_section(&mut self, key: SectionKey) -> Result<bool, String> {
         self.unstamped_sections()?;
-        self.world.unload_section(key).map_err(diagnostic)
+        let removed = self.world.unload_section(key).map_err(diagnostic)?;
+        self.block_entities.remove(key);
+        Ok(removed)
     }
     pub fn update_lightmap(&mut self, rgba: &[u8]) -> Result<(), String> {
         self.world.update_lightmap(rgba).map_err(diagnostic)?;
@@ -375,8 +415,24 @@ impl TerrainHudRenderer {
     pub fn stream_capacity(&self) -> horizon_render_api::streaming::Limits {
         self.stream_limits()
     }
+    /// Mesh payload resident sections may occupy: the ledger minus the frame's
+    /// transient reserve. `drain_streaming` defers an upload that would cross it,
+    /// so `render` always finds capacity for entities, the hand and overlays. A
+    /// tiny test ledger can never hold a reserve above an eighth of itself: the
+    /// reserve is a headroom policy for real scenes, not a second hard cap.
+    pub(crate) fn section_residency_limit(&self) -> usize {
+        residency_limit(self.limits.gpu.mesh_bytes, self.limits.transient_mesh_bytes)
+    }
     pub fn size(&self) -> [u32; 2] {
         self.world.backend().context().size()
+    }
+    /// The block-entity membership of the resident sections, in the shape the game's one
+    /// producer walks (`gfx::Renderer::visible_block_entities_in_frustum`).
+    pub(crate) fn block_entities(&self) -> block_entities::NativeBlockEntities<'_> {
+        block_entities::NativeBlockEntities {
+            resident: &self.block_entities,
+            min_y: self.world.min_y(),
+        }
     }
     /// The native context's driver identity: what `horizon-ctl status` reports as
     /// `status.legacy`, and the only honest proof a run is on GL2 at all.
@@ -1033,6 +1089,20 @@ mod tests {
         IDENTITY,
         atlas::{SpriteSize, build_page, pack_atlas},
     };
+    #[test]
+    fn resident_sections_stop_below_the_frame_transient_reserve() {
+        // A real ledger keeps the whole reserve: the frame's entities, hand and
+        // overlays must find capacity after the view has filled.
+        assert_eq!(residency_limit(512 << 20, 32 << 20), 480 << 20);
+        // The reserve never takes more than an eighth, so a small ledger still
+        // admits its first section instead of reserving everything for transients.
+        assert_eq!(residency_limit(200, 32 << 20), 175);
+        assert_eq!(residency_limit(0, 32 << 20), 0);
+        // The shipped defaults leave room for both.
+        let default = Limits::default();
+        assert!(default.transient_mesh_bytes > 0);
+        assert!(default.transient_mesh_bytes <= default.gpu.mesh_bytes / 8);
+    }
     #[test]
     #[ignore = "requires OSMesa and an explicit GL2 software-driver environment"]
     fn bridge_actual_sky_matches_disc_fog_then_sunrise_celestial_stars_end_and_world_depth() {

@@ -116,8 +116,20 @@ unsafe extern "system" fn window_proc(
             if let Some(result) = input::message(window, state, message, lparam) {
                 return result;
             }
+            // WM_CAPTURECHANGED that still names this window is not a loss: our own
+            // `SetCapture` (on a press, or the raw-mouse grab) caused it, and Wine sends it
+            // for a redundant call on the window that already holds the capture. Only a
+            // capture another window took ends ours; then the game must drop held buttons.
+            if message == 0x0215 && GetCapture() == window {
+                return 0;
+            }
             let result = state.message(message, wparam, lparam);
-            if matches!(message, 0x0201 | 0x0204 | 0x0207 | 0x020b) {
+            // A press takes the capture only when the raw-mouse grab is not already holding
+            // it. Wine answers a redundant `SetCapture` on the same window with
+            // `WM_CAPTURECHANGED` (twice, even), and the procedure releases the grab when that
+            // message arrives: re-issuing it on every press dropped a live pointer grab, so
+            // the second click of a session had no capture and no look.
+            if matches!(message, 0x0201 | 0x0204 | 0x0207 | 0x020b) && !state.relative.get() {
                 SetCapture(window);
             }
             if ((matches!(message, 0x0202 | 0x0205 | 0x0208 | 0x020c)

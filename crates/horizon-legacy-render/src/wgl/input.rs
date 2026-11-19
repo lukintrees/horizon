@@ -120,15 +120,21 @@ pub(super) fn set(window: Handle, state: &State, relative: bool) -> Result<(), S
         if RegisterRawInputDevices(&device, 1, size_of::<Device>() as u32) == 0 {
             return Err("RegisterRawInputDevices failed".into());
         }
-        let previous = SetCapture(window);
-        state.relative.set(true);
+        // A press the game has not grabbed yet already called `SetCapture` for itself
+        // (`wgl.rs`'s window procedure). Taking the capture again from the window that holds
+        // it is a redundant call: Windows ignores it, Wine answers with `WM_CAPTURECHANGED`,
+        // and answering that by releasing is what dropped a first grab mid-session.
         if GetCapture() != window {
-            release(window, state);
-            return Err(format!(
-                "native pointer capture failed (SetCapture returned {previous:?}, error {})",
-                GetLastError()
-            ));
+            let previous = SetCapture(window);
+            if GetCapture() != window {
+                release(window, state);
+                return Err(format!(
+                    "native pointer capture failed (SetCapture returned {previous:?}, error {})",
+                    GetLastError()
+                ));
+            }
         }
+        state.relative.set(true);
         if ClipCursor(&rect) == 0 {
             release(window, state);
             return Err(format!(

@@ -110,11 +110,14 @@ impl Game<'_> {
     pub(super) fn shader_packs_dir() -> std::path::PathBuf {
         Self::game_dir().join(horizon_client::shader_pack_list::DIR)
     }
+    /// The frame's physical size, whichever owner draws it. A native GL2 frame is as real as
+    /// a modern one: reading only the modern renderer fell back to 1280x720 there, which
+    /// misplaces every widget under the pointer on the title, the pause menu and the options.
+    pub(crate) fn frame_size(&self) -> [u32; 2] {
+        self.renderer.size().unwrap_or([1280, 720])
+    }
     pub(super) fn gui_size(&self) -> (f32, f32) {
-        let size = self
-            .renderer
-            .modern_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         (b.width, b.height)
     }
@@ -274,9 +277,7 @@ impl Game<'_> {
             self.dragging = true;
         }
         let size = self.gui_size();
-        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         let mut ui = std::mem::take(&mut self.ui.options);
         ui.shift = self.modifiers.shift_key();
         let events = ui.click(
@@ -294,9 +295,7 @@ impl Game<'_> {
     }
     pub(super) fn options_drag(&mut self) -> Result<()> {
         let size = self.gui_size();
-        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         let mut ui = std::mem::take(&mut self.ui.options);
         let events = ui.click(
             &mut self.settings,
@@ -314,9 +313,7 @@ impl Game<'_> {
     pub(super) fn options_key(&mut self, key: KeyCode, text: Option<&str>) -> Result<()> {
         let size = self.gui_size();
         let shift = self.has_shift_down();
-        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         self.ui.options.size = size;
         self.ui.options.framebuffer = framebuffer;
         let mut ui = std::mem::take(&mut self.ui.options);
@@ -342,9 +339,7 @@ impl Game<'_> {
                 .scroll_at(&self.settings, size, self.cursor, amount);
             return Ok(());
         }
-        let framebuffer = self.renderer.modern_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         if self.ui.options.video_open() && self.has_control_down() {
             // VideoSettingsScreen.mouseScrolled: Ctrl with the wheel steps the GUI scale.
             let mut ui = std::mem::take(&mut self.ui.options);
@@ -679,12 +674,11 @@ impl Game<'_> {
         }
     }
     pub(super) fn resize_state_of(&self, size: winit::dpi::PhysicalSize<u32>) -> ResizeState {
+        // The owner's frame when it has one, the window's own size before it does.
         let viewport = self
             .renderer
-            .modern_ref()
-            .map_or([size.width, size.height], |r| {
-                [r.config.width, r.config.height]
-            });
+            .size()
+            .unwrap_or([size.width, size.height]);
         ResizeState {
             size,
             gui_size: horizon_client::window::GuiSize::new(

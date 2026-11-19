@@ -404,11 +404,7 @@ impl Game<'_> {
         if self.mod_browser_press(right) {
             return;
         }
-        let Some(size) = self
-            .renderer
-            .modern_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return;
         };
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());

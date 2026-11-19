@@ -2,11 +2,17 @@
 
 #[path = "guest_stack_constants.rs"]
 mod constants;
-pub use constants::{GUEST_STACK_BYTES, HOST_HEADROOM};
+pub use constants::{GUEST_RESERVATION_BYTES, GUEST_STACK_BYTES, HOST_HEADROOM};
 
 /// Spawn guarantees the reservation even on platforms without a stack-size query.
 pub fn builder() -> std::thread::Builder {
-    std::thread::Builder::new().stack_size(GUEST_STACK_BYTES + HOST_HEADROOM)
+    std::thread::Builder::new().stack_size(GUEST_RESERVATION_BYTES)
+}
+
+/// The refusal message quotes no figure: this build reserves 136 MiB on a 64-bit process and
+/// 18 MiB on a 32-bit one, and the caller only needs to know the stack is too small.
+fn too_small() -> &'static str {
+    "GuestStackUnavailable: calling thread stack is too small"
 }
 
 /// Starts a thread that may enter a guest: guest-sized and named `name`, and in debug builds it
@@ -131,8 +137,8 @@ fn inspect_current() -> Result<(), &'static str> {
             let mut size = 0;
             let result = libc::pthread_attr_getstacksize(&attr, &mut size);
             libc::pthread_attr_destroy(&mut attr);
-            if result != 0 || size < GUEST_STACK_BYTES + HOST_HEADROOM {
-                return Err("GuestStackUnavailable: calling thread needs 136 MiB of stack");
+            if result != 0 || size < GUEST_RESERVATION_BYTES {
+                return Err(too_small());
             }
         }
     }
@@ -140,8 +146,8 @@ fn inspect_current() -> Result<(), &'static str> {
     {
         // SAFETY: pthread_self names the live calling thread.
         let size = unsafe { libc::pthread_get_stacksize_np(libc::pthread_self()) };
-        if size < GUEST_STACK_BYTES + HOST_HEADROOM {
-            return Err("GuestStackUnavailable: calling thread needs 136 MiB of stack");
+        if size < GUEST_RESERVATION_BYTES {
+            return Err(too_small());
         }
     }
     #[cfg(windows)]
@@ -150,8 +156,8 @@ fn inspect_current() -> Result<(), &'static str> {
         let mut high = 0;
         // SAFETY: both pointers refer to writable stack bounds.
         unsafe { get_current_thread_stack_limits(&mut low, &mut high) };
-        if high - low < GUEST_STACK_BYTES + HOST_HEADROOM {
-            return Err("GuestStackUnavailable: calling thread needs 136 MiB of stack");
+        if high - low < GUEST_RESERVATION_BYTES {
+            return Err(too_small());
         }
     }
     #[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]

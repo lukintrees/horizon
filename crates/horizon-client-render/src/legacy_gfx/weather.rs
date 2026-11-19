@@ -66,6 +66,14 @@ impl Prepared {
             backing.layout().page_bytes()
         };
         for quad in vertices.as_chunks::<4>().0.iter() {
+            // The camera's own column has no direction from the camera to its
+            // centre: `column_size` computes its half-widths as 0 / 0, so the
+            // quad's positions are NaN. Vanilla emits that quad too and its GPU
+            // clips it away; drop it here instead of failing the frame, which
+            // made the first rainy frame in a world fatal on the legacy path.
+            if quad.iter().any(|v| v.pos.iter().any(|f| !f.is_finite())) {
+                continue;
+            }
             let first = &quad[0];
             if quad.iter().any(|v| {
                 v.rect != first.rect
@@ -74,11 +82,7 @@ impl Prepared {
                     || v.snow != first.snow
                     || v.snow > 1
                     || v.light & !0xffff != 0
-                    || v.pos
-                        .iter()
-                        .chain(&v.uv)
-                        .chain(&v.animation)
-                        .any(|f| !f.is_finite())
+                    || v.uv.iter().chain(&v.animation).any(|f| !f.is_finite())
             }) {
                 return Err("invalid weather quad/attributes".into());
             }
@@ -353,6 +357,24 @@ mod tests {
         assert_eq!(&plan.sprites[0].pixels[24..28], &[9; 4]);
     }
     #[test]
+    fn drops_the_camera_columns_non_finite_quad_instead_of_failing_the_frame() {
+        let layout = Layout::new([7, 5], 4, 12).unwrap();
+        let backing = Backing::new(layout, &[255; 140], 4096).unwrap();
+        let lm = [255; 1024];
+        let ordinary = [vertex(); 4];
+        // The camera's own column: `column_size` divides 0 by 0 and every
+        // position of its quad is NaN. Vanilla still emits it and lets the GPU
+        // clip it; the legacy path used to error the whole frame on it.
+        let mut own = [vertex(); 4];
+        for v in &mut own {
+            v.pos = [f32::NAN; 3];
+        }
+        let quads: Vec<_> = own.iter().chain(&ordinary).copied().collect();
+        let plan = Prepared::new(&quads, Time::new(0, 0.), &backing, &lm, 2, 1024, 64).unwrap();
+        assert_eq!(plan.runs.len(), 1);
+        assert_eq!(plan.runs[0].vertices[0].base.pos, ordinary[0].pos);
+    }
+    #[test]
     fn rejects_bad_clock_quad_metadata_nonfinite_and_bounded_extraction() {
         let layout = Layout::new([7, 5], 4, 12).unwrap();
         let backing = Backing::new(layout, &[255; 140], 4096).unwrap();
@@ -381,7 +403,9 @@ mod tests {
             let mut q = q;
             match bad {
                 0 => q[1].rect[2] = 0.,
-                1 => q[0].pos[0] = f32::INFINITY,
+                // A non-finite quad is dropped rather than rejected, so this
+                // case breaks a UV instead of a position.
+                1 => q[0].uv[0] = f32::INFINITY,
                 2 => q[0].uv[0] = f32::NAN,
                 3 => q[0].snow = 2,
                 4 => q[0].light = 0x10000,

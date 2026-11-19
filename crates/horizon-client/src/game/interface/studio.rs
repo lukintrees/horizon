@@ -644,11 +644,7 @@ impl Game<'_> {
             && self.screen == Screen::Playing
             && (self.replay.driver.is_some() || self.studio.freecam.active)
         {
-            let size = self
-                .renderer
-                .modern_ref()
-                .map(|renderer| [renderer.config.width, renderer.config.height])
-                .unwrap_or([1, 1]);
+            let size = self.frame_size();
             let batch = super::HudBatch::new(size, self.settings.gui_scale_inputs());
             let had_open_menu = self.studio.topbar.open_menu.is_some();
             let topbar_action =

@@ -2406,7 +2406,26 @@ impl Streaming {
         // Keep unloaded-column cleanup and ordinary out-of-range waiting above.
         // Forced generation interests must not consume a renderer's draw quota.
         admission::scope_candidates(admission, &mut candidates);
-        nearest_first(&mut candidates, room);
+        if admission.bounded_section_dispatch() {
+            // An edit's section already on the GPU (a block broken or placed in it) is a
+            // swap the person is waiting to see: it must not wait behind the view's fill,
+            // which at a wide render distance is dozens of fresh sections in front of it.
+            // Replacements rank ahead of fresh columns, nearest first within each group,
+            // and are chosen before the room cuts the rest. The modern owner keeps its
+            // own order untouched.
+            let connections = &self.compile_started;
+            let replaces = |(_, x, z, sections): &(i64, i32, i32, SectionMask)| {
+                sections
+                    .iter()
+                    .any(|sy| connections.contains_key(&(*x, sy as i32, *z)))
+            };
+            candidates.sort_unstable_by(|a, b| {
+                replaces(b).cmp(&replaces(a)).then_with(|| a.cmp(b))
+            });
+            candidates.truncate(room);
+        } else {
+            nearest_first(&mut candidates, room);
+        }
         for (_, x, z, sections) in candidates.drain(..) {
             let Some(region) = Self::region(world, x, z) else {
                 continue;

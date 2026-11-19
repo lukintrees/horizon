@@ -211,6 +211,8 @@ impl Game<'_> {
                     &mut self.streaming,
                     &mut self.world,
                     horizon_client::renderer_owner::NativeUploadBudget {
+                        // The setting caps the burst; the time budget below is what keeps a
+                        // frame affordable. Unlimited (0) takes the default cap, not 64 at once.
                         jobs: if g.chunk_updates == 0 {
                             defaults.jobs
                         } else {
@@ -222,6 +224,7 @@ impl Game<'_> {
                             usize::try_from(u64::from(g.upload_budget_kib) * 1024)
                                 .unwrap_or(usize::MAX)
                         },
+                        micros: defaults.micros,
                     },
                 )
             });

@@ -1629,6 +1629,22 @@ impl Game<'_> {
             .iter()
             .map(|(id, (pos, stage, _))| json!({ "id": id, "pos": pos, "stage": stage }))
             .collect();
+        // Built outside the big `json!`: nesting one inside it exhausts the macro's recursion
+        // limit on 32-bit builds.
+        let display = self
+            .window
+            .as_deref()
+            .and_then(horizon_client::monitor::of)
+            .map(|m| {
+                json!({
+                    "width": m.size().width,
+                    "height": m.size().height,
+                    "scale": m.scale_factor(),
+                    "refresh_hz": m.refresh_rate_millihertz().map(|r| r.div_ceil(1000)),
+                })
+            });
+        // Three objects merged rather than one: `serde_json`'s `json!` expands one nested macro
+        // per key, and the whole status in one literal passes the default recursion limit.
         let mut status = json!({
             "screen": self.screen_name(),
             "debug": {
@@ -1645,11 +1661,19 @@ impl Game<'_> {
             "player": player,
             "yaw": self.yaw,
             "pitch": self.pitch,
+            // Whether the game holds the pointer and whether the window has the focus: a
+            // native window's grab is the backend's, so a run that cannot see the cursor
+            // moving needs to say whether the game ever believed it had the pointer.
+            "captured": self.captured,
+            "focused": self.focused,
+            "cursor": [self.cursor.0, self.cursor.1],
             "target": target,
             "selected": self.selected + 1,
             "held": self.held().map(|s| json!({ "item": &*s.item, "count": s.count })),
             "offhand": self.offhand.as_ref().map(|s| json!({ "item": &*s.item, "count": s.count, "damage": s.damage })),
             "keys": self.keys.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>(),
+        });
+        let world = json!({
             // The keyboard as the OS reports it (Shift and Ctrl in screens).
             "fps": self.fps,
             "frames": self.frames,
@@ -1670,18 +1694,15 @@ impl Game<'_> {
             "chunks": self.world.chunks.len(),
             "mobs": self.mobs.len(),
             "block_entities": self.world.block_entities.len(),
+        });
+        let streaming = json!({
             "pending_chunks": self.streaming.pending() + self.pending_uploads.len() + self.remote_backlog(),
             "generated_chunks": self.streaming.generated_total,
             "meshed_sections": self.streaming.meshed_total,
             "streaming": self.streaming.stages().into_iter().map(|(k, v)| (k.to_string(), v.into())).collect::<serde_json::Map<_, _>>(),
             "dirty_light": self.world.dirty_light.len(),
             "renderer": renderer,
-            "display": self.window.as_deref().and_then(horizon_client::monitor::of).map(|m| json!({
-                "width": m.size().width,
-                "height": m.size().height,
-                "scale": m.scale_factor(),
-                "refresh_hz": m.refresh_rate_millihertz().map(|r| r.div_ceil(1000)),
-            })),
+            "display": display,
             "uptime_seconds": self.started.elapsed().as_secs_f64(),
             "server": self.remote_status(),
             // The names the name tags show now, seen from the eyes.
@@ -1689,6 +1710,10 @@ impl Game<'_> {
                 .eye_position()
                 .map(|e| self.shown_name_tags(glam::DVec3::from_array(e))),
         });
+        for part in [world, streaming] {
+            let part = part.as_object().cloned().unwrap_or_default();
+            status.as_object_mut().expect("a status object").extend(part);
+        }
         status["lod"] = lod;
         // Parallel Tick: the setting, whether the next tick shares its work, and Auto's state.
         let (setting, on, auto) = horizon_client::parallel::status();

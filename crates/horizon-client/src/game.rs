@@ -5672,7 +5672,9 @@ impl Game<'_> {
         }
         laps.lap("eg_shadows");
         // Block entities (BlockEntityRenderers): chests, shulker boxes, banners, skulls...
-        if let Some(r) = self.renderer.modern_ref() {
+        // Whichever owner is live holds the resident membership (the modern renderer's store
+        // or the native GL2 one's); this one body walks it, so both backends draw them.
+        if let Some(store) = self.renderer.block_entities() {
             // Block entities outside the view frustum are skipped (with a
             // block of margin for models larger than their block).
             let view = self.view_frustum;
@@ -5699,35 +5701,36 @@ impl Game<'_> {
                     v.intersects(o - glam::Vec3::ONE, o + glam::Vec3::splat(2.0))
                 })
             };
-            let camera_list: Vec<&([i32; 3], u32)> = r
-                .visible_block_entities_in_frustum(
+            let camera_list: Vec<([i32; 3], u32)> = store
+                .visible_in_frustum(
                     self.settings.chunk_fade,
                     camera,
                     view,
                     &off_screen,
                     long_range,
                 )
-                .filter(|(block, section_inside)| {
-                    let (pos, state) = **block;
-                    self.live_block_entity_render(pos, state)
-                        && (off_screen(state) || *section_inside || in_view(&pos))
+                .filter(|((pos, state), section_inside)| {
+                    self.live_block_entity_render(*pos, *state)
+                        && (off_screen(*state) || *section_inside || in_view(pos))
                 })
                 .map(|(block, _)| block)
                 .collect();
             // A shader pack's shadow pass draws the block entities of every section it draws,
             // in the view or not (`Renderer::shadow_pass_block_entities`, #8464): those the
-            // view leaves out go in hidden from the camera.
-            let shadow_only: Vec<&([i32; 3], u32)> =
-                if self.pack_ids.is_some() && self.pack_shadow_casters.0 {
+            // view leaves out go in hidden from the camera. Only a modern owner has a pack's
+            // shadow pass.
+            let shadow_only: Vec<([i32; 3], u32)> = match self.renderer.modern_ref() {
+                Some(r) if self.pack_ids.is_some() && self.pack_shadow_casters.0 => {
                     let listed: HashSet<[i32; 3]> = camera_list.iter().map(|b| b.0).collect();
                     r.shadow_pass_block_entities(camera)
                         .filter(|(pos, state)| {
                             !listed.contains(pos) && self.live_block_entity_render(*pos, *state)
                         })
+                        .copied()
                         .collect()
-                } else {
-                    Vec::new()
-                };
+                }
+                _ => Vec::new(),
+            };
             let shadow_only_at: HashSet<[i32; 3]> = shadow_only.iter().map(|b| b.0).collect();
             let dynamic_visible = |pos: [i32; 3], state: u32, lo: glam::DVec3, hi: glam::DVec3| {
                 if off_screen(state) || shadow_only_at.contains(&pos) {
@@ -5786,7 +5789,7 @@ impl Game<'_> {
                 font: Some(&self.gui.atlas.font),
                 dynamic_visible: Some(&dynamic_visible),
             };
-            let visible = camera_list.into_iter().chain(shadow_only.iter().copied());
+            let visible = camera_list.iter().chain(shadow_only.iter());
             let block_entity_cache = CacheOptions {
                 shulker_boxes: self.settings.horizon.cache_shulker_boxes,
                 signs: self.settings.horizon.cache_signs,
@@ -5803,7 +5806,7 @@ impl Game<'_> {
             // per-entity span marks, so they keep the callback path.
             let block_entities = out.len();
             if self.pack_ids.is_some() {
-                let section_revision = |pos| r.block_entity_section_revision(pos);
+                let section_revision = |pos| store.section_revision(pos);
                 static_block_entity_stats = self
                     .res
                     .block_entity_render()
@@ -5811,7 +5814,7 @@ impl Game<'_> {
                         &scene,
                         visible,
                         block_entity_cache,
-                        r.block_entity_revision(),
+                        store.revision(),
                         Some(&section_revision),
                         &mut out,
                         |pos, state, start| {
@@ -5825,16 +5828,17 @@ impl Game<'_> {
                         },
                     );
             } else {
-                let cache_candidates = r
-                    .visible_block_entities_in_frustum(
+                let cache_candidates: Vec<([i32; 3], u32)> = store
+                    .visible_in_frustum(
                         self.settings.chunk_fade,
                         camera,
                         None,
                         |_| false,
                         |_| false,
                     )
-                    .filter(|(block, _)| self.live_block_entity_render(block.0, block.1))
-                    .map(|(block, _)| block);
+                    .filter(|((pos, state), _)| self.live_block_entity_render(*pos, *state))
+                    .map(|(block, _)| block)
+                    .collect();
                 (
                     static_block_entities,
                     visible_static_block_entity_sections,
@@ -5845,29 +5849,27 @@ impl Game<'_> {
                     .render_with_gpu_cache_options(
                         &scene,
                         visible,
-                        cache_candidates,
+                        cache_candidates.iter(),
                         block_entity_cache,
-                        r.block_entity_revision(),
-                        |pos| r.block_entity_section_revision(pos),
+                        store.revision(),
+                        |pos| store.section_revision(pos),
                         &mut out,
                     );
             }
             // Mod block entities: their mods draw them (`native_block_entity_submit`),
             // culled by the bounds they give. A world without any (`has_mods`) has none
             // to find among its other unrendered block entities (furnaces, hoppers...).
-            let mods = self
-                .world
-                .block_entities
-                .has_mods()
-                .then(|| {
-                    r.visible_block_entities(self.settings.chunk_fade)
-                        .filter(|(_, state)| !self.res.block_entity_render().renders(*state))
-                })
-                .into_iter()
-                .flatten();
+            let mods: Vec<([i32; 3], u32)> = if self.world.block_entities.has_mods() {
+                store
+                    .visible(self.settings.chunk_fade)
+                    .filter(|(_, state)| !self.res.block_entity_render().renders(*state))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let untemplated = self.untemplated_mod_block_entities(camera);
             self.mod_block_entity_geometry(
-                mods.chain(untemplated.iter()),
+                mods.iter().chain(untemplated.iter()),
                 camera,
                 alpha as f32,
                 &mut out,
@@ -8086,14 +8088,13 @@ impl Game<'_> {
             let Some(renderer) = self.renderer.modern_mut() else {
                 return Ok(FrameOutcome::Deferred);
             };
-            horizon_client::renderer_facade::render_menu_modern(renderer, &menu)
-                .map(|drawn| {
-                    if drawn {
-                        FrameOutcome::Presented
-                    } else {
-                        FrameOutcome::Deferred
-                    }
-                })
+            horizon_client::renderer_facade::render_menu_modern(renderer, &menu).map(|drawn| {
+                if drawn {
+                    FrameOutcome::Presented
+                } else {
+                    FrameOutcome::Deferred
+                }
+            })
         } else {
             let background = self.options.renderer.menu_background();
             let menu = match background {
@@ -8104,9 +8105,7 @@ impl Game<'_> {
                     horizon_client::renderer_facade::MenuFrame::static_color(hud, clear)
                 }
             };
-            let Some(mut renderer) = self
-                .renderer
-                .facade(Default::default(), Default::default())
+            let Some(mut renderer) = self.renderer.facade(Default::default(), Default::default())
             else {
                 return Ok(FrameOutcome::Deferred);
             };
@@ -9078,8 +9077,7 @@ impl Game<'_> {
                         {
                             Err("native world window submission completed offscreen".into())
                         } else {
-                            Ok(outcome
-                                != horizon_client::render_contract::FrameOutcome::Deferred)
+                            Ok(outcome != horizon_client::render_contract::FrameOutcome::Deferred)
                         }
                     })
                 }
@@ -9089,24 +9087,25 @@ impl Game<'_> {
                 }
             }
             _ => match self.renderer.modern_mut() {
-            Some(renderer) => {
-                use horizon_client::client_perf::request::GpuSwitch;
-                let capture_gpu = self.profile.gpu();
-                let recording = capture_gpu != GpuSwitch::Off;
-                renderer.set_pass_timing(debug_passes || self.gpu_passes || recording);
-                renderer.set_keep_timed_frames(recording);
-                renderer.set_pass_detail(self.gpu_pass_detail || capture_gpu == GpuSwitch::Detail);
-                // `gpu_passes` and a capture's `--gpu` are measurements: they take every sample they can.
-                renderer.set_pass_timing_gap(if self.gpu_passes || recording {
-                    Duration::ZERO
-                } else {
-                    horizon_client::debug_overlay::GPU_TIMING_GAP
-                });
-                self.native_shaders.hand_over(renderer);
-                renderer.stage_prepared_draws(&prepared_draws);
-                consume(renderer, &frame)
-            }
-            None => Err("renderer".into()),
+                Some(renderer) => {
+                    use horizon_client::client_perf::request::GpuSwitch;
+                    let capture_gpu = self.profile.gpu();
+                    let recording = capture_gpu != GpuSwitch::Off;
+                    renderer.set_pass_timing(debug_passes || self.gpu_passes || recording);
+                    renderer.set_keep_timed_frames(recording);
+                    renderer
+                        .set_pass_detail(self.gpu_pass_detail || capture_gpu == GpuSwitch::Detail);
+                    // `gpu_passes` and a capture's `--gpu` are measurements: they take every sample they can.
+                    renderer.set_pass_timing_gap(if self.gpu_passes || recording {
+                        Duration::ZERO
+                    } else {
+                        horizon_client::debug_overlay::GPU_TIMING_GAP
+                    });
+                    self.native_shaders.hand_over(renderer);
+                    renderer.stage_prepared_draws(&prepared_draws);
+                    consume(renderer, &frame)
+                }
+                None => Err("renderer".into()),
             },
         };
         prepared_draws.clear();
@@ -9152,7 +9151,11 @@ impl Game<'_> {
     /// shortcut, a special case) never reaches a controller. If a player could want it on one, give
     /// it a handler both can call and a `gamepad::Route` (screenshot and fullscreen do this). A
     /// screen's own raw keys, text and mods' key hooks stay raw on purpose.
-    fn handle_window_event_inner(&mut self, event_loop: &dyn EventLoopCtl, mut event: input_event::Event) {
+    fn handle_window_event_inner(
+        &mut self,
+        event_loop: &dyn EventLoopCtl,
+        mut event: input_event::Event,
+    ) {
         let pressed = match &event {
             input_event::Event::KeyboardInput { event, .. } => {
                 event.state == ElementState::Pressed && !event.repeat
@@ -9304,13 +9307,10 @@ impl Game<'_> {
             let upgrade = starting.handle.upgrade();
             match &event {
                 input_event::Event::CursorMoved { position, .. } => {
-                    if let Some(r) = self.renderer.modern_ref() {
-                        let b = HudBatch::new(
-                            [r.config.width, r.config.height],
-                            self.settings.gui_scale_inputs(),
-                        );
-                        self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
-                    }
+                    // The frame size, not only the modern one: a native GL2 window moves its
+                    // pointer too, and this screen's Cancel button has to be clickable there.
+                    let b = HudBatch::new(self.frame_size(), self.settings.gui_scale_inputs());
+                    self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                 }
                 input_event::Event::MouseInput {
                     state: ElementState::Pressed,
@@ -9612,63 +9612,60 @@ impl Game<'_> {
                     }
                 }
                 input_event::Event::CursorMoved { position, .. } => {
-                    if let Some(r) = self.renderer.modern_ref() {
-                        let b = HudBatch::new(
-                            [r.config.width, r.config.height],
-                            self.settings.gui_scale_inputs(),
-                        );
-                        let previous = self.cursor;
-                        self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
-                        if self.studio_mouse_dragged(b.width) {
-                            return Ok(());
-                        }
-                        match self.screen_mouse_dragged(previous) {
-                            native_hooks::ScreenMousePre::Canceled => return Ok(()),
-                            native_hooks::ScreenMousePre::Passed(post) => mouse_post = Some(post),
-                            native_hooks::ScreenMousePre::NotFired => {}
-                        }
-                        if self.dialog_open() {
-                            self.dialog_drag();
-                        }
-                        if self.screen == Screen::BlockEditor {
-                            self.block_editor_drag();
-                        }
-                        if self.screen == Screen::Advancements {
-                            self.advancements_drag();
-                        }
-                        if self.screen == Screen::Stats {
-                            self.stats_drag();
-                        }
-                        if self.screen == Screen::DebugOptions {
-                            self.debug_options_drag();
-                        }
-                        if self.screen == Screen::HudEditor {
-                            self.hud_editor_drag();
-                        }
-                        if self.screen == Screen::WorldOptions {
-                            self.world_options_drag();
-                        }
-                        if self.screen == Screen::Creative {
-                            let (_, oy) = Self::creative_origin(&b);
-                            self.creative_screen.drag_scrollbar(self.cursor.1 - oy);
-                        }
-                        if self.screen == Screen::Inventory {
-                            self.station_drag();
-                            self.recipe_book_drag();
-                        }
-                        if matches!(self.screen, Screen::Inventory | Screen::Creative) {
-                            self.inventory_drag_move();
-                        }
-                        if self.title_input_active()
-                            && let Some(title) = &mut self.title
-                        {
-                            title.drag(self.cursor, (b.width, b.height));
-                            title.drag_field(&self.gui.atlas, self.cursor.0);
-                        }
-                        if self.dragging && self.screen == Screen::Options {
-                            let _ = b;
-                            self.options_drag()?;
-                        }
+                    // Every owner answers `size()`: a native GL2 window's pointer moves into
+                    // the same GUI space as the modern one's, so screens there can be hovered.
+                    let b = HudBatch::new(self.frame_size(), self.settings.gui_scale_inputs());
+                    let previous = self.cursor;
+                    self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
+                    if self.studio_mouse_dragged(b.width) {
+                        return Ok(());
+                    }
+                    match self.screen_mouse_dragged(previous) {
+                        native_hooks::ScreenMousePre::Canceled => return Ok(()),
+                        native_hooks::ScreenMousePre::Passed(post) => mouse_post = Some(post),
+                        native_hooks::ScreenMousePre::NotFired => {}
+                    }
+                    if self.dialog_open() {
+                        self.dialog_drag();
+                    }
+                    if self.screen == Screen::BlockEditor {
+                        self.block_editor_drag();
+                    }
+                    if self.screen == Screen::Advancements {
+                        self.advancements_drag();
+                    }
+                    if self.screen == Screen::Stats {
+                        self.stats_drag();
+                    }
+                    if self.screen == Screen::DebugOptions {
+                        self.debug_options_drag();
+                    }
+                    if self.screen == Screen::HudEditor {
+                        self.hud_editor_drag();
+                    }
+                    if self.screen == Screen::WorldOptions {
+                        self.world_options_drag();
+                    }
+                    if self.screen == Screen::Creative {
+                        let (_, oy) = Self::creative_origin(&b);
+                        self.creative_screen.drag_scrollbar(self.cursor.1 - oy);
+                    }
+                    if self.screen == Screen::Inventory {
+                        self.station_drag();
+                        self.recipe_book_drag();
+                    }
+                    if matches!(self.screen, Screen::Inventory | Screen::Creative) {
+                        self.inventory_drag_move();
+                    }
+                    if self.title_input_active()
+                        && let Some(title) = &mut self.title
+                    {
+                        title.drag(self.cursor, (b.width, b.height));
+                        title.drag_field(&self.gui.atlas, self.cursor.0);
+                    }
+                    if self.dragging && self.screen == Screen::Options {
+                        let _ = b;
+                        self.options_drag()?;
                     }
                 }
                 input_event::Event::MouseWheel { .. }
@@ -9816,17 +9813,23 @@ impl Game<'_> {
                         self.advancements_scroll(scaled(raw_x) as f32, d);
                     }
                 }
-                input_event::Event::MouseInput { state, button, .. } if self.command_prompt.is_some() => {
+                input_event::Event::MouseInput { state, button, .. }
+                    if self.command_prompt.is_some() =>
+                {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.command_prompt_click();
                     }
                 }
-                input_event::Event::MouseInput { state, button, .. } if self.link_prompt.is_some() => {
+                input_event::Event::MouseInput { state, button, .. }
+                    if self.link_prompt.is_some() =>
+                {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.link_prompt_click();
                     }
                 }
-                input_event::Event::MouseInput { state, button, .. } if self.code_of_conduct.is_some() => {
+                input_event::Event::MouseInput { state, button, .. }
+                    if self.code_of_conduct.is_some() =>
+                {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.code_of_conduct_click()?;
                     }
@@ -9854,7 +9857,9 @@ impl Game<'_> {
                     }
                 }
                 input_event::Event::MouseInput { .. } if self.screen == Screen::Win => {}
-                input_event::Event::MouseInput { state, button, .. } if self.screen == Screen::Options => {
+                input_event::Event::MouseInput { state, button, .. }
+                    if self.screen == Screen::Options =>
+                {
                     if self.options_waiting_for_key() && state == ElementState::Pressed {
                         self.options_bind_mouse(button)?;
                     } else if matches!(button, MouseButton::Left | MouseButton::Right) {
@@ -9879,11 +9884,7 @@ impl Game<'_> {
                     button: MouseButton::Left,
                     ..
                 } if self.title_input_active() && state == ElementState::Pressed => {
-                    let size = self
-                        .renderer
-                        .modern_ref()
-                        .map(|r| [r.config.width, r.config.height])
-                        .unwrap_or([1, 1]);
+                    let size = self.frame_size();
                     let b = HudBatch::new(size, self.settings.gui_scale_inputs());
                     let atlas = &self.gui.atlas;
                     let shift = self.has_shift_down();
@@ -9909,11 +9910,7 @@ impl Game<'_> {
                     button: MouseButton::Middle,
                     ..
                 } if self.title_input_active() && self.screen != Screen::Options => {
-                    let size = self
-                        .renderer
-                        .modern_ref()
-                        .map(|r| [r.config.width, r.config.height])
-                        .unwrap_or([1, 1]);
+                    let size = self.frame_size();
                     let b = HudBatch::new(size, self.settings.gui_scale_inputs());
                     if let Some(title) = self.title.as_mut() {
                         title.select_world_at(self.cursor.0, self.cursor.1, (b.width, b.height));
@@ -9922,21 +9919,15 @@ impl Game<'_> {
                 input_event::Event::MouseInput { .. } if self.title_input_active() => {}
                 input_event::Event::MouseInput { state, button, .. } if self.book.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
-                        let size = self
-                            .renderer
-                            .modern_ref()
-                            .map(|r| [r.config.width, r.config.height])
-                            .unwrap_or([1, 1]);
+                        let size = self.frame_size();
                         self.book_click(size);
                     }
                 }
-                input_event::Event::MouseInput { state, button, .. } if self.sign_edit.is_some() => {
+                input_event::Event::MouseInput { state, button, .. }
+                    if self.sign_edit.is_some() =>
+                {
                     if state == ElementState::Pressed && button == MouseButton::Left {
-                        let size = self
-                            .renderer
-                            .modern_ref()
-                            .map(|r| [r.config.width, r.config.height])
-                            .unwrap_or([1, 1]);
+                        let size = self.frame_size();
                         self.sign_edit_click(size);
                     }
                 }
@@ -10092,17 +10083,11 @@ impl Game<'_> {
                             self.death_click()?
                         }
                         Screen::Advancements if button == MouseButton::Left => {
-                            let size = self
-                                .renderer
-                                .modern_ref()
-                                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+                            let size = self.frame_size();
                             self.advancements_mouse(pressed, size);
                         }
                         Screen::Stats if pressed && button == MouseButton::Left => {
-                            let size = self
-                                .renderer
-                                .modern_ref()
-                                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+                            let size = self.frame_size();
                             self.stats_click(size);
                         }
                         Screen::Stats if button == MouseButton::Left => self.stats_release(),
@@ -10125,7 +10110,9 @@ impl Game<'_> {
                     }
                 }
                 // ConfirmScreen.keyPressed: Escape answers no.
-                input_event::Event::KeyboardInput { event, .. } if self.command_prompt.is_some() => {
+                input_event::Event::KeyboardInput { event, .. }
+                    if self.command_prompt.is_some() =>
+                {
                     if event.state == ElementState::Pressed
                         && let PhysicalKey::Code(key) = event.physical_key
                     {
@@ -10141,7 +10128,9 @@ impl Game<'_> {
                 }
                 // CodeOfConductScreen.shouldCloseOnEsc is false: no key leaves the screen.
                 input_event::Event::KeyboardInput { .. } if self.code_of_conduct.is_some() => {}
-                input_event::Event::KeyboardInput { event, .. } if self.server_packs.prompt.is_some() => {
+                input_event::Event::KeyboardInput { event, .. }
+                    if self.server_packs.prompt.is_some() =>
+                {
                     if event.state == ElementState::Pressed
                         && event.physical_key == PhysicalKey::Code(KeyCode::Escape)
                     {

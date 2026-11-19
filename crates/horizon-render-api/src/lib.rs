@@ -150,12 +150,37 @@ pub const IDENTITY: [f32; 16] = [
 pub trait RenderBackend {
     type Error;
     fn create_texture(&mut self, image: Image<'_>) -> Result<TextureId, Self::Error>;
+    /// A texture whose mip chain the producer already generated: `mips` runs from
+    /// half of `image`'s side down to 1, each level a quarter of the pixels of the
+    /// one above. The default samples the base level alone, which is what a
+    /// backend without mipmapped sampling can honour.
+    fn create_textured(
+        &mut self,
+        image: Image<'_>,
+        mips: &[Image<'_>],
+    ) -> Result<TextureId, Self::Error> {
+        let _ = mips;
+        self.create_texture(image)
+    }
     fn update_texture(
         &mut self,
         id: TextureId,
         at: [u32; 2],
         image: Image<'_>,
     ) -> Result<(), Self::Error>;
+    /// The same sub-rect update for every mip level of the same texture: each entry
+    /// is that level's `(top-left corner, pixels)`, level 1 first. Ignored by the
+    /// default, whose texture has one level.
+    fn update_texture_levels(
+        &mut self,
+        id: TextureId,
+        at: [u32; 2],
+        image: Image<'_>,
+        levels: &[([u32; 2], Image<'_>)],
+    ) -> Result<(), Self::Error> {
+        let _ = levels;
+        self.update_texture(id, at, image)
+    }
     fn remove_texture(&mut self, id: TextureId) -> Result<(), Self::Error>;
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Result<MeshId, Self::Error>;
     fn create_entity_mesh(
@@ -180,6 +205,13 @@ impl<B: RenderBackend + ?Sized> RenderBackend for &mut B {
     fn create_texture(&mut self, image: Image<'_>) -> Result<TextureId, Self::Error> {
         (**self).create_texture(image)
     }
+    fn create_textured(
+        &mut self,
+        image: Image<'_>,
+        mips: &[Image<'_>],
+    ) -> Result<TextureId, Self::Error> {
+        (**self).create_textured(image, mips)
+    }
     fn update_texture(
         &mut self,
         id: TextureId,
@@ -187,6 +219,15 @@ impl<B: RenderBackend + ?Sized> RenderBackend for &mut B {
         image: Image<'_>,
     ) -> Result<(), Self::Error> {
         (**self).update_texture(id, at, image)
+    }
+    fn update_texture_levels(
+        &mut self,
+        id: TextureId,
+        at: [u32; 2],
+        image: Image<'_>,
+        levels: &[([u32; 2], Image<'_>)],
+    ) -> Result<(), Self::Error> {
+        (**self).update_texture_levels(id, at, image, levels)
     }
     fn remove_texture(&mut self, id: TextureId) -> Result<(), Self::Error> {
         (**self).remove_texture(id)

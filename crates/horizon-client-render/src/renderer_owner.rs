@@ -18,6 +18,78 @@ pub struct RendererOwner {
     inner: Owner,
 }
 
+/// The resident block entities of whichever owner is live: the modern renderer's store, or
+/// the native one's. One body of game code asks this for the chests, signs and pots to draw.
+#[derive(Clone, Copy)]
+pub enum BlockEntities<'a> {
+    Modern(&'a gfx::Renderer),
+    #[cfg(feature = "legacy-gl")]
+    Native(crate::legacy_gfx::NativeBlockEntities<'a>),
+}
+impl BlockEntities<'_> {
+    /// `Renderer::visible_block_entities_in_frustum`, as owned copies so the caller's
+    /// closures keep their own borrows (the game's cull closures read the block table).
+    pub fn visible_in_frustum<'b>(
+        &'b self,
+        fade_seconds: f32,
+        camera: glam::DVec3,
+        frustum: Option<gfx::JoinedFrusta>,
+        keep_section: impl Fn(u32) -> bool + 'b,
+        keep_long_range: impl Fn(u32) -> bool + 'b,
+    ) -> Box<dyn Iterator<Item = (([i32; 3], u32), bool)> + 'b> {
+        match self {
+            Self::Modern(r) => Box::new(
+                r.visible_block_entities_in_frustum(
+                    fade_seconds,
+                    camera,
+                    frustum,
+                    keep_section,
+                    keep_long_range,
+                )
+                .map(|(block, inside)| (*block, inside)),
+            ),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => Box::new(
+                r.visible_in_frustum(
+                    fade_seconds,
+                    camera,
+                    frustum,
+                    keep_section,
+                    keep_long_range,
+                )
+                .map(|(block, inside)| (*block, inside)),
+            ),
+        }
+    }
+    /// `Renderer::visible_block_entities`, as owned copies.
+    pub fn visible(&self, fade_seconds: f32) -> Box<dyn Iterator<Item = ([i32; 3], u32)> + '_> {
+        match self {
+            Self::Modern(r) => Box::new(r.visible_block_entities(fade_seconds).copied()),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => Box::new(r.visible(fade_seconds).copied()),
+        }
+    }
+    /// `Renderer::block_entity_revision`.
+    pub fn revision(&self) -> u64 {
+        match self {
+            Self::Modern(r) => r.block_entity_revision(),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => r.revision(),
+        }
+    }
+    /// `Renderer::block_entity_section_revision`.
+    pub fn section_revision(
+        &self,
+        section: [i32; 3],
+    ) -> Option<crate::block_entity_render::StaticSectionRevision> {
+        match self {
+            Self::Modern(r) => r.block_entity_section_revision(section),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => r.section_revision(section),
+        }
+    }
+}
+
 /// What a native GL driver calls itself (`status.legacy`, the run report). Plain strings: the
 /// probe and the tests read them without a GL context.
 #[cfg(feature = "legacy-gl")]
@@ -245,6 +317,17 @@ impl RendererOwner {
         match &self.inner {
             Owner::Modern(r) => Some(r),
             _ => None,
+        }
+    }
+    /// Which store holds the resident sections' block entities, for the game's one
+    /// producer body: the modern renderer's or the native owner's. Both answer the same
+    /// questions, so chests, signs and pots draw on either backend.
+    pub fn block_entities(&self) -> Option<BlockEntities<'_>> {
+        match &self.inner {
+            Owner::Empty => None,
+            Owner::Modern(r) => Some(BlockEntities::Modern(r)),
+            #[cfg(feature = "legacy-gl")]
+            Owner::Legacy(r) => Some(BlockEntities::Native(r.block_entities())),
         }
     }
     pub fn modern_mut(&mut self) -> Option<&mut gfx::Renderer> {

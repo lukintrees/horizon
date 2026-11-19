@@ -31,6 +31,7 @@ use winit::{
     dpi::PhysicalPosition,
     event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase},
     keyboard::KeyCode,
+    window::WindowId,
 };
 
 pub(super) const HELP: &[&str] = &[
@@ -1033,6 +1034,24 @@ impl Game<'_> {
         }
     }
 
+    /// The window id and GUI scale a synthesized GUI point needs.
+    ///
+    /// A native GL2 window is not a winit window, and its owner is not the modern
+    /// renderer, so both used to make every `click-at`/`drag-at`/`scroll-at` fail on
+    /// the legacy backend. The GUI scale only needs the frame size, which every
+    /// owner reports; a window-less (headless, native) game carries the dummy id,
+    /// as the pad commands already do.
+    fn agent_gui_pointer(&self) -> Result<(WindowId, f32)> {
+        let size = self.renderer.size().ok_or("no renderer yet")?;
+        let id = self
+            .window
+            .as_ref()
+            .map_or_else(WindowId::dummy, |w| w.id());
+        Ok((
+            id,
+            horizon_client::hud::HudBatch::new(size, self.settings.gui_scale_inputs()).scale,
+        ))
+    }
     /// Synthesize the pointer moving to GUI pixel (x, y) and a click there.
     pub(super) fn synth_click(
         &mut self,
@@ -1051,18 +1070,7 @@ impl Game<'_> {
         points: &[(f32, f32)],
         button: MouseButton,
     ) -> Result<()> {
-        let id = self.window.as_ref().ok_or("no window yet")?.id();
-        let scale = self
-            .renderer
-            .modern_ref()
-            .map(|r| {
-                horizon_client::hud::HudBatch::new(
-                    [r.config.width, r.config.height],
-                    self.settings.gui_scale_inputs(),
-                )
-                .scale
-            })
-            .ok_or("no renderer yet")?;
+        let (id, scale) = self.agent_gui_pointer()?;
         let device_id = DeviceId::dummy();
         for (i, &(x, y)) in points.iter().enumerate() {
             let position = PhysicalPosition::new(f64::from(x * scale), f64::from(y * scale));
@@ -1651,18 +1659,7 @@ impl Game<'_> {
             "scroll-at" => {
                 let (x, y) = (a.f64(0, "X")? as f32, a.f64(1, "Y")? as f32);
                 let steps = a.f64(2, "STEPS")? as f32;
-                let id = self.window.as_ref().ok_or("no window yet")?.id();
-                let scale = self
-                    .renderer
-                    .modern_ref()
-                    .map(|r| {
-                        horizon_client::hud::HudBatch::new(
-                            [r.config.width, r.config.height],
-                            self.settings.gui_scale_inputs(),
-                        )
-                        .scale
-                    })
-                    .ok_or("no renderer yet")?;
+                let (id, scale) = self.agent_gui_pointer()?;
                 let device_id = DeviceId::dummy();
                 let position = PhysicalPosition::new(f64::from(x * scale), f64::from(y * scale));
                 self.handle_window_event(

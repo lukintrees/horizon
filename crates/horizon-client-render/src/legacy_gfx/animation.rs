@@ -221,6 +221,32 @@ impl Animations {
         Ok(work)
     }
 }
+/// One animated terrain layer's frame pixels reduced to the levels its page holds,
+/// made the way `resources::mipped_page` made the page's chain: `mipmap::generate`
+/// over the sprite alone, cutout-aware, so a flower keeps its coverage at distance
+/// whichever frame an animation shows.
+fn layer_mips(pixels: &[u8], levels: u32) -> Vec<Vec<u8>> {
+    let edge = (pixels.len() / 4).isqrt() as u32;
+    if levels == 0 || edge >> levels == 0 || pixels.len() % 4 != 0 {
+        return Vec::new();
+    }
+    let base = crate::mipmap::Image {
+        width: edge,
+        height: edge,
+        pixels: pixels.as_chunks::<4>().0.to_vec(),
+    };
+    let settings = crate::mipmap::Settings {
+        has_transparent: base.pixels.iter().any(|p| p[3] == 0),
+        dither_cutouts: crate::mipmap::dither_cutouts(),
+        ..Default::default()
+    };
+    crate::mipmap::generate(base, levels, settings)
+        .iter()
+        .skip(1)
+        .map(|image| image.pixels.iter().flatten().copied().collect())
+        .collect()
+}
+
 fn sample(
     clip: &SpriteAnimation,
     blend: FrameBlend,
@@ -279,10 +305,21 @@ impl TerrainHudRenderer {
         )?;
         let count = work.shown.len();
         self.animations.failed = true;
+        let levels = self.world.mip_levels();
         for (layer, pixels) in &work.terrain {
-            self.world
-                .update_sprite(*layer, pixels, self.limits.animation_staging_bytes)
-                .map_err(diagnostic)?;
+            let mips = layer_mips(pixels, levels);
+            if mips.len() as u32 == levels {
+                let refs: Vec<&[u8]> = mips.iter().map(Vec::as_slice).collect();
+                self.world
+                    .update_sprite_mipped(*layer, pixels, &refs, self.limits.animation_staging_bytes)
+                    .map_err(diagnostic)?;
+            } else {
+                // A frame whose sprite is too small for the page's chain still has to
+                // be drawn: its base level alone is what that page samples up close.
+                self.world
+                    .update_sprite(*layer, pixels, self.limits.animation_staging_bytes)
+                    .map_err(diagnostic)?;
+            }
         }
         if !work.hud.is_empty() {
             let remaining = self.limits.animation_staging_bytes - work.terrain_bytes;
@@ -361,6 +398,32 @@ mod tests {
             )
             .is_err()
         );
+    }
+    /// An animated cutout's frame must come with the same chain depth as the page
+    /// it is patched into, or the update is refused and a distant animated flower
+    /// keeps showing its first frame's mips.
+    #[test]
+    fn an_animated_frames_chain_is_as_deep_as_its_page_and_keeps_the_cutout() {
+        let mut pixels = vec![0u8; 8 * 8 * 4];
+        for y in 0..8 {
+            for x in 0..4 {
+                let at = (y * 8 + x) * 4;
+                pixels[at..at + 4].copy_from_slice(&[90, 140, 40, 255]);
+            }
+        }
+        let mips = layer_mips(&pixels, 2);
+        assert_eq!(mips.len(), 2);
+        assert_eq!(mips[0].len(), 4 * 4 * 4);
+        assert_eq!(mips[1].len(), 2 * 2 * 4);
+        for level in &mips {
+            assert!(
+                level.chunks_exact(4).any(|p| p[3] != 0),
+                "a level lost every opaque texel"
+            );
+        }
+        // No levels asked for, or a sprite too small to halve: no chain to patch.
+        assert!(layer_mips(&pixels, 0).is_empty());
+        assert!(layer_mips(&[255u8; 4], 1).is_empty());
     }
     #[test]
     fn nearest_sampling_preserves_rgba_interpolation_and_clip_clock() {

@@ -13,6 +13,12 @@ pub struct Drain {
     pub uploads: usize,
     pub removals: usize,
     pub bytes: usize,
+    /// The queue's head did not fit the mesh budget this drain: either the ledger
+    /// is spent, or admitting it would leave the frame's own transient geometry no
+    /// room. The section keeps its ticket and its payload, and the next drain tries
+    /// it again; a view whose meshes outgrow the budget is a normal outcome (a large
+    /// render distance on a small machine), so it must not end streaming.
+    pub deferred: usize,
 }
 pub(crate) fn retained(mesh: &SectionMesh) -> Result<usize, String> {
     fn vector<T>(v: &Vec<T>) -> Option<usize> {
@@ -88,6 +94,7 @@ impl TerrainHudRenderer {
         self.world
             .reset_sections(layout.min_y())
             .map_err(diagnostic)?;
+        self.block_entities.clear();
         self.game_layout = Some(layout);
         self.streaming = Some(state);
         Ok(())
@@ -140,11 +147,22 @@ impl TerrainHudRenderer {
             return Err("native streamed sections do not support far-mesh keep/fade".into());
         }
         let bytes = retained(mesh)?;
-        self.streaming
+        let ahead = self.world.has_section(key);
+        let stream = self
+            .streaming
             .as_mut()
-            .ok_or("stamped streaming not started")?
-            .complete(key, stamp, Arc::clone(mesh), bytes)
-            .map_err(diagnostic)
+            .ok_or("stamped streaming not started")?;
+        // A section that already has a mesh on the GPU is being replaced (a block broken
+        // or placed in it): the owner drains that payload first, ahead of a view fill.
+        if ahead {
+            stream
+                .complete_replacing(key, stamp, Arc::clone(mesh), bytes)
+                .map_err(diagnostic)
+        } else {
+            stream
+                .complete(key, stamp, Arc::clone(mesh), bytes)
+                .map_err(diagnostic)
+        }
     }
     pub fn stream_usage(&self) -> Option<Usage> {
         self.streaming.as_ref().map(Stream::usage)
@@ -164,6 +182,7 @@ impl TerrainHudRenderer {
             return Ok(false);
         }
         self.world.unload_section(key).map_err(diagnostic)?;
+        self.block_entities.remove(key);
         stream.removed(key, stamp);
         Ok(true)
     }
@@ -173,13 +192,30 @@ impl TerrainHudRenderer {
     /// conversion scratch stays bounded separately by section_vertices. Failed
     /// upload keeps the previous resident mesh AND the pending head for retry.
     pub fn drain_streaming(&mut self, max_jobs: usize, max_bytes: usize) -> Result<Drain, String> {
+        self.drain_streaming_budget(max_jobs, max_bytes, u64::MAX)
+    }
+    /// The same drain, bounded in time as well: it stops taking jobs once `micros`
+    /// have passed, so one frame never spends the whole frame filling a view. A frame
+    /// that has already uploaded something always keeps that (an upload a tick is what
+    /// a fresh edit needs to show), so the deadline only ends a burst.
+    pub fn drain_streaming_budget(
+        &mut self,
+        max_jobs: usize,
+        max_bytes: usize,
+        micros: u64,
+    ) -> Result<Drain, String> {
         if self.streaming.is_none() {
             return Err("stamped streaming not started".into());
         }
+        let started = std::time::Instant::now();
         let mut result = Drain::default();
         while result.uploads + result.removals < max_jobs {
+            if result.uploads > 0 && started.elapsed().as_micros() as u64 >= micros {
+                break;
+            }
             if let Some((key, stamp)) = self.streaming.as_ref().unwrap().removal() {
                 self.world.unload_section(key).map_err(diagnostic)?;
+                self.block_entities.remove(key);
                 self.streaming.as_mut().unwrap().removed(key, stamp);
                 result.removals += 1;
                 continue;
@@ -199,14 +235,47 @@ impl TerrainHudRenderer {
                 // Air/last-block edits release GPU membership, not the active
                 // interest ticket. Do not fill the resident section cap with air.
                 self.world.unload_section(key).map_err(diagnostic)?;
+                self.block_entities.set(key, &mesh.block_entities);
             } else {
-                render_bridge::upload_section(
+                // Resident sections stop short of the ledger: the frame's own
+                // entities, particles, hand and overlays are allocated from the
+                // same ledger afterwards, and a view that reached the last byte
+                // left `render` with nothing to draw them with. Wait for room
+                // instead of taking the frame's. A single section bigger than the
+                // whole allowance still goes in when nothing is resident, so a
+                // tight test ledger can always admit its first section.
+                let used = self.world.backend().stats().mesh_bytes;
+                if used > 0 && used.saturating_add(bytes) > self.section_residency_limit() {
+                    result.deferred += 1;
+                    break;
+                }
+                let upload = render_bridge::upload_section(
                     &mut self.world,
                     key,
                     &mesh,
                     self.limits.section_vertices,
-                )
-                .map_err(diagnostic)?;
+                );
+                match upload {
+                    Ok(()) => self.block_entities.set(key, &mesh.block_entities),
+                    // The view's meshes outgrew the GPU budget: leave this section
+                    // queued with its ticket and payload, release the rest of the
+                    // frame's drain to the caller, and try again once something
+                    // else has been unloaded. Ending the whole stream here is what
+                    // froze a world whose view had filled the budget: every later
+                    // edit kept its stale mesh because nothing was ever uploaded
+                    // again.
+                    Err(render_bridge::UploadError::Scene(_)) => {
+                        let remaining = self.world.backend().remaining().mesh_bytes;
+                        if remaining >= bytes {
+                            return Err(
+                                "legacy terrain/HUD: section upload failed with budget left".into(),
+                            );
+                        }
+                        result.deferred += 1;
+                        break;
+                    }
+                    Err(error) => return Err(diagnostic(error)),
+                }
             }
             self.streaming.as_mut().unwrap().uploaded(key, stamp);
             result.uploads += 1;
@@ -379,7 +448,8 @@ mod gpu_tests {
             Drain {
                 uploads: 1,
                 removals: 0,
-                bytes: charge
+                bytes: charge,
+                deferred: 0,
             }
         );
         assert_eq!(Arc::strong_count(&red), 1);
@@ -406,8 +476,18 @@ mod gpu_tests {
             Queued::Accepted
         );
         // A real GPU replacement budget failure: old 188-byte VBO/IBO stays
-        // resident; the extra replacement cannot fit the 256-byte owner budget.
-        assert!(facade(&mut renderer).drain_streaming(1, charge).is_err());
+        // resident, and the extra replacement is deferred rather than ending the
+        // stream: its ticket and payload stay queued for the next drain, so the
+        // section keeps the mesh it had instead of freezing every later upload.
+        assert_eq!(
+            facade(&mut renderer).drain_streaming(1, charge).unwrap(),
+            Drain {
+                uploads: 0,
+                removals: 0,
+                bytes: 0,
+                deferred: 1,
+            }
+        );
         assert_eq!(renderer.stream_usage().unwrap().pending, 1);
         assert_eq!(draw(&mut renderer, [0; 3], &hud), [255, 0, 0, 255]);
         assert!(

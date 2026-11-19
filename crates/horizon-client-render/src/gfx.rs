@@ -246,11 +246,9 @@ pub use entity_batch::{
 };
 use external::{shadow_box, shadow_runs};
 pub use frustum::{Cull, Frusta, JoinedFrusta, ShadowCull};
+pub(crate) use frustum::{visible_block_entities, visible_block_entities_in_frustum};
 use frustum::{block_entities_within_reach, frustum, shadow_casters, taa_frustum};
-use section_fade::{
-    CHUNK_VISIBILITY_THRESHOLD, FadeInputs, chunk_visibility, fade_millis, section_instance,
-    section_visibility,
-};
+use section_fade::{FadeInputs, fade_millis, section_instance, section_visibility};
 pub use view::{View, ViewSet};
 
 /// Window.getAppropriateLineWidth, in framebuffer pixels.
@@ -691,9 +689,9 @@ fn pack_terrain_camera(camera: DVec3) -> DVec3 {
     let whole = camera.floor();
     whole + ((camera - whole) * 65536.0).round() / 65536.0
 }
-/// A new value for `Renderer::block_entity_revision`.
-fn next_block_entity_revision() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// A new value for `Renderer::block_entity_revision`, shared with the native owner's own
+/// resident block entities so the two never hand the same revision to one cache.
+pub(crate) fn next_block_entity_revision() -> u64 {    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -5552,16 +5550,14 @@ impl Renderer {
         &self,
         fade_seconds: f32,
     ) -> impl Iterator<Item = &([i32; 3], u32)> {
-        let fade = fade_millis(fade_seconds);
         let now = std::time::Instant::now();
-        let all = !self.sections_fading_in(fade, now);
-        self.block_entities
-            .iter()
-            .filter(move |(key, _)| {
-                all || chunk_visibility(self.section_elapsed_ms(**key, now), fade)
-                    >= CHUNK_VISIBILITY_THRESHOLD
-            })
-            .flat_map(|(_, blocks)| blocks)
+        visible_block_entities(
+            &self.block_entities,
+            &self.section_uploaded,
+            self.newest_upload,
+            fade_seconds,
+            now,
+        )
     }
     /// Whether a section may still be fading in over `fade_ms` (vanilla's chunk fade): one was
     /// uploaded more recently than that. Otherwise every section is whole.
@@ -5593,43 +5589,18 @@ impl Renderer {
         keep_section: impl Fn(u32) -> bool + 'a,
         keep_long_range: impl Fn(u32) -> bool + 'a,
     ) -> impl Iterator<Item = (&'a ([i32; 3], u32), bool)> + 'a {
-        let fade = fade_millis(fade_seconds);
-        let now = Instant::now();
-        // No section uploaded within the fade: all are whole, none is looked up.
-        let all = !self.sections_fading_in(fade, now);
-        let min_y = self.layout.min_y();
-        self.block_entities
-            .iter()
-            .filter(move |(key, _)| {
-                all || chunk_visibility(self.section_elapsed_ms(**key, now), fade)
-                    >= CHUNK_VISIBILITY_THRESHOLD
-            })
-            .filter_map(move |(key, blocks)| {
-                let origin = DVec3::new(
-                    f64::from(key.0 * 16 - 1),
-                    f64::from(min_y + key.1 * 16 - 1),
-                    f64::from(key.2 * 16 - 1),
-                ) - camera;
-                let min = origin.as_vec3();
-                // The last block's expanded bound ends at section_origin + 17.
-                let max = min + Vec3::splat(18.0);
-                let distance_squared = Vec3::ZERO.max(min).min(max).length_squared();
-                let in_range = distance_squared <= 64.0 * 64.0
-                    || (distance_squared <= 256.0 * 256.0
-                        && blocks.iter().any(|(_, state)| keep_long_range(*state)));
-                if !in_range {
-                    return None;
-                }
-                let (intersects, fully_inside) = frustum.map_or((true, true), |view| {
-                    let fully_inside = view.contains(min, max);
-                    (fully_inside || view.intersects(min, max), fully_inside)
-                });
-                (intersects || blocks.iter().any(|(_, state)| keep_section(*state)))
-                    .then_some((blocks, fully_inside))
-            })
-            .flat_map(|(blocks, fully_inside)| {
-                blocks.iter().map(move |block| (block, fully_inside))
-            })
+        visible_block_entities_in_frustum(
+            &self.block_entities,
+            &self.section_uploaded,
+            self.newest_upload,
+            fade_seconds,
+            Instant::now(),
+            self.layout.min_y(),
+            camera,
+            frustum,
+            keep_section,
+            keep_long_range,
+        )
     }
     /// The block entities of the sections a shader pack's shadow pass drew in the last frame
     /// (`shadow_visible`), within the 64 blocks `visible_block_entities_in_frustum` keeps.
@@ -5655,12 +5626,6 @@ impl Renderer {
             pos[2] >> 4,
         );
         self.shadow_visible.iter().any(|v| v.key == key)
-    }
-    /// Milliseconds since `key` was uploaded; a section not in `section_uploaded` is old.
-    fn section_elapsed_ms(&self, key: SectionKey, now: std::time::Instant) -> u64 {
-        self.section_uploaded.get(&key).map_or(u64::MAX, |t| {
-            now.saturating_duration_since(*t).as_millis() as u64
-        })
     }
     /// A value that changes whenever `block_entities` gives something else.
     pub fn block_entity_revision(&self) -> u64 {
@@ -12454,7 +12419,7 @@ mod tests {
     }
     #[test]
     fn chunk_fade_is_vanillas_get_visibility() {
-        use super::{chunk_visibility, fade_millis};
+        use super::section_fade::{chunk_visibility, fade_millis};
         assert_eq!(fade_millis(0.75), 750);
         assert_eq!(fade_millis(0.0), 0);
         assert_eq!(chunk_visibility(0, 750), 0.0_f32);

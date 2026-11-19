@@ -232,9 +232,15 @@ impl<'a> Prepared<'a> {
         ));
         let hand_view_projection =
             gl_reversed_projection((hand_projection * frame.bob * view.view).to_cols_array());
+        // `GameRenderer.render3dHud`: DebugCrosshairRenderer draws with the hand's
+        // projection but no bob, so the 3D crosshair stands still on the screen
+        // while the camera walks and turns.
+        let crosshair_projection =
+            gl_reversed_projection((hand_projection * view.view).to_cols_array());
         if world_projection
             .iter()
             .chain(&hand_view_projection)
+            .chain(&crosshair_projection)
             .any(|v| !v.is_finite())
         {
             return Err(Error::Invalid("projection arithmetic"));
@@ -290,6 +296,7 @@ impl<'a> Prepared<'a> {
                 crosshair: frame.debug_crosshair,
             },
             world_projection,
+            crosshair_projection,
             size,
         )
         .map_err(|_| Error::Allocation)?;

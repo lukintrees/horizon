@@ -137,10 +137,42 @@ impl<'a> TerrainAtlas<'a> {
     pub fn layout(&self) -> &crate::atlas::AtlasLayout {
         &self.layout
     }
+    /// One sprite layer's edge, in pixels: every layer of this atlas is the same square.
+    pub fn size(&self) -> u32 {
+        self.layout
+            .sprites()
+            .first()
+            .map_or(0, |place| place.width)
+    }
+    /// One layer's pixels, in the layer-major order the mesher's IDs use.
+    pub fn layer(&self, index: usize) -> Option<&'a [u8]> {
+        self.layers.get(index).copied()
+    }
+    /// Every layer, in the same order as `layout().sprites()`.
+    pub fn layers(&self) -> &[&'a [u8]] {
+        &self.layers
+    }
     pub fn texture_bytes(&self) -> Result<usize, ResourceError> {
         self.page_bytes
             .checked_mul(self.layout.page_count())
             .ok_or(ResourceError::Budget)
+    }
+    /// What the same pages cost with `levels` mip levels below each one: every
+    /// level is a quarter of the one above, and the whole chain three quarters of
+    /// the base page.
+    pub fn texture_bytes_with_mips(&self, levels: u32) -> Result<usize, ResourceError> {
+        let pages = self.layout.page_count();
+        let mut total = self.texture_bytes()?;
+        for level in 1..=levels {
+            if self.layout.page_size() >> level == 0 {
+                break;
+            }
+            let level_bytes = self.page_bytes >> (2 * level);
+            total = total
+                .checked_add(level_bytes.checked_mul(pages).ok_or(ResourceError::Budget)?)
+                .ok_or(ResourceError::Budget)?;
+        }
+        Ok(total)
     }
     pub fn page(&self, page: usize) -> Result<Vec<u8>, crate::atlas::AtlasError> {
         crate::atlas::build_page(&self.layout, page, &self.layers)

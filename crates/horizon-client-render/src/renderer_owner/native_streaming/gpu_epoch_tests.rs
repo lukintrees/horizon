@@ -61,6 +61,7 @@ fn backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epoch
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget,
         };
         let first = ticket(&mut hook, a);
@@ -126,6 +127,7 @@ fn backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epoch
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget,
         };
         retry = match hook.complete(b, Some(old_b), retry) {
@@ -157,6 +159,7 @@ fn backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epoch
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget,
         };
         retry = match hook.complete(b, Some(old_b), retry) {
@@ -188,6 +191,7 @@ fn backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epoch
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget,
         };
         assert!(matches!(

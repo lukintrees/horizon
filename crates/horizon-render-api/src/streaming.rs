@@ -159,6 +159,29 @@ impl<T> Stream<T> {
         payload: T,
         bytes: usize,
     ) -> Result<Queued, Error> {
+        self.push(key, stamp, payload, bytes, false)
+    }
+    /// The same acknowledgement for a section that already has a mesh resident on the
+    /// GPU: the payload replaces one the owner is drawing, so it is drained first.
+    /// A break or placement in a loaded section must not wait behind a view's fill,
+    /// which at a wide render distance is dozens of sections queued in front of it.
+    pub fn complete_replacing(
+        &mut self,
+        key: SectionKey,
+        stamp: SectionStamp,
+        payload: T,
+        bytes: usize,
+    ) -> Result<Queued, Error> {
+        self.push(key, stamp, payload, bytes, true)
+    }
+    fn push(
+        &mut self,
+        key: SectionKey,
+        stamp: SectionStamp,
+        payload: T,
+        bytes: usize,
+        ahead: bool,
+    ) -> Result<Queued, Error> {
         if !self.accepts_completion(key, stamp) {
             return Ok(Queued::Stale);
         }
@@ -168,7 +191,11 @@ impl<T> Stream<T> {
         }
         self.order.try_reserve(1).map_err(|_| Error::Allocation)?;
         self.entries.get_mut(&key).unwrap().phase = Phase::Pending(payload, bytes);
-        self.order.push_back(key);
+        if ahead {
+            self.order.push_front(key);
+        } else {
+            self.order.push_back(key);
+        }
         self.bytes = total.unwrap();
         Ok(Queued::Accepted)
     }
@@ -314,6 +341,31 @@ mod tests {
         assert!(state.uploaded([2; 3], c));
         assert_eq!(state.front().unwrap().2, &4);
         assert_eq!(state.usage().bytes, 4);
+    }
+    #[test]
+    fn a_replacement_is_drained_before_an_older_fresh_completion() {
+        let mut state = Stream::new(
+            WorldGeneration(1),
+            ResourceGeneration(7),
+            Limits {
+                slots: 3,
+                pending: 3,
+                bytes: 12,
+            },
+        )
+        .unwrap();
+        let fresh = state.request([0; 3]).unwrap().unwrap();
+        let edited = state.request([1; 3]).unwrap().unwrap();
+        assert_eq!(state.complete([0; 3], fresh, 1, 4), Ok(Queued::Accepted));
+        // An edit in a section already on the GPU: it must not wait behind the fill.
+        assert_eq!(
+            state.complete_replacing([1; 3], edited, 2, 4),
+            Ok(Queued::Accepted)
+        );
+        assert_eq!(state.front().unwrap().0, [1; 3]);
+        assert!(state.uploaded([1; 3], edited));
+        assert_eq!(state.front().unwrap().0, [0; 3]);
+        assert_eq!(state.usage().pending, 1);
     }
     #[test]
     fn revocation_survives_failed_cleanup_without_unbounded_tombstones() {

@@ -988,10 +988,7 @@ impl Game<'_> {
         }
         self.ui.chat_draft_shown = false;
         self.refresh_dynamic_registries();
-        let size = self
-            .renderer
-            .modern_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
@@ -1414,26 +1411,14 @@ impl Game<'_> {
     }
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
-        let height = self.renderer.modern_ref().map_or(720.0, |r| {
-            HudBatch::new(
-                [r.config.width, r.config.height],
-                self.settings.gui_scale_inputs(),
-            )
-            .height
-        });
+        let height = HudBatch::new(self.frame_size(), self.settings.gui_scale_inputs()).height;
         let m = Measure(&self.gui.atlas.font);
         let c = Commands {
             dispatcher: chat_tree(&self.remote),
             registries: &self.ui.registries,
         };
         if self.ui.in_bed_chat && self.sleeping.is_some() {
-            let width = self.renderer.modern_ref().map_or(1280.0, |r| {
-                HudBatch::new(
-                    [r.config.width, r.config.height],
-                    self.settings.gui_scale_inputs(),
-                )
-                .width
-            });
+            let width = HudBatch::new(self.frame_size(), self.settings.gui_scale_inputs()).width;
             let (x, y, w, h) = self
                 .built_chat(width, height)
                 .map_or_else(|| Self::leave_bed_button(width, height), |l| l.leave_bed);

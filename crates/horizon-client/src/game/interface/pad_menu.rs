@@ -353,12 +353,10 @@ impl Game<'_> {
     }
 
     pub(super) fn gui_batch(&self) -> Option<HudBatch> {
-        self.renderer.modern_ref().map(|r| {
-            HudBatch::new(
-                [r.config.width, r.config.height],
-                self.settings.gui_scale_inputs(),
-            )
-        })
+        Some(HudBatch::new(
+            self.frame_size(),
+            self.settings.gui_scale_inputs(),
+        ))
     }
 
     /// Focus drives the open screen: every menu but inventories and

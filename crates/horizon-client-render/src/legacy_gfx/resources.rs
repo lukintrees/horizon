@@ -1,15 +1,28 @@
 //! Native factory from borrowed CPU resources. Does not initialize wgpu, decode
 //! a pack, publish a reload or choose the Game's platform/renderer owner.
 use super::*;
+use crate::mipmap::{self, Strategy};
 use horizon_render_api::{
+    atlas::{AtlasError, sprite_patch_levels},
     render_contract::ResourceGeneration,
     resource_contract::{Resources, TerrainAtlas, TerrainAtlasLimits},
+    scene::MippedPage,
 };
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceLimits {
     pub base_bytes: usize,
     pub terrain: TerrainAtlasLimits,
+    /// Levels below each terrain page's base level (the `Mipmap Levels` option's
+    /// default). Zero keeps one level, which is all a driver without mipmapped
+    /// sampling of an atlas can use.
+    ///
+    /// Reported: "у цветов и травы мерцают текстуры" -- a flower's cutout texels
+    /// are a texel or two across, so minified without mips the nearest one wins
+    /// from one frame to the next and the sprite sparkles; the modern renderer
+    /// minifies through the chain vanilla builds. The chain is cutout-aware
+    /// (`mipmap::generate`), so thin grass and flower edges keep their coverage.
+    pub mip_levels: u32,
 }
 impl Default for ResourceLimits {
     fn default() -> Self {
@@ -30,8 +43,103 @@ impl Default for ResourceLimits {
                 // One decoded page (4 MiB) plus the borrowed layer table.
                 staging_bytes: 8 << 20,
             },
+            // `Options.mipmapLevels` ships at 4.
+            mip_levels: 4,
         }
     }
+}
+
+/// How many levels below the base one a page can carry: what was asked for, but
+/// no more than the smallest sprite has (a level below one texel has nothing to
+/// hold) and no more than leaves the page two texels wide, since a level is
+/// addressed by its box.
+fn usable_mip_levels(terrain: &TerrainAtlas<'_>, requested: u32) -> u32 {
+    let sprite = terrain.size().max(1).ilog2();
+    let page = terrain.layout().page_size().max(2).ilog2() - 1;
+    requested.min(sprite).min(page)
+}
+
+/// One page's pixels (level zero) and the levels below them, every sprite's chain
+/// made by `mipmap::generate` so a cutout keeps its coverage as it minifies.
+fn mipped_page(
+    terrain: &TerrainAtlas<'_>,
+    page: usize,
+    levels: u32,
+) -> Result<MippedPage, AtlasError> {
+    let layout = terrain.layout();
+    let side = layout.page_size();
+    let rgba = terrain.page(page)?;
+    if levels == 0 || side >> levels == 0 {
+        return Ok(MippedPage {
+            rgba,
+            mips: Vec::new(),
+        });
+    }
+    let mut mips: Vec<Vec<u8>> = (0..levels)
+        .map(|level| {
+            let edge = (side >> (level + 1)) as usize;
+            vec![0; edge * edge * 4]
+        })
+        .collect();
+    // A page holds hundreds of sprites and every one of them builds its own
+    // chain, each level bisecting the alpha scale for its coverage: on one thread
+    // the pages alone would hold up the loading screen for seconds. The sprites go
+    // across the machine's threads and are blitted in layout order.
+    let sprites: Vec<(usize, u32)> = layout
+        .sprites()
+        .iter()
+        .enumerate()
+        .filter(|(_, place)| place.page == page)
+        .map(|(index, place)| (index, place.width.min(place.height)))
+        .collect();
+    let chains = crate::par::par_map(&sprites, |&(index, size)| {
+        if size >> levels == 0 {
+            // A sprite smaller than the page cannot fill every level: its own
+            // chain stops at one texel, and the higher levels stay the neighbours'.
+            return Ok(Vec::new());
+        }
+        let pixels = terrain.layer(index).ok_or(AtlasError::InvalidSpriteIndex)?;
+        let base = mipmap::Image {
+            width: size,
+            height: size,
+            pixels: pixels.as_chunks::<4>().0.to_vec(),
+        };
+        let settings = mipmap::Settings {
+            strategy: Strategy::Auto,
+            has_transparent: base.pixels.iter().any(|p| p[3] == 0),
+            dither_cutouts: mipmap::dither_cutouts(),
+            ..Default::default()
+        };
+        Ok::<_, AtlasError>(
+            mipmap::generate(base, levels, settings)
+                .iter()
+                .skip(1)
+                .map(|image| image.pixels.iter().flatten().copied().collect())
+                .collect::<Vec<Vec<u8>>>(),
+        )
+    });
+    for (&(index, size), chain) in sprites.iter().zip(chains) {
+        let chain = chain?;
+        if chain.is_empty() {
+            continue;
+        }
+        let refs: Vec<&[u8]> = chain.iter().map(Vec::as_slice).collect();
+        let budget = size as usize * size as usize * 4;
+        for (level, patch) in sprite_patch_levels(layout, index, &refs, budget)?
+            .iter()
+            .enumerate()
+        {
+            let edge = (side >> (level as u32 + 1)) as usize;
+            let target = &mut mips[level];
+            for row in 0..patch.size[1] as usize {
+                let from = row * patch.size[0] as usize * 4;
+                let to = ((patch.at[1] as usize + row) * edge + patch.at[0] as usize) * 4;
+                let len = patch.size[0] as usize * 4;
+                target[to..to + len].copy_from_slice(&patch.rgba[from..from + len]);
+            }
+        }
+    }
+    Ok(MippedPage { rgba, mips })
 }
 
 fn prepare<'a>(
@@ -62,7 +170,7 @@ fn prepare<'a>(
     .map_err(diagnostic)?;
     let terrain = TerrainAtlas::new(&resources.terrain, preparation.terrain).map_err(diagnostic)?;
     let bytes = terrain
-        .texture_bytes()
+        .texture_bytes_with_mips(usable_mip_levels(&terrain, preparation.mip_levels))
         .map_err(diagnostic)?
         .checked_add(1024 + 4)
         .and_then(|n| n.checked_add(resources.item_glint.rgba.len()))
@@ -89,7 +197,7 @@ impl TerrainHudRenderer {
     ) -> Result<Self, String> {
         let terrain = prepare(resources, lightmap, limits, preparation)?;
         let backend = Renderer::owned(context, limits.gpu)?;
-        Self::from_terrain(backend, terrain, resources, lightmap, limits)
+        Self::from_terrain(backend, terrain, resources, lightmap, limits, preparation)
     }
 
     pub(super) fn from_resources_backend(
@@ -100,7 +208,7 @@ impl TerrainHudRenderer {
         preparation: ResourceLimits,
     ) -> Result<Self, String> {
         let terrain = prepare(resources, lightmap, limits, preparation)?;
-        Self::from_terrain(backend, terrain, resources, lightmap, limits)
+        Self::from_terrain(backend, terrain, resources, lightmap, limits, preparation)
     }
 
     pub(crate) fn from_resources_backend_checked(
@@ -113,7 +221,15 @@ impl TerrainHudRenderer {
     ) -> Result<Self, String> {
         checkpoint(StagePoint::Layout, backend.context())?;
         let terrain = prepare(resources, lightmap, limits, preparation)?;
-        Self::from_terrain_checked(backend, terrain, resources, lightmap, limits, checkpoint)
+        Self::from_terrain_checked(
+            backend,
+            terrain,
+            resources,
+            lightmap,
+            limits,
+            preparation,
+            checkpoint,
+        )
     }
 
     fn from_terrain(
@@ -122,6 +238,7 @@ impl TerrainHudRenderer {
         resources: &Resources<'_>,
         lightmap: &[u8],
         limits: Limits,
+        preparation: ResourceLimits,
     ) -> Result<Self, String> {
         Self::from_terrain_checked(
             backend,
@@ -129,6 +246,7 @@ impl TerrainHudRenderer {
             resources,
             lightmap,
             limits,
+            preparation,
             &mut |_, _| Ok(()),
         )
     }
@@ -139,14 +257,16 @@ impl TerrainHudRenderer {
         resources: &Resources<'_>,
         lightmap: &[u8],
         limits: Limits,
+        preparation: ResourceLimits,
         checkpoint: &mut impl FnMut(StagePoint, &Context) -> Result<(), String>,
     ) -> Result<Self, String> {
-        let world = WorldScene::new_paged_checked(
+        let levels = usable_mip_levels(&terrain, preparation.mip_levels);
+        let world = WorldScene::new_paged_mipped_checked(
             backend,
             terrain.layout().clone(),
             lightmap,
             limits.sections,
-            |page| terrain.page(page),
+            |page| mipped_page(&terrain, page, levels),
             |backend, completed, total| {
                 checkpoint(StagePoint::Terrain { completed, total }, backend.context())
             },
@@ -189,6 +309,53 @@ impl TerrainHudRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A 8x8 cutout sprite -- the left half opaque, the right half clear, as a
+    /// flower's petals are against its transparent corner -- in a 16 px page.
+    fn flower() -> ([u8; 8 * 8 * 4], TerrainAtlasLimits) {
+        let mut pixels = [0u8; 8 * 8 * 4];
+        for y in 0..8 {
+            for x in 0..4 {
+                let at = (y * 8 + x) * 4;
+                pixels[at..at + 4].copy_from_slice(&[90, 140, 40, 255]);
+            }
+        }
+        (
+            pixels,
+            TerrainAtlasLimits {
+                page_size: 16,
+                max_pages: 1,
+                max_layers: 1,
+                staging_bytes: 16 * 16 * 4 + std::mem::size_of::<&[u8]>(),
+            },
+        )
+    }
+    #[test]
+    fn a_mipped_page_carries_every_level_and_keeps_a_cutouts_coverage_at_distance() {
+        let (pixels, limits) = flower();
+        let layers = horizon_render_api::resource_contract::TextureLayers {
+            size: 8,
+            layers: 1,
+            rgba: &pixels,
+        };
+        let terrain = TerrainAtlas::new(&layers, limits).unwrap();
+        let page = mipped_page(&terrain, 0, 2).unwrap();
+        assert_eq!(page.rgba.len(), 16 * 16 * 4);
+        assert_eq!(page.mips.len(), 2);
+        assert_eq!(page.mips[0].len(), 8 * 8 * 4);
+        assert_eq!(page.mips[1].len(), 4 * 4 * 4);
+        // The cutout survives minification: each level still has opaque texels, so a
+        // distant flower keeps its shape instead of eroding to a gap.
+        for level in &page.mips {
+            assert!(
+                level.chunks_exact(4).any(|p| p[3] != 0),
+                "a level lost every opaque texel"
+            );
+        }
+        // Zero levels is the single-level page the backend uploads as before.
+        let flat = mipped_page(&terrain, 0, 0).unwrap();
+        assert!(flat.mips.is_empty());
+        assert_eq!(flat.rgba.len(), 16 * 16 * 4);
+    }
     #[test]
     fn preparation_checks_base_staging_gpu_and_hud_room_without_creating_a_context() {
         let image = || Image {
@@ -215,6 +382,7 @@ mod tests {
                 max_layers: 1,
                 staging_bytes: 64 + std::mem::size_of::<&[u8]>(),
             },
+            mip_levels: 0,
         };
         let required = 64 + 1024 + 4 + 8 + 512 * 512 * 4;
         let limits = Limits {

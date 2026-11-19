@@ -29,6 +29,9 @@ pub(crate) struct Prepared {
     opaque: Vec<stroke::Mesh>,
     translucent: Vec<stroke::Mesh>,
     over: Vec<stroke::Mesh>,
+    /// The 3D crosshair alone: `GameRenderer.render3dHud` draws it with the
+    /// hand's projection and no bob, so it stands still while the camera moves.
+    crosshair: Vec<stroke::Mesh>,
     pub(crate) bytes: usize,
 }
 impl Prepared {
@@ -36,7 +39,15 @@ impl Prepared {
     /// stroke expander cannot draw is dropped, the way the GPU would clip it.
     /// Only an allocation failure, which no later frame would survive either,
     /// is an error.
-    pub fn new(source: &Source<'_>, matrix: [f32; 16], size: [u32; 2]) -> Result<Self, String> {
+    ///
+    /// `matrix` projects the world gizmos (camera-relative, with the bob and the
+    /// spin), `crosshair_matrix` the 3D crosshair (the hand's projection, no bob).
+    pub fn new(
+        source: &Source<'_>,
+        matrix: [f32; 16],
+        crosshair_matrix: [f32; 16],
+        size: [u32; 2],
+    ) -> Result<Self, String> {
         // `DrawableGizmoPrimitives.getGroup`: a line whose ARGB alpha is 255
         // joins the opaque group; the rest keep their order after it, so the
         // two groups drawn in sequence are one stable reordering.
@@ -45,38 +56,40 @@ impl Prepared {
             .iter()
             .partition(|line| line[6].to_bits() >> 24 == 0xFF);
         let mut over_lines: Vec<[f32; 8]> = Vec::new();
-        if over_lines
-            .try_reserve(source.on_top.len() + source.crosshair.len())
-            .is_err()
-        {
+        if over_lines.try_reserve(source.on_top.len()).is_err() {
             return Err("debug gizmo allocation failed".into());
         }
         over_lines.extend_from_slice(source.on_top);
-        over_lines.extend_from_slice(source.crosshair);
-        let (opaque, translucent, over) = (
+        let (opaque, translucent, over, crosshair) = (
             build(&opaque, matrix, size)?,
             build(&translucent, matrix, size)?,
             build(&over_lines, matrix, size)?,
+            build(source.crosshair, crosshair_matrix, size)?,
         );
         let bytes = opaque
             .iter()
             .chain(&translucent)
             .chain(&over)
+            .chain(&crosshair)
             .map(stroke::Mesh::bytes)
             .sum();
         Ok(Self {
             opaque,
             translucent,
             over,
+            crosshair,
             bytes,
         })
     }
     pub fn is_empty(&self) -> bool {
-        self.opaque.is_empty() && self.translucent.is_empty() && self.over.is_empty()
+        self.opaque.is_empty()
+            && self.translucent.is_empty()
+            && self.over.is_empty()
+            && self.crosshair.is_empty()
     }
     /// How many meshes the draw will create: the frame reserves that many.
     pub fn mesh_count(&self) -> usize {
-        self.opaque.len() + self.translucent.len() + self.over.len()
+        self.opaque.len() + self.translucent.len() + self.over.len() + self.crosshair.len()
     }
 }
 fn build(
@@ -130,7 +143,8 @@ impl super::screen::Resources {
         self.stroke_all(backend, &prepared.translucent, white, fog, Pass::Stroke)
     }
     /// `debug_lines_on_top` and the 3D crosshair: no depth test, so they show
-    /// through the world and the hand.
+    /// through the world and the hand. The crosshair has its own projection and
+    /// no fog, as `GameRenderer.render3dHud` draws it.
     pub fn render_debug_overlay(
         &mut self,
         backend: &mut Renderer<'_>,
@@ -138,7 +152,14 @@ impl super::screen::Resources {
         white: TextureId,
         fog: Option<Fog>,
     ) -> Result<(), String> {
-        self.stroke_all(backend, &prepared.over, white, fog, Pass::StrokeOverlay)
+        self.stroke_all(backend, &prepared.over, white, fog, Pass::StrokeOverlay)?;
+        self.stroke_all(
+            backend,
+            &prepared.crosshair,
+            white,
+            None,
+            Pass::StrokeOverlay,
+        )
     }
     fn stroke_all(
         &mut self,
@@ -198,7 +219,7 @@ mod tests {
             .collect()
     }
     #[test]
-    fn the_three_lists_split_into_opaque_translucent_and_on_top_meshes() {
+    fn the_three_lists_split_into_opaque_translucent_on_top_and_crosshair_meshes() {
         let depth = [
             line(-0.5, 0x40FF_0000, 1.),
             line(-0.25, 0xFF00_FF00, 4.),
@@ -211,13 +232,14 @@ mod tests {
             on_top: &on_top,
             crosshair: &crosshair,
         };
-        let prepared = Prepared::new(&source, IDENTITY, [64; 2]).unwrap();
+        let prepared = Prepared::new(&source, IDENTITY, IDENTITY, [64; 2]).unwrap();
         assert!(!prepared.is_empty());
-        // One opaque line, two translucent ones, three drawn over the world;
+        // One opaque line, two translucent ones, one on top, two crosshair lines;
         // every line is a 172-byte quad whatever its colour.
         assert_eq!(quads(&prepared.opaque).len(), 1);
         assert_eq!(quads(&prepared.translucent).len(), 2);
-        assert_eq!(quads(&prepared.over).len(), 3);
+        assert_eq!(quads(&prepared.over).len(), 1);
+        assert_eq!(quads(&prepared.crosshair).len(), 2);
         assert_eq!(prepared.bytes, 172 * 6);
         // The opaque group keeps its own line, in submission order.
         assert_eq!(prepared.opaque[0].vertices[0].color, [0., 1., 0., 1.]);
@@ -228,8 +250,40 @@ mod tests {
         // On-top lines keep the game's order: the border, then the axes.
         let over = quads(&prepared.over);
         assert_eq!(over[0], [0., 0x90 as f32 / 255., 0., 1.]);
-        assert_eq!(over[1], [1., 0., 0., 1.]);
-        assert_eq!(over[2], [0., 1., 0., 1.]);
+        let crosshair = quads(&prepared.crosshair);
+        assert_eq!(crosshair[0], [1., 0., 0., 1.]);
+        assert_eq!(crosshair[1], [0., 1., 0., 1.]);
+    }
+    /// The crosshair is projected by its own matrix: a bob in the world projection moves it,
+    /// and a crosshair projected with the same bob would shake with the camera (the reported
+    /// F3 bug). Here the crosshair matrix shifts the line, so its clip position must differ.
+    #[test]
+    fn the_crosshair_uses_its_own_projection() {
+        let crosshair = [line(0., 0xFFFF_FFFF, 2.)];
+        let source = Source {
+            depth: &[],
+            on_top: &[],
+            crosshair: &crosshair,
+        };
+        let plain = Prepared::new(&source, IDENTITY, IDENTITY, [64; 2]).unwrap();
+        // A translation by half the frustum width: a line at x=0 moves to the right.
+        let mut shifted = IDENTITY;
+        shifted[12] = 0.5;
+        let moved = Prepared::new(&source, IDENTITY, shifted, [64; 2]).unwrap();
+        let at = |prepared: &Prepared| prepared.crosshair[0].vertices[0].clip[0];
+        assert_ne!(at(&plain), at(&moved));
+        assert!(at(&moved) > at(&plain));
+        // The world gizmos are untouched by the crosshair's matrix.
+        let on_top = [line(0., 0xFFFF_FFFF, 2.)];
+        let world = Source {
+            depth: &[],
+            on_top: &on_top,
+            crosshair: &[],
+        };
+        assert_eq!(
+            Prepared::new(&world, IDENTITY, shifted, [64; 2]).unwrap().over[0].vertices[0].clip,
+            Prepared::new(&world, IDENTITY, IDENTITY, [64; 2]).unwrap().over[0].vertices[0].clip
+        );
     }
     #[test]
     fn nothing_requested_builds_nothing_and_an_undrawable_line_is_dropped() {
@@ -238,7 +292,7 @@ mod tests {
             on_top: &[],
             crosshair: &[],
         };
-        let prepared = Prepared::new(&source, IDENTITY, [64; 2]).unwrap();
+        let prepared = Prepared::new(&source, IDENTITY, IDENTITY, [64; 2]).unwrap();
         assert!(prepared.is_empty() && prepared.bytes == 0);
         let good = line(0., 0xFFFF_FFFF, 1.);
         let bad = [
@@ -277,12 +331,13 @@ mod tests {
                     crosshair: &lines,
                 },
             ] {
-                let prepared = Prepared::new(&source, IDENTITY, [64; 2]).unwrap();
+                let prepared = Prepared::new(&source, IDENTITY, IDENTITY, [64; 2]).unwrap();
                 assert_eq!(prepared.bytes, 172);
                 assert_eq!(
                     quads(&prepared.opaque).len()
                         + quads(&prepared.translucent).len()
-                        + quads(&prepared.over).len(),
+                        + quads(&prepared.over).len()
+                        + quads(&prepared.crosshair).len(),
                     1
                 );
             }

@@ -604,10 +604,7 @@ impl Game<'_> {
     }
     pub(super) fn pause_click(&mut self) -> Result<()> {
         let (w, h) = {
-            let size = self
-                .renderer
-                .modern_ref()
-                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+            let size = self.frame_size();
             let b = HudBatch::new(size, self.settings.gui_scale_inputs());
             (b.width, b.height)
         };
@@ -656,10 +653,7 @@ impl Game<'_> {
     }
     pub(super) fn pause_key(&mut self, key: KeyCode) -> Result<()> {
         let (w, h) = {
-            let size = self
-                .renderer
-                .modern_ref()
-                .map_or([1, 1], |r| [r.config.width, r.config.height]);
+            let size = self.frame_size();
             let b = HudBatch::new(size, self.settings.gui_scale_inputs());
             (b.width, b.height)
         };
@@ -960,10 +954,7 @@ impl Game<'_> {
                 return Ok(());
             }
         }
-        let size = self
-            .renderer
-            .modern_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let hit = death_buttons(b.width, b.height, self.level.hardcore)
             .into_iter()

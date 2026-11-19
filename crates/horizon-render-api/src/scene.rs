@@ -42,6 +42,19 @@ pub struct SceneFrame<'a> {
     pub translucent: &'a [SectionKey],
 }
 
+/// One atlas page's pixels and the mip chain its producer generated below them:
+/// entry `k - 1` is level `k`, half the side of the one above. A page without
+/// levels is uploaded (and sampled) as a single level.
+pub struct MippedPage {
+    pub rgba: Vec<u8>,
+    pub mips: Vec<Vec<u8>>,
+}
+/// What each page closure hands `upload_pages`: plain pixels, or pixels and their chain.
+enum PageBytes<P> {
+    Single(P),
+    Mipped(MippedPage),
+}
+
 struct ResidentRun {
     mesh: MeshId,
     page: usize,
@@ -60,6 +73,8 @@ pub struct WorldScene<B: RenderBackend> {
     backend: B,
     atlas: AtlasLayout,
     pages: Vec<TextureId>,
+    /// Levels below the atlas pages' base level; zero for a single-level page.
+    mip_levels: u32,
     lightmap: Option<TextureId>,
     sections: HashMap<SectionKey, Section>,
     retired: Vec<MeshId>,
@@ -120,6 +135,46 @@ impl<B: RenderBackend> WorldScene<B> {
         Self::upload_pages(backend, atlas, lightmap, max_sections, page, checkpoint)
     }
 
+    /// The same page-at-a-time start for pages whose producer generated their mip
+    /// chains (`crate::atlas::build_page_mips`): every page is uploaded with its
+    /// levels, and sampling minifies through them, so a distant sprite no longer
+    /// shimmers between the texels one level picks.
+    pub fn new_paged_mipped(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        mut page: impl FnMut(usize) -> Result<MippedPage, crate::atlas::AtlasError>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::upload_pages_with(
+            backend,
+            atlas,
+            lightmap,
+            max_sections,
+            |index| page(index).map(PageBytes::<Vec<u8>>::Mipped),
+            &mut |_, _, _| Ok(()),
+        )
+    }
+
+    /// `new_paged_mipped` with the owner-thread checkpoints of `new_paged_checked`.
+    pub fn new_paged_mipped_checked(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        mut page: impl FnMut(usize) -> Result<MippedPage, crate::atlas::AtlasError>,
+        mut checkpoint: impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::upload_pages_with(
+            backend,
+            atlas,
+            lightmap,
+            max_sections,
+            |index| page(index).map(PageBytes::<Vec<u8>>::Mipped),
+            &mut checkpoint,
+        )
+    }
+
     fn upload_pages<P: AsRef<[u8]>>(
         backend: B,
         atlas: AtlasLayout,
@@ -127,6 +182,24 @@ impl<B: RenderBackend> WorldScene<B> {
         max_sections: usize,
         mut page: impl FnMut(usize) -> Result<P, crate::atlas::AtlasError>,
         mut checkpoint: impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
+    ) -> Result<Self, SceneError<B::Error>> {
+        Self::upload_pages_with(
+            backend,
+            atlas,
+            lightmap,
+            max_sections,
+            |index| Ok(PageBytes::Single(page(index)?)),
+            &mut checkpoint,
+        )
+    }
+
+    fn upload_pages_with<P: AsRef<[u8]>>(
+        backend: B,
+        atlas: AtlasLayout,
+        lightmap: &[u8],
+        max_sections: usize,
+        mut page: impl FnMut(usize) -> Result<PageBytes<P>, crate::atlas::AtlasError>,
+        checkpoint: &mut impl FnMut(&mut B, usize, usize) -> Result<(), B::Error>,
     ) -> Result<Self, SceneError<B::Error>> {
         let side = atlas.page_size();
         let bytes = (side as usize)
@@ -141,6 +214,7 @@ impl<B: RenderBackend> WorldScene<B> {
             backend,
             atlas,
             pages: Vec::new(),
+            mip_levels: 0,
             lightmap: None,
             sections: HashMap::new(),
             retired: Vec::new(),
@@ -150,19 +224,67 @@ impl<B: RenderBackend> WorldScene<B> {
         let total = scene.atlas.page_count();
         checkpoint(&mut scene.backend, 0, total).map_err(SceneError::Backend)?;
         for index in 0..total {
-            let rgba = page(index).map_err(SceneError::Atlas)?;
-            let rgba = rgba.as_ref();
-            if Some(rgba.len()) != bytes {
-                return Err(SceneError::InvalidAtlas);
-            }
-            let id = scene
-                .backend
-                .create_texture(Image {
-                    width: side,
-                    height: side,
-                    rgba,
-                })
-                .map_err(SceneError::Backend)?;
+            let page = page(index).map_err(SceneError::Atlas)?;
+            let id = match page {
+                PageBytes::Single(rgba) => {
+                    let rgba = rgba.as_ref();
+                    if Some(rgba.len()) != bytes {
+                        return Err(SceneError::InvalidAtlas);
+                    }
+                    scene
+                        .backend
+                        .create_texture(Image {
+                            width: side,
+                            height: side,
+                            rgba,
+                        })
+                        .map_err(SceneError::Backend)?
+                }
+                PageBytes::Mipped(page) => {
+                    let rgba = page.rgba.as_slice();
+                    if Some(rgba.len()) != bytes {
+                        return Err(SceneError::InvalidAtlas);
+                    }
+                    let mips: Vec<Image<'_>> = page
+                        .mips
+                        .iter()
+                        .enumerate()
+                        .map(|(level, pixels)| {
+                            let edge = side >> (level as u32 + 1);
+                            Image {
+                                width: edge,
+                                height: edge,
+                                rgba: pixels,
+                            }
+                        })
+                        .collect();
+                    if let Some(bad) = mips
+                        .iter()
+                        .position(|mip| (mip.rgba.len() as u64) != u64::from(mip.width) * u64::from(mip.height) * 4)
+                    {
+                        return Err(SceneError::Atlas(crate::atlas::AtlasError::InvalidPixels {
+                            index: bad,
+                        }));
+                    }
+                    // One depth for the whole atlas: `update_sprite_mipped` patches
+                    // every page in one call and cannot halve its chain per page.
+                    if index > 0 && scene.mip_levels != mips.len() as u32 {
+                        return Err(SceneError::InvalidLayout);
+                    }
+                    scene.mip_levels = mips.len() as u32;
+                    scene
+                        .backend
+                        .create_textured(
+                            Image {
+                                width: side,
+                                height: side,
+                                rgba,
+                            },
+                            &mips,
+                        )
+                        .map_err(SceneError::Backend)?
+                }
+            };
             scene.pages.push(id);
             checkpoint(&mut scene.backend, index + 1, total).map_err(SceneError::Backend)?;
         }
@@ -201,6 +323,56 @@ impl<B: RenderBackend> WorldScene<B> {
                 },
             )
             .map_err(SceneError::Backend)
+    }
+
+    /// Replace one stable layer's pixels and gutters at every mip level: the same
+    /// update as [`Self::update_sprite`], with the levels below it kept in step so
+    /// a distant animated sprite doesn't keep sampling the old frame.
+    pub fn update_sprite_mipped(
+        &mut self,
+        index: usize,
+        rgba: &[u8],
+        mips: &[&[u8]],
+        max_bytes: usize,
+    ) -> Result<(), SceneError<B::Error>> {
+        let patch = crate::atlas::sprite_patch(&self.atlas, index, rgba, max_bytes)
+            .map_err(SceneError::Atlas)?;
+        if mips.len() as u32 != self.mip_levels {
+            return Err(SceneError::InvalidLayout);
+        }
+        let levels =
+            crate::atlas::sprite_patch_levels(&self.atlas, index, mips, max_bytes)
+                .map_err(SceneError::Atlas)?;
+        let images: Vec<([u32; 2], Image<'_>)> = levels
+            .iter()
+            .map(|level| {
+                (
+                    level.at,
+                    Image {
+                        width: level.size[0],
+                        height: level.size[1],
+                        rgba: &level.rgba,
+                    },
+                )
+            })
+            .collect();
+        self.backend
+            .update_texture_levels(
+                self.pages[patch.page],
+                patch.at,
+                Image {
+                    width: patch.size[0],
+                    height: patch.size[1],
+                    rgba: &patch.rgba,
+                },
+                &images,
+            )
+            .map_err(SceneError::Backend)
+    }
+
+    /// Levels below each atlas page's base level, zero for a single-level page.
+    pub fn mip_levels(&self) -> u32 {
+        self.mip_levels
     }
 
     pub fn atlas(&self) -> &AtlasLayout {

@@ -24,12 +24,23 @@ use std::sync::Arc;
 pub struct UploadBudget {
     pub jobs: usize,
     pub bytes: usize,
+    /// How long one frame may spend converting and uploading finished sections. The
+    /// count above is only a cap: it used to be the whole budget (four sections a
+    /// tick), so a view that does not fit in a few frames — anything past a couple
+    /// of chunks — filled at five sections a second, and an edit queued behind that
+    /// fill took minutes to show at a wide render distance. Time-bounded like the
+    /// modern path's `UploadPace`, the view fills as fast as frames allow and the
+    /// frame keeps the rest of its time.
+    pub micros: u64,
 }
 impl Default for UploadBudget {
     fn default() -> Self {
         Self {
-            jobs: 4,
+            // The byte budget admits ~55 sections of a normal world; the count must not
+            // be the binding limit below it.
+            jobs: 64,
             bytes: 8 << 20,
+            micros: 6_000,
         }
     }
 }
@@ -41,6 +52,9 @@ pub struct NativeStream {
     error: Option<String>,
     membership: u64,
     interest_radius: Option<i32>,
+    /// How far resident meshes currently reach, when the mesh ledger holds fewer
+    /// sections than the interest table. `None` starts at the whole interest view.
+    residency_radius: Option<i32>,
 }
 pub struct Update {
     /// Never lose unloaded modified chunks on a later GPU error: Game must
@@ -74,6 +88,7 @@ impl NativeStream {
         self.generation = next;
         self.membership = 0;
         self.interest_radius = None;
+        self.residency_radius = None;
         // New GPU epoch has no residents, even for a previously meshed CPU world.
         for &(x, z) in world.chunks.keys() {
             for y in 0..layout.sections() as i32 {
@@ -112,10 +127,7 @@ impl NativeStream {
                 // The interest table holds what it holds; a view past it would starve
                 // sections forever. Draw the largest view that fits and say so once, rather
                 // than ending the run: the player can still play and lower the distance.
-                let fit = fitted_radius(
-                    world.layout().sections(),
-                    renderer.stream_limits().slots,
-                );
+                let fit = fitted_radius(world.layout().sections(), renderer.stream_limits().slots);
                 if self.interest_radius != Some(fit) {
                     log::warn!(
                         "Horizon: the native view of {} chunks does not fit the section interest \
@@ -128,16 +140,20 @@ impl NativeStream {
         }
         if self.error.is_none() {
             // Interest, admission and pruning all use the fitted radius: a column outside it
-            // would be a ticket the table cannot keep.
-            let view_radius = self.interest_radius.unwrap_or(streamer.radius);
+            // would be a ticket the table cannot keep. Resident meshes may hold less than the
+            // interest table: `residency_radius` is how far the mesh ledger reaches, and is
+            // what the empty space of the view's outer rings shrinks when it is full.
+            let interest = self.interest_radius.unwrap_or(streamer.radius);
+            let residency = self.residency_radius.unwrap_or(interest).min(interest);
             let mut hook = Hook {
                 state: self,
                 renderer,
-                view: (streamer.center, view_radius),
+                view: (streamer.center, residency),
+                interest,
                 budget,
             };
             hook.synchronize_membership(world);
-            hook.prune(world, streamer.center, view_radius);
+            hook.prune(world, streamer.center, residency);
             if hook.state.error.is_none() {
                 let (unexpected, removed) = streamer.update_admitted(world, &mut hook);
                 unloaded = removed;
@@ -148,11 +164,15 @@ impl NativeStream {
                     hook.fail("native admission produced unstamped uploads".into());
                 }
                 hook.synchronize_membership(world);
-                hook.prune(world, streamer.center, view_radius);
-                if hook.state.error.is_none()
-                    && let Err(error) = hook.renderer.drain_streaming(budget.jobs, budget.bytes)
-                {
-                    hook.fail(error);
+                hook.prune(world, streamer.center, residency);
+                if hook.state.error.is_none() {
+                    match hook
+                        .renderer
+                        .drain_streaming_budget(budget.jobs, budget.bytes, budget.micros)
+                    {
+                        Ok(drain) => hook.relieve_pressure(world, drain.deferred),
+                        Err(error) => hook.fail(error),
+                    }
                 }
             }
         }
@@ -165,7 +185,10 @@ impl NativeStream {
 struct Hook<'a> {
     state: &'a mut NativeStream,
     renderer: &'a mut TerrainHudRenderer,
+    /// The radius this pass draws and keeps sections for: the residency cap.
     view: ((i32, i32), i32),
+    /// The largest radius the interest table allows, above the current cap.
+    interest: i32,
     budget: UploadBudget,
 }
 impl Hook<'_> {
@@ -250,6 +273,33 @@ impl Hook<'_> {
             .map(|(&key, &stamp)| (key, stamp))
             .collect();
         self.revoke(gone, world);
+    }
+    /// A drain deferred its head because resident sections reached their share of
+    /// the mesh ledger: the view's meshes do not fit what streaming may hold. The
+    /// draw radius steps in by one and the ring outside it is released, so the next
+    /// drain has room for the newest edits. Two things this deliberately does not do:
+    /// evict single sections (they are still inside the view, so admission would
+    /// remesh and re-queue them every frame), and grow back afterwards (the mesh
+    /// that did not fit did not get smaller, so growing would shrink again on the
+    /// next frame and remesh that whole ring each time). Lowering the render
+    /// distance still lowers `interest`, below this cap.
+    fn relieve_pressure(&mut self, world: &mut World, deferred: usize) {
+        if deferred == 0 || self.state.error.is_some() {
+            return;
+        }
+        let (center, current) = self.view;
+        if current > 1 {
+            self.state.residency_radius = Some(current - 1);
+            if current == self.interest {
+                log::warn!(
+                    "Horizon: the native mesh budget holds about {} chunks of terrain, not {}; \
+                     drawing the smaller view instead of stalling uploads",
+                    current - 1,
+                    self.interest
+                );
+            }
+            self.prune(world, center, current - 1);
+        }
     }
 }
 /// The largest radius whose whole view the interest table can hold around a level of
@@ -338,8 +388,16 @@ impl MeshAdmission for Hook<'_> {
                 return Delivery::Discard(mesh);
             }
         };
-        if bytes > self.renderer.stream_limits().bytes || bytes > self.budget.bytes {
-            self.fail("native mesh exceeds queue/per-drain byte budget; increase budget or reduce producer geometry".into());
+        if bytes > self.renderer.stream_limits().bytes {
+            // A single section bigger than the whole pending-input budget cannot ever be
+            // queued. That used to end the stream for the rest of the session, which froze
+            // every later edit; rejecting this one mesh and asking for a fresh snapshot
+            // leaves a bad section unmeshed instead of a world that never updates again.
+            log::warn!(
+                "Horizon: native mesh of section {key:?} is {} bytes, past the streamed mesh \
+                 input budget; leaving it unmeshed",
+                bytes
+            );
             return Delivery::Discard(mesh);
         }
         let mesh = Arc::new(mesh);
@@ -467,6 +525,7 @@ mod gpu_tests {
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget: UploadBudget::default(),
         };
         let key = [0, 0, 0];
@@ -576,6 +635,7 @@ mod gpu_tests {
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget: UploadBudget::default(),
         };
         let a = [0, 0, 0];
@@ -658,6 +718,7 @@ mod gpu_tests {
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget: UploadBudget::default(),
         };
         let next = ticket(&mut hook, a);
@@ -686,6 +747,7 @@ mod gpu_tests {
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
+            interest: 2,
             budget: UploadBudget::default(),
         };
         hook.synchronize_membership(&mut world);
@@ -772,7 +834,12 @@ mod gpu_tests {
             state: &mut state,
             renderer: &mut renderer,
             view: ((0, 0), 2),
-            budget: UploadBudget { jobs: 1, bytes: 1 },
+            interest: 2,
+            budget: UploadBudget {
+                jobs: 1,
+                bytes: 1,
+                micros: 1_000,
+            },
         };
         let stamp = ticket(&mut hook, [0; 3]);
         assert!(matches!(

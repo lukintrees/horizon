@@ -778,11 +778,10 @@ impl Game<'_> {
         if let Some(size) = self.recipe_ui.test_viewport {
             return Some(HudBatch::new(size, self.settings.gui_scale_inputs()));
         }
-        let r = self.renderer.modern_ref()?;
-        Some(HudBatch::new(
-            [r.config.width, r.config.height],
-            self.settings.gui_scale_inputs(),
-        ))
+        // The owner's frame, modern or native: a native GL2 window has no modern
+        // renderer to ask, and the book's buttons were then unreachable there.
+        let size = self.renderer.size()?;
+        Some(HudBatch::new(size, self.settings.gui_scale_inputs()))
     }
 
     // ---- clicks ----

@@ -51,8 +51,7 @@ pub(super) const NO_ANSWER: &str =
 
 /// The server thread holds its `Game` by value and runs every tick on it.
 /// It reserves the same guest limit and host headroom as the main thread.
-const SERVER_THREAD_STACK: usize =
-    horizon_guest_stack::GUEST_STACK_BYTES + horizon_guest_stack::HOST_HEADROOM;
+const SERVER_THREAD_STACK: usize = horizon_guest_stack::GUEST_RESERVATION_BYTES;
 
 /// The server thread's stack size: [`SERVER_THREAD_STACK`], or what `RUST_MIN_STACK` asks for
 /// when that is larger. std reads the variable only for a thread spawned without a size, and
