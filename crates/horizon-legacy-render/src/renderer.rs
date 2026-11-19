@@ -58,7 +58,7 @@ impl MeshLayout {
         match pass {
             Pass::Entity(_) => Self::Entity,
             Pass::Gui(_) => Self::Gui,
-            Pass::Stroke => Self::Stroke,
+            Pass::Stroke | Pass::StrokeDepth | Pass::StrokeOverlay => Self::Stroke,
             _ => Self::Basic,
         }
     }
@@ -720,10 +720,7 @@ impl RenderBackend for Renderer<'_> {
             (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
             for draw in frame.draws {
                 let pass = draw.pass.pipeline();
-                (self.gl.uniform1f)(
-                    self.uniforms.stroke,
-                    if pass == Pass::Stroke { 1. } else { 0. },
-                );
+                (self.gl.uniform1f)(self.uniforms.stroke, if pass.is_stroke() { 1. } else { 0. });
                 let screen = match draw.pass {
                     Pass::Screen(material) => Some(material),
                     _ => None,
@@ -867,6 +864,7 @@ impl RenderBackend for Renderer<'_> {
                 );
                 if matches!(pass, Pass::Sky { .. })
                     || (pass.is_overlay() && pass != Pass::OverlayDepth)
+                    || pass == Pass::StrokeOverlay
                     || entity
                         .is_some_and(|m| matches!(m.kind, Kind::SeeThrough | Kind::SkyCelestial))
                 {
@@ -875,14 +873,19 @@ impl RenderBackend for Renderer<'_> {
                     (self.gl.enable)(0x0B71);
                 }
                 (self.gl.depth_func)(
-                    if matches!(pass, Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_)) {
+                    if matches!(
+                        pass,
+                        Pass::OverlayDepth | Pass::Stroke | Pass::StrokeDepth | Pass::Entity(_)
+                    ) {
                         0x0203
                     } else {
                         0x0201
                     },
                 );
-                let depth_write = matches!(pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
-                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::Crumbling | Kind::SkyCelestial));
+                let depth_write = matches!(
+                    pass,
+                    Pass::Opaque | Pass::Cutout | Pass::OverlayDepth | Pass::StrokeDepth
+                ) || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::Crumbling | Kind::SkyCelestial));
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match pass {
                     Pass::Entity(m) if m.kind == Kind::Crumbling => Some((0x0306, 0x0300, 1, 0)),
@@ -901,9 +904,12 @@ impl RenderBackend for Renderer<'_> {
                     {
                         Some((0x0302, 1, 0x0302, 1))
                     }
-                    Pass::Overlay | Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_) => {
-                        Some((0x0302, 0x0303, 1, 0x0303))
-                    }
+                    Pass::Overlay
+                    | Pass::OverlayDepth
+                    | Pass::Stroke
+                    | Pass::StrokeDepth
+                    | Pass::StrokeOverlay
+                    | Pass::Entity(_) => Some((0x0302, 0x0303, 1, 0x0303)),
                     Pass::Translucent => Some((0x0302, 0x0303, 0x0302, 0x0303)),
                     _ => None,
                 };

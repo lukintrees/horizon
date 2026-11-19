@@ -54,6 +54,12 @@ pub enum Pass {
     Translucent,
     /// Pre-expanded clip-space strokes: LEQUAL, alpha blend, no depth writes.
     Stroke,
+    /// Pre-expanded clip-space strokes that also write depth: the opaque group
+    /// of the debug gizmos (`RenderPipelines.LINES`, `DepthStencilState.DEFAULT`).
+    StrokeDepth,
+    /// Pre-expanded clip-space strokes drawn over everything: no depth test and
+    /// no depth writes (`debug_lines_on_top`, the 3D debug crosshair).
+    StrokeOverlay,
     /// Screen-space geometry uses the supplied projection, without depth testing.
     Overlay,
     OverlayInvert,
@@ -83,6 +89,10 @@ impl Pass {
                 | Self::OverlayVignette
                 | Self::OverlayDepth
         )
+    }
+    /// Whether the pass is one of the pre-expanded stroke kinds.
+    pub fn is_stroke(self) -> bool {
+        matches!(self, Self::Stroke | Self::StrokeDepth | Self::StrokeOverlay)
     }
 }
 /// Load/store policy for one view. A GUI view can load the world's colour while

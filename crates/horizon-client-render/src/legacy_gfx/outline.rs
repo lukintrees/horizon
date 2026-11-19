@@ -83,9 +83,11 @@ mod tests {
     #[test]
     fn actual_frame_accepts_block_edges_but_not_debug_passes_and_orders_contrast_layers() {
         let hud = HudBatch::scratch([64; 2]);
-        let lines = [[0.; 8]];
         let mut source = frame::tests::source(&hud);
         source.camera = glam::DVec3::ZERO;
+        // Level camera, so a gizmo line straight ahead is inside the frustum.
+        source.yaw = 0.0;
+        source.pitch = 0.0;
         source.outline = vec![[-0.5, 0., 0., 0.5, 0., 0.]];
         let prepare = |source: &gfx::Frame<'_>| {
             frame::Prepared::new(
@@ -111,17 +113,65 @@ mod tests {
             contrast.mesh.vertices[4].color,
             [87. / 255., 1., 225. / 255., 1.]
         );
-        for index in 0..3 {
-            match index {
-                0 => source.debug_lines = &lines,
-                1 => source.debug_lines_on_top = &lines,
-                _ => source.debug_crosshair = &lines,
+        // The debug gizmos are their own stroke meshes now, not an outline
+        // concern: the frame accepts all three lists, and an undrawable line
+        // drops out of the gizmo mesh instead of failing the world's frame.
+        // Vanilla yaw 0 faces +Z, so a point in front of the camera is +Z.
+        let gizmo = [[0., 0., 5., 1., 0., 5., f32::from_bits(0xFFFF_FFFF), 1.]];
+        let empty: &[[f32; 8]] = &[];
+        for slot in 0..3 {
+            source.debug_lines = empty;
+            source.debug_lines_on_top = empty;
+            source.debug_crosshair = empty;
+            match slot {
+                0 => source.debug_lines = &gizmo,
+                1 => source.debug_lines_on_top = &gizmo,
+                _ => source.debug_crosshair = &gizmo,
             }
-            assert!(!prepare(&source));
-            source.debug_lines = &[];
-            source.debug_lines_on_top = &[];
-            source.debug_crosshair = &[];
+            assert!(prepare(&source), "list {slot}");
+            assert_eq!(
+                frame::Prepared::new(
+                    &source,
+                    [64; 2],
+                    frame::VisibleSections::default(),
+                    Limits::default(),
+                    frame::Options::default(),
+                )
+                .unwrap()
+                .gizmos
+                .bytes,
+                172,
+                "list {slot}"
+            );
         }
+        let bad = [[
+            0.,
+            0.,
+            5.,
+            1.,
+            0.,
+            5.,
+            f32::from_bits(0xFFFF_FFFF),
+            f32::NAN,
+        ]];
+        source.debug_lines = &bad;
+        source.debug_lines_on_top = empty;
+        source.debug_crosshair = empty;
+        assert!(prepare(&source));
+        assert_eq!(
+            frame::Prepared::new(
+                &source,
+                [64; 2],
+                frame::VisibleSections::default(),
+                Limits::default(),
+                frame::Options::default(),
+            )
+            .unwrap()
+            .gizmos
+            .bytes,
+            0
+        );
+        source.debug_lines = empty;
         source.outline = vec![[0.; 6]; stroke::MAX_EDGES + 1];
         assert!(Prepared::new(&source, [64; 2], IDENTITY).is_err());
     }
@@ -152,6 +202,9 @@ mod tests {
         .unwrap();
         let mut source = frame::tests::source(&hud);
         source.camera = glam::DVec3::ZERO;
+        // Level camera, so a gizmo line straight ahead is inside the frustum.
+        source.yaw = 0.0;
+        source.pitch = 0.0;
         source.pitch = 0.;
         source.outline = vec![[-0.8, 0., 3., 0.8, 0., 3.]];
         source.fog = Some(crate::fog::FogData {

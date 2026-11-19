@@ -38,6 +38,8 @@ pub struct Prepared<'a> {
     pub screen: &'a [crate::screen_effects::ScreenQuad],
     pub weather: &'a [crate::weather::Vertex],
     pub weather_time: crate::weather::Time,
+    /// The 3D debug gizmos, already validated and expanded to stroke meshes.
+    pub(crate) gizmos: crate::legacy_gfx::gizmos::Prepared,
     entities: Cow<'a, [Vertex]>,
     pub additive: Cow<'a, [Vertex]>,
     hand: &'a [Vertex],
@@ -277,6 +279,20 @@ impl<'a> Prepared<'a> {
                 fullbright: options.fullbright,
             },
         );
+        // The gizmos are already camera-relative; the stroke path projects them
+        // itself, exactly as the block outline's edges are projected. A line it
+        // cannot expand is dropped, never the frame: a debug overlay must not
+        // take the world down with it.
+        let gizmos = crate::legacy_gfx::gizmos::Prepared::new(
+            &crate::legacy_gfx::gizmos::Source {
+                depth: frame.debug_lines,
+                on_top: frame.debug_lines_on_top,
+                crosshair: frame.debug_crosshair,
+            },
+            world_projection,
+            size,
+        )
+        .map_err(|_| Error::Allocation)?;
         Ok(Self {
             world: SceneFrame {
                 view_projection: world_projection,
@@ -300,6 +316,7 @@ impl<'a> Prepared<'a> {
             screen: frame.screen,
             weather: frame.weather,
             weather_time: frame.weather_time,
+            gizmos,
             entities,
             additive,
             hand: frame.hand,
@@ -347,12 +364,6 @@ fn unsupported(frame: &gfx::Frame<'_>) -> Result<(), Error> {
     for (requested, name) in [
         (frame.title, "title panorama"),
         (frame.clouds.is_some(), "clouds"),
-        (
-            !frame.debug_lines.is_empty()
-                || !frame.debug_lines_on_top.is_empty()
-                || !frame.debug_crosshair.is_empty(),
-            "debug lines/crosshair",
-        ),
         (
             frame.skin.is_some(),
             "GPU-posed entities (request CPU poses)",

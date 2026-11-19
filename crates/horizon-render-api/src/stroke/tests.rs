@@ -118,6 +118,59 @@ fn viewport_margin_keeps_partially_visible_strokes_and_degenerate_edges_are_empt
     );
 }
 #[test]
+fn per_line_colours_widths_and_order_are_the_gizmo_submission() {
+    let segments = [
+        ([-0.5, 0., 0., 0.5, 0., 0.], 0xFFFF_0000, 4.),
+        ([-0.5, 0.25, 0., 0.5, 0.25, 0.], 0x7FFF_0000, 1.),
+        ([-0.5, -0.25, 0., 0.5, -0.25, 0.], 0xFF7F_7FFF, 2.5),
+    ];
+    let mesh = Mesh::lines(&segments, [0.; 3], IDENTITY, [64; 2]).unwrap();
+    assert_eq!(mesh.vertices.len(), 12);
+    assert_eq!(mesh.bytes(), 172 * 3);
+    // Each quad keeps its own colour: ARGB's little-endian bytes are B, G, R, A,
+    // so red stays red and the translucent red keeps the alpha the same way.
+    let colors: Vec<_> = mesh.vertices.chunks(4).map(|v| v[0].color).collect();
+    assert_eq!(
+        colors,
+        [
+            [1., 0., 0., 1.],
+            [1., 0., 0., 127. / 255.],
+            [127. / 255., 127. / 255., 1., 1.]
+        ]
+    );
+    // Indices address each quad's own four vertices, never a neighbour's.
+    for (quad, indices) in mesh.indices.chunks(6).enumerate() {
+        let first = quad as u16 * 4;
+        assert_eq!(
+            indices,
+            [first, first + 1, first + 2, first + 2, first + 1, first + 3]
+        );
+    }
+    // Widths reach the expanded quads: a wider line covers more of the viewport.
+    let span = |mesh: &Mesh| {
+        let x: Vec<f32> = mesh.vertices.iter().map(|v| v.clip[1]).collect();
+        x.iter().cloned().fold(f32::MIN, f32::max) - x.iter().cloned().fold(f32::MAX, f32::min)
+    };
+    let wide = Mesh::lines(&[segments[0]], [0.; 3], IDENTITY, [64; 2]).unwrap();
+    let thin = Mesh::lines(&[segments[1]], [0.; 3], IDENTITY, [64; 2]).unwrap();
+    assert!(span(&wide) > span(&thin));
+    for (segments, size) in [
+        (vec![(segments[0].0, segments[0].1, 0.); 1], [64; 2]),
+        (vec![(segments[0].0, segments[0].1, 65.); 1], [64; 2]),
+        (
+            vec![([f64::NAN, 0., 0., 0., 0., 0.], 0xFFFF_FFFF, 1.); 1],
+            [64; 2],
+        ),
+        (vec![(segments[0].0, segments[0].1, 1.); 1], [0; 2]),
+        (
+            vec![(segments[0].0, segments[0].1, 1.); MAX_LINES + 1],
+            [64; 2],
+        ),
+    ] {
+        assert!(Mesh::lines(&segments, [0.; 3], IDENTITY, size).is_err());
+    }
+}
+#[test]
 fn bounded_two_layer_shape_and_all_invalid_inputs_are_explicit() {
     let edge = [-0.5, 0., 0., 0.5, 0., 0.];
     let mesh = Mesh::new(

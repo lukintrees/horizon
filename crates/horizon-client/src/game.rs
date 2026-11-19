@@ -8310,9 +8310,9 @@ impl Game<'_> {
         // The native GL2 adapter draws the classic passes and refuses the others before
         // submission rather than dropping a requested one. This is that same set reclaimed
         // where it is produced, so a native frame asks for none of them: clouds, chunk fade,
-        // menu blur, post chains, the 3D debug lines and crosshair, GPU-posed entities,
-        // glowing silhouettes, dynamic/coloured lights, emissive layers, the world border
-        // and the water mirror. The modern path keeps every one of them.
+        // menu blur, post chains, GPU-posed entities, glowing silhouettes, dynamic/coloured
+        // lights, emissive layers, the world border and the water mirror. The modern path
+        // keeps every one of them. (The 3D debug lines and crosshair are drawn by both.)
         let native =
             self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl);
         let alpha = self.frame_world_partial_tick();
@@ -8535,22 +8535,14 @@ impl Game<'_> {
             let scale = HudBatch::new(size, self.settings.gui_scale_inputs()).scale;
             crosshair.debug_crosshair(at, view_pitch, view_yaw, scale);
         }
-        // The native adapter has no 3D debug pass: it gets none to refuse.
-        let debug_lines = if native {
-            Vec::new()
-        } else {
-            horizon_client::gizmos::camera_relative(&lines, at, view)
+        // Both backends draw the same gizmos. The native adapter used to refuse
+        // the whole frame for these, so the game starved it; it now gets them.
+        let camera_relative = |lines: &[horizon_client::gizmos::Line]| {
+            horizon_client::gizmos::camera_relative(lines, at, view)
         };
-        let debug_lines_on_top = if native {
-            Vec::new()
-        } else {
-            horizon_client::gizmos::camera_relative(&on_top, at, view)
-        };
-        let debug_crosshair = if native {
-            Vec::new()
-        } else {
-            horizon_client::gizmos::camera_relative(&crosshair.on_top, at, view)
-        };
+        let debug_lines = camera_relative(&lines);
+        let debug_lines_on_top = camera_relative(&on_top);
+        let debug_crosshair = camera_relative(&crosshair.on_top);
         // LevelExtractor.extractBlockOutline: model translucency controls draw order;
         // no outline when an entity is targeted (Minecraft.hitResult an EntityHitResult).
         let mut outline_after_terrain = false;

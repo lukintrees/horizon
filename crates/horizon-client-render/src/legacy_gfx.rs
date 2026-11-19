@@ -21,6 +21,7 @@ use horizon_render_api::{
 mod animation;
 mod asset_snapshot;
 mod crumbling;
+pub(crate) mod gizmos;
 mod outline;
 #[cfg(test)]
 pub(crate) use asset_snapshot::tests::assets as test_assets;
@@ -454,6 +455,7 @@ impl TerrainHudRenderer {
             prepared.screen,
             &prepared.additive,
             (prepared.weather, prepared.weather_time),
+            Some(&prepared.gizmos),
             Some(source),
         )
     }
@@ -472,6 +474,7 @@ impl TerrainHudRenderer {
             &[],
             (&[], crate::weather::Time::new(0, 0.)),
             None,
+            None,
         )
     }
     fn render_geometry_with_effects(
@@ -482,6 +485,7 @@ impl TerrainHudRenderer {
         screen_quads: &[crate::screen_effects::ScreenQuad],
         additive_vertices: &[crate::mesher::Vertex],
         precipitation: (&[crate::weather::Vertex], crate::weather::Time),
+        prepared_gizmos: Option<&gizmos::Prepared>,
         game_source: Option<&crate::gfx::Frame<'_>>,
     ) -> Result<(), String> {
         self.animations.ready()?;
@@ -761,6 +765,11 @@ impl TerrainHudRenderer {
         }) {
             return Err("no transient outline mesh capacity".into());
         }
+        if prepared_gizmos
+            .is_some_and(|g| g.bytes > remaining.mesh_bytes || g.mesh_count() > remaining.meshes)
+        {
+            return Err("no transient debug gizmo mesh capacity".into());
+        }
         let view = paged_gui::WorldView {
             view_projection: world.view_projection,
             camera: world.camera,
@@ -852,6 +861,24 @@ impl TerrainHudRenderer {
         if let Some(outline) = outline.as_ref().filter(|o| o.after_terrain) {
             self.screen
                 .render_outline(self.world.backend_mut(), outline, self.white, world.fog)?;
+        }
+        // Vanilla draws the gizmos after translucent terrain and before the
+        // first-person hand: depth-tested lines first, then the ones that show
+        // through everything, then the hand covers only what is behind it.
+        // (The modern renderer does the same inside its world pass.)
+        if let Some(gizmos) = prepared_gizmos.filter(|g| !g.is_empty()) {
+            self.screen.render_debug_lines(
+                self.world.backend_mut(),
+                gizmos,
+                self.white,
+                world.fog,
+            )?;
+            self.screen.render_debug_overlay(
+                self.world.backend_mut(),
+                gizmos,
+                self.white,
+                world.fog,
+            )?;
         }
         if !crumbling.is_empty() {
             self.cache.release(self.world.backend_mut())?;
