@@ -36,23 +36,32 @@ impl EventLoopCtl for LoopCtl {
 }
 
 impl LoopCtl {
-    /// When the next turn begins: vanilla's 20 Hz with a frame in between, slower while the window
-    /// is unfocused or minimized (a hidden window has nothing to draw). A pending save asks for a
-    /// shorter poll, but even an expired deadline yields: `Poll` is not permission for a
-    /// zero-delay loop.
+    /// When the next turn begins. A focused window draws as fast as it can: the present may block
+    /// on the display's refresh, and a second timer under it only capped frame rate (16 ms is
+    /// 62.5 fps on a machine that could do 300). The turn still yields once per frame so an
+    /// unpresented window cannot spin a core at 100%: `MIN_TURN` is a floor on the cadence, not a
+    /// target. A window nobody is looking at keeps the coarser 32 ms turn, because a hidden or
+    /// minimized one has nothing to show.
     fn next_step(&self, began: Instant, focused: bool, size: [u32; 2]) -> Instant {
         let frame = began
-            + Duration::from_millis(if focused && !size.contains(&0) {
-                16
+            + if focused && !size.contains(&0) {
+                MIN_TURN
             } else {
-                32
-            });
+                IDLE_TURN
+            };
         match self.flow.get() {
-            ControlFlow::WaitUntil(at) => at.min(frame).max(began + Duration::from_millis(4)),
+            ControlFlow::WaitUntil(at) => at.min(frame).max(began + MIN_TURN),
             ControlFlow::Poll | ControlFlow::Wait => frame,
         }
     }
 }
+
+/// The shortest turn: one scheduling yield, so a frame that presents without blocking cannot
+/// consume a whole core.
+const MIN_TURN: Duration = Duration::from_millis(1);
+/// An unfocused or minimized window's turn.
+const IDLE_TURN: Duration = Duration::from_millis(32);
+
 
 /// What the window's input left held in the game. A native window has no winit to tell the game
 /// that keys, buttons and the pointer grab were released, so a focus loss, a resize to nothing or a
@@ -189,20 +198,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_cadence_bounds_focus_and_minimize_speed() {
+    fn native_cadence_leaves_a_focused_window_uncapped() {
         let ctl = LoopCtl::default();
         let now = Instant::now();
         for flow in [ControlFlow::Poll, ControlFlow::Wait] {
             ctl.set_control_flow(flow);
-            assert_eq!(
-                ctl.next_step(now, true, [640, 480]),
-                now + Duration::from_millis(16)
-            );
+            // A focused window's next turn is the bare yield, not a 60 Hz timer: the present
+            // already paces it, and a 16 ms sleep here capped a fast machine at 62.5 fps.
+            assert_eq!(ctl.next_step(now, true, [640, 480]), now + MIN_TURN);
             for (focused, size) in [(false, [640, 480]), (true, [0, 480]), (true, [640, 0])] {
-                assert_eq!(
-                    ctl.next_step(now, focused, size),
-                    now + Duration::from_millis(32)
-                );
+                assert_eq!(ctl.next_step(now, focused, size), now + IDLE_TURN);
             }
         }
     }
@@ -211,21 +216,17 @@ mod tests {
     fn save_poll_deadlines_shorten_the_turn_but_never_spin() {
         let ctl = LoopCtl::default();
         let now = Instant::now();
-        for deadline in [
-            now - Duration::from_secs(1),
-            now,
-            now + Duration::from_millis(4),
-        ] {
+        // An expired deadline (a save wants the next poll now) still yields one scheduling step
+        // instead of spinning.
+        for deadline in [now - Duration::from_secs(1), now] {
             ctl.set_control_flow(ControlFlow::WaitUntil(deadline));
-            assert_eq!(
-                ctl.next_step(now, false, [0; 2]),
-                now + Duration::from_millis(4)
-            );
+            assert_eq!(ctl.next_step(now, false, [0; 2]), now + MIN_TURN);
         }
+        // A deadline inside the turn is honoured; one past it is capped by the turn itself.
+        ctl.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_millis(4)));
+        assert_eq!(ctl.next_step(now, false, [0; 2]), now + Duration::from_millis(4));
         ctl.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_secs(1)));
-        assert_eq!(
-            ctl.next_step(now, true, [640, 480]),
-            now + Duration::from_millis(16)
-        );
+        assert_eq!(ctl.next_step(now, false, [0; 2]), now + IDLE_TURN);
+        assert_eq!(ctl.next_step(now, true, [640, 480]), now + MIN_TURN);
     }
 }
