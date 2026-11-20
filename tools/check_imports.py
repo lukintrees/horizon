@@ -49,6 +49,30 @@ WINDOWS7_ABSENT = {"xinput1_4.dll", "d3d12.dll", "dcomp.dll", "dwrite.dll", "shc
 # Needs KB2999226 (the Universal C Runtime update) — installable, unlike WinRT.
 WINDOWS7_UCRT_PREFIX = "api-ms-win-crt-"
 
+# `--windows7` also refuses *entry points* Windows 7 does not export. A DLL name check says
+# nothing here: kernel32.dll exists on Windows 7, but not every procedure in it does, and a
+# missing procedure refuses the image with "The procedure entry point X could not be located in
+# the dynamic link library KERNEL32.dll" before `main` runs (docs/design/opengl2-win7-x86.md §19.13).
+#
+# Only names that are wrong for a *static* import belong here: an export added after Window 7's
+# kernel32/ntdll/user32. Loading one with GetProcAddress at run time is fine and leaves no import.
+WINDOWS7_ABSENT_EXPORTS = {
+    "kernel32.dll": {
+        "GetCurrentThreadStackLimits": "Windows 8",   # horizon-guest-stack measures instead
+        "WaitOnAddress": "Windows 8",
+        "WakeByAddressAll": "Windows 8",
+        "WakeByAddressSingle": "Windows 8",
+        "CreateFile2": "Windows 8",
+        "CopyFile2": "Windows 8",
+        "SetThreadDescription": "Windows 10 1607",
+        "GetThreadDescription": "Windows 10 1607",
+        "SetThreadInformation": "Windows 8",
+        "GetSystemCpuSetInformation": "Windows 10",
+        "CreatePseudoConsole": "Windows 10 1809",
+        "PowerCreateRequest": "Windows 8",
+    },
+}
+
 
 def windows_allowed(name):
     name = name.lower()
@@ -76,15 +100,25 @@ def windows7_prerequisite(name):
     return None
 
 
+def windows7_missing_exports(dll, procedures):
+    """`(name, version)` for each of `procedures` that `dll` gained after Windows 7."""
+    absent = WINDOWS7_ABSENT_EXPORTS.get(dll.lower(), {})
+    return [(name, absent[name]) for name in procedures if name in absent]
+
+
 def pe_imports(data):
-    """DLL names in a PE32+ file's import and delay-import tables."""
+    """{dll: [imported procedure names]} for a PE32/PE32+ file's import and delay-import tables.
+
+    Index 0 of a thunk array is the import's by-name flag, not a name, so names start at 1.
+    """
     pe = struct.unpack_from("<I", data, 0x3C)[0]
     if data[pe:pe + 4] != b"PE\0\0":
         raise ValueError("not a PE file")
     sections_count, optional_size = struct.unpack_from("<H12xH", data, pe + 6)
     optional = pe + 24
     magic = struct.unpack_from("<H", data, optional)[0]
-    directories = optional + (112 if magic == 0x20B else 96)
+    wide = magic == 0x20B
+    directories = optional + (112 if wide else 96)
     sections = [struct.unpack_from("<8xIIII", data, optional + optional_size + 40 * i)
                 for i in range(sections_count)]
 
@@ -98,17 +132,36 @@ def pe_imports(data):
         start = offset(rva)
         return data[start:data.index(b"\0", start)].decode("ascii")
 
-    names = []
-    # Directory 1: imports (20-byte descriptors, name at +12); 13: delay imports (32 bytes, name at +4).
-    for index, size, name_field in ((1, 20, 12), (13, 32, 4)):
+    thunk = "<Q" if wide else "<I"
+    thunk_size = 8 if wide else 4
+    ordinal_flag = 1 << (63 if wide else 31)
+
+    def procedure_names(rva):
+        names = []
+        while rva:
+            value = struct.unpack_from(thunk, data, offset(rva))[0]
+            if not value:
+                break
+            if not value & ordinal_flag:
+                # IMAGE_IMPORT_BY_NAME: a 2-byte hint, then the NUL-terminated name.
+                names.append(name_at(value + 2))
+            rva += thunk_size
+        return names
+
+    imports = {}
+    # Directory 1: imports (20-byte descriptors, name at +12, thunks at +0); 13: delay imports
+    # (32 bytes, name at +4, thunks at +16).
+    for index, size, name_field, thunk_field in ((1, 20, 12, 0), (13, 32, 4, 16)):
         rva = struct.unpack_from("<I", data, directories + 8 * index)[0]
         if not rva:
             continue
         at = offset(rva)
         while any(data[at:at + size]):
-            names.append(name_at(struct.unpack_from("<I", data, at + name_field)[0]))
+            dll = name_at(struct.unpack_from("<I", data, at + name_field)[0]).lower()
+            thunks = struct.unpack_from("<I", data, at + thunk_field)[0]
+            imports.setdefault(dll, []).extend(procedure_names(thunks))
             at += size
-    return names
+    return imports
 
 
 def elf_needs(data):
@@ -160,6 +213,10 @@ def check(path, server=False, musl=False, windows7=False):
         problems += [f"imports {n}, which Windows does not ship" for n in names if not windows_allowed(n)]
         if windows7:
             problems += [p for p in map(windows7_problem, names) if p]
+            problems += [f"imports {name} from {dll}, which arrived in {version}"
+                         f" and Windows 7 does not export it"
+                         for dll, procedures in names.items()
+                         for name, version in windows7_missing_exports(dll, procedures)]
             prerequisites = sorted({p for p in map(windows7_prerequisite, names) if p})
             if prerequisites:
                 print(f"  {path}: needs KB2999226 (the Universal C Runtime) for "

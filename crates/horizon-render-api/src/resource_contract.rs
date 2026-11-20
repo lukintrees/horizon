@@ -75,6 +75,17 @@ pub struct TerrainAtlasLimits {
     /// One decoded page plus the borrowed layer-slice table. Layout metadata is
     /// separately bounded by max_layers; this is not a complete process peak.
     pub staging_bytes: usize,
+    /// Mip levels below each page's base level that the layout has to survive.
+    ///
+    /// The gutter around every sprite is `1 << mip_levels` texels, as vanilla's
+    /// `Stitcher` pads by `(1 << mipLevel) << anisotropyBits`. A one-texel gutter
+    /// works at level zero and is gone by level two: the halving collapses it to
+    /// zero texels, so a block face's edge texel bilinearly blends its neighbour
+    /// sprite -- or an unwritten page texel, which is transparent -- into every
+    /// face. The cutout pass then discards those fragments, and the world shows a
+    /// block-sized grid of holes from the distance the chain takes over. Sixteen
+    /// texels (four levels) still leaves one texel of gutter at the last level.
+    pub mip_levels: u32,
 }
 impl Default for TerrainAtlasLimits {
     fn default() -> Self {
@@ -83,7 +94,14 @@ impl Default for TerrainAtlasLimits {
             max_pages: 128,
             max_layers: 32768,
             staging_bytes: 2 << 20,
+            mip_levels: 0,
         }
+    }
+}
+impl TerrainAtlasLimits {
+    /// The gutter every sprite gets, `1 << mip_levels` texels as vanilla pads.
+    pub fn padding(&self) -> u32 {
+        1 << self.mip_levels.min(4)
     }
 }
 
@@ -121,11 +139,12 @@ impl<'a> TerrainAtlas<'a> {
             };
             terrain.layers as usize
         ];
-        let layout = crate::atlas::pack_atlas(&sizes, limits.page_size, 1, limits.max_pages)
-            .map_err(|e| match e {
-                crate::atlas::AtlasError::TooManyPages => ResourceError::Budget,
-                _ => ResourceError::InvalidDimensions,
-            })?;
+        let layout =
+            crate::atlas::pack_atlas(&sizes, limits.page_size, limits.padding(), limits.max_pages)
+                .map_err(|e| match e {
+                    crate::atlas::AtlasError::TooManyPages => ResourceError::Budget,
+                    _ => ResourceError::InvalidDimensions,
+                })?;
         let layer_bytes = byte_len(terrain.size, terrain.size, 1)?;
         let layers = terrain.rgba.chunks_exact(layer_bytes).collect();
         Ok(Self {
@@ -139,10 +158,7 @@ impl<'a> TerrainAtlas<'a> {
     }
     /// One sprite layer's edge, in pixels: every layer of this atlas is the same square.
     pub fn size(&self) -> u32 {
-        self.layout
-            .sprites()
-            .first()
-            .map_or(0, |place| place.width)
+        self.layout.sprites().first().map_or(0, |place| place.width)
     }
     /// One layer's pixels, in the layer-major order the mesher's IDs use.
     pub fn layer(&self, index: usize) -> Option<&'a [u8]> {
@@ -169,7 +185,11 @@ impl<'a> TerrainAtlas<'a> {
             }
             let level_bytes = self.page_bytes >> (2 * level);
             total = total
-                .checked_add(level_bytes.checked_mul(pages).ok_or(ResourceError::Budget)?)
+                .checked_add(
+                    level_bytes
+                        .checked_mul(pages)
+                        .ok_or(ResourceError::Budget)?,
+                )
                 .ok_or(ResourceError::Budget)?;
         }
         Ok(total)
@@ -182,6 +202,7 @@ impl<'a> TerrainAtlas<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::atlas::{SpriteSize, mip_level_box, pack_atlas};
     #[test]
     fn validates_exact_lengths_and_aggregate_budget_without_allocating() {
         let image = || Image {
@@ -211,6 +232,56 @@ mod tests {
             Err(ResourceError::Budget)
         );
     }
+    /// The gutter is vanilla's `1 << mipLevels`: one texel per level of chain,
+    /// so the deepest level still has a texel of padding on every side. A flat
+    /// one-texel gutter is gone by level two (see the field's comment).
+    #[test]
+    fn the_gutter_keeps_a_texel_per_level_of_chain() {
+        for levels in 0..=4 {
+            let padding = TerrainAtlasLimits {
+                mip_levels: levels,
+                ..TerrainAtlasLimits::default()
+            }
+            .padding();
+            assert_eq!(padding, 1 << levels, "levels {levels}");
+            assert!(padding >> levels >= 1, "levels {levels} leaves no gutter");
+        }
+    }
+    /// 64 px sprites in a 1024 px page, as the shipped terrain atlas packs them:
+    /// every sprite keeps at least one texel of its own edge around it even at
+    /// the deepest level. With a one-texel gutter a sprite at an even coordinate
+    /// had `pad` zero at level two, so its edge texel sat against the
+    /// neighbour's and bilinear sampling at distance blended the two -- the
+    /// reported block-sized grid.
+    #[test]
+    fn a_packed_page_keeps_a_gutter_at_the_deepest_level() {
+        let layout = pack_atlas(
+            &[SpriteSize {
+                width: 64,
+                height: 64,
+            }; 96],
+            1024,
+            TerrainAtlasLimits {
+                mip_levels: 4,
+                ..TerrainAtlasLimits::default()
+            }
+            .padding(),
+            16,
+        )
+        .unwrap();
+        for place in layout.sprites() {
+            let bounds = mip_level_box(&layout, place, 4).unwrap();
+            for axis in 0..2 {
+                assert!(
+                    bounds.pad[axis] >= 1,
+                    "level 4 pad {:?} on sprite at {:?}",
+                    bounds.pad,
+                    (place.x, place.y)
+                );
+                assert!(bounds.at[axis] + bounds.size[axis] <= layout.page_size() >> 4);
+            }
+        }
+    }
     #[test]
     fn terrain_paging_borrows_pixels_preserves_ids_and_extrudes_each_layer() {
         let pixels = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255];
@@ -224,6 +295,7 @@ mod tests {
             max_pages: 3,
             max_layers: 3,
             staging_bytes: 64 + 3 * std::mem::size_of::<&[u8]>(),
+            mip_levels: 0,
         };
         let plan = TerrainAtlas::new(&terrain, limits).unwrap();
         assert_eq!(plan.layers[0].as_ptr(), pixels.as_ptr());

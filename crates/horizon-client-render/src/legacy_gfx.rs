@@ -126,7 +126,16 @@ impl Default for Limits {
             entity_vertices: 262144,
             glyph_patch_bytes: 8 << 20,
             hud_page_size: 512,
-            hud_resident_pages: 8,
+            // GPU page residency. A world frame draws the pages of every visible
+            // entity, its items and the HUD text; a cache smaller than that working set
+            // evicts pages the next frame needs again, and each evicted page is then
+            // decompressed from its LZ4 block once per frame -- a third of the client
+            // frame at eight pages. Measured at a radius-4 view: doubling 8 to 32 left
+            // about eight pages still churning per frame, so the set is larger than
+            // 32. 64 pages is 64 MiB of 512x512 RGBA, inside the 256 MiB texture
+            // budget beside terrain. A smaller machine lowers this with the render
+            // distance it already lowers.
+            hud_resident_pages: 64,
             hud_backing_bytes: 128 << 20,
             hud_page_count: 4096,
             screen_quads: 256,

@@ -31,17 +31,20 @@ impl Default for ResourceLimits {
             terrain: TerrainAtlasLimits {
                 // A section is drawn as one GL mesh per (atlas page, pass): the more pages the
                 // 1301 vanilla block sprites need, the more objects and draw calls one section
-                // costs. At 64 px sprites and a 1 px border, a 512 px page holds 49 of them, so
-                // the set needs 27 pages and a section can split into ~27 solid meshes -- a
-                // radius-12 view then passes the backend's mesh object limit. 1024 px holds 225
-                // and needs 6 pages, and 4 MiB per page keeps the uploaded total near the old
-                // one. 2048 is the largest texture some GL2-era cards (Radeon X1xxx) accept, so
+                // costs. The gutter is `1 << mip_levels` texels (vanilla's `Stitcher` padding),
+                // so at the shipped 4 levels a 64 px sprite occupies 96 px: a 1024 px page holds
+                // 100 of them and the set needs 14 pages, which still leaves a section's solid
+                // meshes well inside the backend's 65536-object limit at a radius-12 view.
+                // 2048 is the largest texture some GL2-era cards (Radeon X1xxx) accept, so
                 // 1024 leaves the smaller page size those drivers are sure of.
                 page_size: 1024,
                 max_pages: 32,
                 max_layers: 32768,
                 // One decoded page (4 MiB) plus the borrowed layer table.
                 staging_bytes: 8 << 20,
+                // Filled from `mip_levels` by `terrain_limits`: the gutter and the
+                // chain depth have to be chosen together.
+                mip_levels: 0,
             },
             // `Options.mipmapLevels` ships at 4.
             mip_levels: 4,
@@ -168,7 +171,16 @@ fn prepare<'a>(
         limits.hud_page_count,
     )
     .map_err(diagnostic)?;
-    let terrain = TerrainAtlas::new(&resources.terrain, preparation.terrain).map_err(diagnostic)?;
+    let terrain = TerrainAtlas::new(
+        &resources.terrain,
+        terrain_limits(
+            preparation.terrain,
+            preparation.mip_levels,
+            resources.terrain.size,
+            preparation.terrain.page_size,
+        ),
+    )
+    .map_err(diagnostic)?;
     let bytes = terrain
         .texture_bytes_with_mips(usable_mip_levels(&terrain, preparation.mip_levels))
         .map_err(diagnostic)?
@@ -182,6 +194,22 @@ fn prepare<'a>(
         return Err("legacy base textures leave no HUD residency within GPU budget".into());
     }
     Ok(terrain)
+}
+
+/// The atlas bounds for a preparation policy: the caller's page and layer
+/// limits, with the gutter sized to the mip depth the backend will build.
+/// The two travel together because a one-texel gutter is only wide enough for
+/// level zero -- see [`TerrainAtlasLimits::mip_levels`].
+fn terrain_limits(
+    mut terrain: TerrainAtlasLimits,
+    requested: u32,
+    size: u32,
+    page: u32,
+) -> TerrainAtlasLimits {
+    let sprite = size.max(1).ilog2();
+    let page = page.max(2).ilog2() - 1;
+    terrain.mip_levels = requested.min(sprite).min(page);
+    terrain
 }
 
 impl TerrainHudRenderer {
@@ -326,6 +354,7 @@ mod tests {
                 max_pages: 1,
                 max_layers: 1,
                 staging_bytes: 16 * 16 * 4 + std::mem::size_of::<&[u8]>(),
+                mip_levels: 0,
             },
         )
     }
@@ -381,6 +410,7 @@ mod tests {
                 max_pages: 1,
                 max_layers: 1,
                 staging_bytes: 64 + std::mem::size_of::<&[u8]>(),
+                mip_levels: 0,
             },
             mip_levels: 0,
         };

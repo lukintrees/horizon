@@ -114,7 +114,7 @@ impl TerrainHudRenderer {
             self.limits,
             self.world.backend_mut().remaining(),
             self.animations.usage(),
-            self.hud.compressed_bytes(),
+            self.hud.held_bytes(),
         )?;
         let font_epoch = hud.font.epoch();
         let snapshot = AssetSnapshot::new(assets, hud, next, preparation.base_bytes)?;

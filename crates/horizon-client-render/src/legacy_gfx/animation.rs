@@ -18,6 +18,23 @@ struct Sprite {
     size: [u32; 2],
     shown: Option<FrameBlend>,
     padded: usize,
+    /// Terrain layers: the alpha scale each level keeps the whole animation
+    /// sheet's cutout coverage with, measured once from the stacked frames the
+    /// way `SpriteContents.increaseMipLevel` does. Empty for a HUD sprite, an
+    /// opaque layer, or a sprite too small for the page's chain.
+    scales: Vec<f32>,
+    /// Whether [`Self::scales`] was measured yet: a terrain layer pays for the
+    /// measurement the first time one of its frames is uploaded, not per tick.
+    measured: bool,
+    /// Terrain layers: every frame resampled to [`Self::size`] and prepared the
+    /// way the page's chain prepares its base (`mipmap::prepare_base`), so a
+    /// tick only interpolates two of them instead of resampling and solidifying
+    /// the frame it shows. Empty for a HUD sprite.
+    frames: Vec<Vec<u8>>,
+    /// The chain settings the scales were measured with: the sheet's, not one
+    /// frame's, so a frame with no transparent texel still gets a cutout chain
+    /// when the animation it belongs to has one.
+    settings: crate::mipmap::Settings,
 }
 #[derive(Default)]
 pub(super) struct Animations {
@@ -27,10 +44,18 @@ pub(super) struct Animations {
     source_frames: usize,
 }
 struct Work {
-    terrain: Vec<(usize, Vec<u8>)>,
+    /// One layer's changed frame, its chain settings, and the alpha scale of
+    /// each level below it.
+    terrain: Vec<TerrainWork>,
     hud: Vec<Patch>,
     shown: Vec<(usize, FrameBlend)>,
     terrain_bytes: usize,
+}
+struct TerrainWork {
+    layer: usize,
+    rgba: Vec<u8>,
+    settings: crate::mipmap::Settings,
+    scales: Vec<f32>,
 }
 fn bytes(size: [u32; 2]) -> Result<usize, String> {
     horizon_render_api::resource_contract::image_bytes(size[0], size[1]).map_err(diagnostic)
@@ -79,6 +104,10 @@ impl Animations {
                 size,
                 shown: None,
                 padded,
+                scales: Vec::new(),
+                measured: false,
+                frames: Vec::new(),
+                settings: crate::mipmap::Settings::default(),
             });
         }
         let mut rectangles: Vec<[u32; 4]> = Vec::new();
@@ -114,6 +143,10 @@ impl Animations {
                 size,
                 shown: None,
                 padded: 0,
+                scales: Vec::new(),
+                measured: true,
+                frames: Vec::new(),
+                settings: crate::mipmap::Settings::default(),
             });
         }
         let mut source = 0usize;
@@ -206,26 +239,104 @@ impl Animations {
         };
         for &(i, blend) in &work.shown {
             let sprite = &self.sprites[i];
-            let rgba = sample(&sprite.clip, blend, sprite.size)?;
             match sprite.target {
-                Target::Terrain(layer) => work.terrain.push((layer, rgba)),
+                Target::Terrain(layer) => work.terrain.push(TerrainWork {
+                    layer,
+                    rgba: if sprite.frames.is_empty() {
+                        sample(&sprite.clip, blend, sprite.size)?
+                    } else {
+                        interpolate(&sprite.frames, blend, sprite.size)?
+                    },
+                    settings: sprite.settings,
+                    scales: sprite.scales.clone(),
+                }),
                 Target::Hud([x, y]) => work.hud.push(Patch {
                     x,
                     y,
                     width: sprite.size[0],
                     height: sprite.size[1],
-                    rgba,
+                    rgba: sample(&sprite.clip, blend, sprite.size)?,
                 }),
             }
         }
         Ok(work)
     }
+    /// Measure each terrain layer once, over its whole animation sheet:
+    ///  * its frames resampled to the sprite's size and prepared the way the
+    ///    page's chain prepares its base (solidified for a cutout), so a tick
+    ///    interpolates two stored frames instead of resampling and solidifying;
+    ///  * its per-level alpha scales, which vanilla measures over the sheet's
+    ///    stacked frames (`SpriteContents.increaseMipLevel`).
+    ///
+    /// Both were per-tick work before: five coverage bisections per level plus a
+    /// breadth-first solidify of every changed frame, which together were a
+    /// quarter of the legacy backend's frame.
+    fn measure(&mut self, levels: u32) -> Result<(), String> {
+        for sprite in &mut self.sprites {
+            if sprite.measured || !matches!(sprite.target, Target::Terrain(_)) {
+                sprite.measured = true;
+                continue;
+            }
+            sprite.measured = true;
+            let frames = sprite.clip.frame_count();
+            let [width, height] = sprite.size;
+            if frames == 0 || levels == 0 || width != height || width < 2 {
+                continue;
+            }
+            let mut prepared = Vec::with_capacity(frames);
+            for frame in 0..frames {
+                let blend = FrameBlend {
+                    frame,
+                    next: frame,
+                    millis: 0,
+                };
+                prepared.push(sample(&sprite.clip, blend, sprite.size)?);
+            }
+            sprite.settings = crate::mipmap::Settings {
+                has_transparent: prepared
+                    .iter()
+                    .any(|frame| frame.chunks_exact(4).any(|p| p[3] == 0)),
+                dither_cutouts: crate::mipmap::dither_cutouts(),
+                ..Default::default()
+            };
+            // Prepare each frame as the page's own chain prepared its base, and
+            // keep the result: a tick interpolates two of these instead of
+            // resampling and solidifying the frame it shows.
+            for frame in &mut prepared {
+                let mut image = crate::mipmap::Image {
+                    width,
+                    height,
+                    pixels: frame.as_chunks::<4>().0.to_vec(),
+                };
+                crate::mipmap::prepare_base(&mut image, sprite.settings);
+                *frame = image.pixels.iter().flatten().copied().collect();
+            }
+            // The sheet as vanilla stacks it, already prepared: what the levels'
+            // alpha scales are measured on.
+            let sheet = prepared.concat();
+            let image = crate::mipmap::Image {
+                width,
+                height: height * frames as u32,
+                pixels: sheet.as_chunks::<4>().0.to_vec(),
+            };
+            sprite.scales = crate::mipmap::sheet_scales(&image, frames, levels, sprite.settings);
+            sprite.frames = prepared;
+        }
+        Ok(())
+    }
 }
 /// One animated terrain layer's frame pixels reduced to the levels its page holds,
-/// made the way `resources::mipped_page` made the page's chain: `mipmap::generate`
-/// over the sprite alone, cutout-aware, so a flower keeps its coverage at distance
-/// whichever frame an animation shows.
-fn layer_mips(pixels: &[u8], levels: u32) -> Vec<Vec<u8>> {
+/// made the way the page's own chain was: cutout-aware, so a flower keeps its
+/// coverage at distance whichever frame an animation shows. The alpha scales are
+/// the sheet's, measured once at install ([`Animations::measure`]); a frame's own
+/// chain re-bisected the coverage five times per level every tick, which was a
+/// fifth of the legacy backend's frame.
+fn layer_mips(
+    pixels: &[u8],
+    levels: u32,
+    scales: &[f32],
+    settings: crate::mipmap::Settings,
+) -> Vec<Vec<u8>> {
     let edge = (pixels.len() / 4).isqrt() as u32;
     if levels == 0 || edge >> levels == 0 || pixels.len() % 4 != 0 {
         return Vec::new();
@@ -235,16 +346,21 @@ fn layer_mips(pixels: &[u8], levels: u32) -> Vec<Vec<u8>> {
         height: edge,
         pixels: pixels.as_chunks::<4>().0.to_vec(),
     };
-    let settings = crate::mipmap::Settings {
-        has_transparent: base.pixels.iter().any(|p| p[3] == 0),
-        dither_cutouts: crate::mipmap::dither_cutouts(),
-        ..Default::default()
-    };
-    crate::mipmap::generate(base, levels, settings)
-        .iter()
-        .skip(1)
-        .map(|image| image.pixels.iter().flatten().copied().collect())
-        .collect()
+    // Without a sheet measurement (a sprite too small or not square) the chain
+    // is made the slow way, from the frame alone, rather than leaving a cutout
+    // unscaled.
+    if scales.len() as u32 == levels {
+        crate::mipmap::animated_levels(&base, levels, settings, scales)
+            .iter()
+            .map(|image| image.pixels.iter().flatten().copied().collect())
+            .collect()
+    } else {
+        crate::mipmap::generate(base, levels, settings)
+            .iter()
+            .skip(1)
+            .map(|image| image.pixels.iter().flatten().copied().collect())
+            .collect()
+    }
 }
 
 fn sample(
@@ -270,6 +386,28 @@ fn sample(
         }
     }
     Ok(pixels)
+}
+
+/// [`sample`] over frames [`Animations::measure`] already resampled and
+/// prepared: only the interpolation is left per tick.
+fn interpolate(frames: &[Vec<u8>], blend: FrameBlend, size: [u32; 2]) -> Result<Vec<u8>, String> {
+    let (Some(current), Some(next)) = (frames.get(blend.frame), frames.get(blend.next)) else {
+        return Err("animation frame missing from the prepared sheet".into());
+    };
+    if current.len() != bytes(size)? || next.len() != current.len() {
+        return Err("prepared animation frame has the wrong size".into());
+    }
+    if blend.millis == 0 || current == next {
+        return Ok(current.clone());
+    }
+    Ok(current
+        .iter()
+        .zip(next)
+        .map(|(&a, &b)| {
+            ((u32::from(a) * (1000 - blend.millis) + u32::from(b) * blend.millis + 500) / 1000)
+                as u8
+        })
+        .collect())
 }
 impl TerrainHudRenderer {
     pub(super) fn install_animations(
@@ -298,6 +436,9 @@ impl TerrainHudRenderer {
         if self.resource_generation != Some(generation) {
             return Err("stale or untracked animation resource generation".into());
         }
+        // The layers' sheet scales are measured before `prepare` picks work, so
+        // the first upload of a world already has them.
+        self.animations.measure(self.world.mip_levels())?;
         let work = self.animations.prepare(
             tick,
             self.hud.layout(),
@@ -306,18 +447,27 @@ impl TerrainHudRenderer {
         let count = work.shown.len();
         self.animations.failed = true;
         let levels = self.world.mip_levels();
-        for (layer, pixels) in &work.terrain {
-            let mips = layer_mips(pixels, levels);
+        for terrain in &work.terrain {
+            let mips = layer_mips(&terrain.rgba, levels, &terrain.scales, terrain.settings);
             if mips.len() as u32 == levels {
                 let refs: Vec<&[u8]> = mips.iter().map(Vec::as_slice).collect();
                 self.world
-                    .update_sprite_mipped(*layer, pixels, &refs, self.limits.animation_staging_bytes)
+                    .update_sprite_mipped(
+                        terrain.layer,
+                        &terrain.rgba,
+                        &refs,
+                        self.limits.animation_staging_bytes,
+                    )
                     .map_err(diagnostic)?;
             } else {
                 // A frame whose sprite is too small for the page's chain still has to
                 // be drawn: its base level alone is what that page samples up close.
                 self.world
-                    .update_sprite(*layer, pixels, self.limits.animation_staging_bytes)
+                    .update_sprite(
+                        terrain.layer,
+                        &terrain.rgba,
+                        self.limits.animation_staging_bytes,
+                    )
                     .map_err(diagnostic)?;
             }
         }
@@ -368,7 +518,7 @@ mod tests {
             clip.pixels(0).as_ptr()
         );
         let work = state.prepare(2, hud, 80).unwrap();
-        assert_eq!(work.terrain[0].1, [100, 50, 0, 255].repeat(4));
+        assert_eq!(work.terrain[0].rgba, [100, 50, 0, 255].repeat(4));
         assert!(state.prepare(2, hud, 79).is_err()); // 16 sampled + 64 padded
         state.sprites[0].shown = Some(clip.blend(2));
         assert!(state.prepare(2, hud, 80).unwrap().shown.is_empty());
@@ -411,7 +561,18 @@ mod tests {
                 pixels[at..at + 4].copy_from_slice(&[90, 140, 40, 255]);
             }
         }
-        let mips = layer_mips(&pixels, 2);
+        let settings = crate::mipmap::Settings {
+            has_transparent: true,
+            ..Default::default()
+        };
+        let sheet = crate::mipmap::Image {
+            width: 8,
+            height: 8,
+            pixels: pixels.as_chunks::<4>().0.to_vec(),
+        };
+        let scales = crate::mipmap::sheet_scales(&sheet, 1, 2, settings);
+        assert_eq!(scales.len(), 2);
+        let mips = layer_mips(&pixels, 2, &scales, settings);
         assert_eq!(mips.len(), 2);
         assert_eq!(mips[0].len(), 4 * 4 * 4);
         assert_eq!(mips[1].len(), 2 * 2 * 4);
@@ -422,8 +583,44 @@ mod tests {
             );
         }
         // No levels asked for, or a sprite too small to halve: no chain to patch.
-        assert!(layer_mips(&pixels, 0).is_empty());
-        assert!(layer_mips(&[255u8; 4], 1).is_empty());
+        assert!(layer_mips(&pixels, 0, &scales, settings).is_empty());
+        assert!(layer_mips(&[255u8; 4], 1, &scales, settings).is_empty());
+    }
+    /// The animation's sheet decides the scale, not the frame shown: a frame
+    /// that is entirely opaque when the sheet has transparent texels still takes
+    /// the sheet's cutout chain, so a flower's far level does not fill in.
+    #[test]
+    fn a_frames_levels_take_the_sheets_alpha_scale_not_its_own() {
+        let frame = |solid: bool| {
+            let mut pixels = vec![0u8; 8 * 8 * 4];
+            for y in 0..8 {
+                for x in 0..(if solid { 8 } else { 4 }) {
+                    let at = (y * 8 + x) * 4;
+                    pixels[at..at + 4].copy_from_slice(&[90, 140, 40, 255]);
+                }
+            }
+            pixels
+        };
+        let mut sheet = frame(false);
+        sheet.extend(frame(true));
+        let settings = crate::mipmap::Settings {
+            has_transparent: true,
+            ..Default::default()
+        };
+        let image = crate::mipmap::Image {
+            width: 8,
+            height: 16,
+            pixels: sheet.as_chunks::<4>().0.to_vec(),
+        };
+        let scales = crate::mipmap::sheet_scales(&image, 2, 2, settings);
+        let mips = layer_mips(&frame(true), 2, &scales, settings);
+        // The solid frame keeps the sheet's coverage: its 2x2 level is not the
+        // opaque square a frame-local scale would have produced.
+        assert_eq!(mips.len(), 2);
+        assert!(
+            mips[1].chunks_exact(4).any(|p| p[3] < 255),
+            "a frame-local scale left the far level fully opaque"
+        );
     }
     #[test]
     fn nearest_sampling_preserves_rgba_interpolation_and_clip_clock() {

@@ -69,8 +69,12 @@ class LinuxImportsTests(unittest.TestCase):
 
 
 def pe(dlls):
-    """A minimal PE32 image whose import directory names `dlls`, one descriptor each."""
-    data = bytearray(0x800)
+    """A minimal PE32 image whose import directory names `dlls`, one descriptor each.
+
+    Each `dll` may be a plain name, or `(name, [procedure, ...])` so the import-by-name thunks
+    exist too and `--windows7`'s entry-point check has something to read.
+    """
+    data = bytearray(0x1000)
     data[:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, 0x40)
     data[0x40:0x44] = b"PE\0\0"
@@ -81,16 +85,29 @@ def pe(dlls):
     struct.pack_into("<H", data, optional, 0x10B)
     directories = optional + 96
     # One section: RVA 0x1000 is file offset 0x200, and it covers the rest of the file.
-    struct.pack_into("<8xIIII", data, optional + 96 + 128, 0x600, 0x1000, 0x600, 0x200)
+    struct.pack_into("<8xIIII", data, optional + 96 + 128, 0xE00, 0x1000, 0xE00, 0x200)
 
     def at(rva):
         return rva - 0x1000 + 0x200
 
-    for i, dll in enumerate(dlls):
+    entries = [dll if isinstance(dll, tuple) else (dll, []) for dll in dlls]
+    thunks_at = 0x1800
+    names_at = 0x1A00
+    for i, (dll, procedures) in enumerate(entries):
         raw = dll.encode() + b"\0"
         name_rva = 0x1200 + i * 0x40
         data[at(name_rva):at(name_rva) + len(raw)] = raw
-        # Name RVA at +12 of each 20-byte IMAGE_IMPORT_DESCRIPTOR.
+        if procedures:
+            # Name RVA at +12, first thunk at +0 of each 20-byte IMAGE_IMPORT_DESCRIPTOR.
+            struct.pack_into("<I", data, at(0x1100) + 20 * i, thunks_at)
+            for j, procedure in enumerate(procedures):
+                # IMAGE_IMPORT_BY_NAME is a 2-byte hint then the name; the thunk points at it.
+                text = struct.pack("<H", 0) + procedure.encode() + b"\0"
+                data[at(names_at):at(names_at) + len(text)] = text
+                struct.pack_into("<I", data, at(thunks_at), names_at)
+                thunks_at += 4
+                names_at += len(text) + (-len(text) % 2)
+            thunks_at += 4  # the NUL thunk that ends the array
         struct.pack_into("<I", data, at(0x1100) + 20 * i + 12, name_rva)
     # The descriptors are zero-terminated; those bytes are already zero.
     struct.pack_into("<I", data, directories + 8, 0x1100)
@@ -106,12 +123,12 @@ class WindowsImportsTests(unittest.TestCase):
                 return check_imports.check(path, **options)
 
     def output_for(self, dlls, **options):
-        """The check's verdict and what it printed on stdout."""
+        """The check's verdict and everything it printed, stdout and stderr together."""
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "program.exe"
             path.write_bytes(pe(dlls))
             output = io.StringIO()
-            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
                 return check_imports.check(path, **options), output.getvalue()
 
     def test_default_profile_allows_api_sets(self):
@@ -130,3 +147,20 @@ class WindowsImportsTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("KB2999226", output)
         self.assertTrue(self.check_dlls(["kernel32.dll", "opengl32.dll", "xinput9_1_0.dll"], windows7=True))
+
+    def test_windows7_refuses_a_procedure_that_arrived_after_it(self):
+        # The DLL is there on Windows 7; the procedure is not, and the loader refuses the image
+        # with "The procedure entry point ... could not be located in KERNEL32.dll".
+        ok, output = self.output_for(
+            [("kernel32.dll", ["GetCurrentThreadStackLimits", "VirtualQuery"]),
+             ("kernel32.dll", ["SetThreadStackGuarantee"])],
+            windows7=True)
+        self.assertIn("GetCurrentThreadStackLimits", output)
+        self.assertFalse(ok)
+
+    def test_windows7_accepts_the_same_image_once_the_procedure_is_gone(self):
+        ok, output = self.output_for(
+            [("kernel32.dll", ["VirtualQuery", "SetThreadStackGuarantee", "GetProcAddress"])],
+            windows7=True)
+        self.assertTrue(ok)
+        self.assertNotIn("does not export", output)

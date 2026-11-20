@@ -149,6 +149,17 @@ fn alpha_test_coverage(image: &Image, alpha_ref: f32, alpha_scale: f32) -> f32 {
 /// alpha scale whose coverage is nearest `desired`, then every alpha scaled
 /// and biased.
 fn scale_alpha_to_coverage(image: &mut Image, desired: f32, alpha_ref: f32, bias: f32) {
+    let best_scale = solve_alpha_scale(image, desired, alpha_ref);
+    for p in &mut image.pixels {
+        let alpha = (alpha_float(*p) * best_scale + bias + 0.025).clamp(0.0, 1.0);
+        p[3] = (alpha * 255.0).floor() as u8;
+    }
+}
+
+/// The bisection of [`scale_alpha_to_coverage`], alone: the scale whose
+/// coverage is nearest `desired`. An animation sheet needs it once per level at
+/// load, not per frame, so the alpha pass is kept apart from it.
+fn solve_alpha_scale(image: &Image, desired: f32, alpha_ref: f32) -> f32 {
     let (mut min_scale, mut max_scale) = (0.0f32, 4.0f32);
     let mut scale = 1.0f32;
     let mut best_scale = 1.0f32;
@@ -169,10 +180,7 @@ fn scale_alpha_to_coverage(image: &mut Image, desired: f32, alpha_ref: f32, bias
         }
         scale = (min_scale + max_scale) * 0.5;
     }
-    for p in &mut image.pixels {
-        let alpha = (alpha_float(*p) * best_scale + bias + 0.025).clamp(0.0, 1.0);
-        p[3] = (alpha * 255.0).floor() as u8;
-    }
+    best_scale
 }
 
 /// `TextureUtil.solidify`: every transparent pixel takes the colour of the
@@ -298,19 +306,168 @@ pub fn generate(base: Image, levels: u32, settings: Settings) -> Vec<Image> {
     generate_native(base, levels, settings)
 }
 
+/// The base-level treatment [`generate_native`] gives an image before reducing
+/// it: a cutout's transparent texels take their nearest opaque colour
+/// (`solidify`), a dark cutout's take three quarters of the darkest. An
+/// animation sheet is treated once at install, so its frames' bases are already
+/// prepared when [`animated_levels`] reduces them.
+pub fn prepare_base(image: &mut Image, settings: Settings) {
+    if settings.item {
+        return;
+    }
+    match strategy_of(settings) {
+        Strategy::Cutout | Strategy::StrictCutout => solidify(image),
+        Strategy::DarkCutout => fill_empty_dark(image),
+        _ => {}
+    }
+}
+
+/// One level below `last`, the way [`generate_native`] reduces: `meanLinear`
+/// colours, `darkenedAlphaBlend` for a dark cutout.
+fn reduce_level(last: &Image, strategy: Strategy) -> Image {
+    let (width, height) = (last.width >> 1, last.height >> 1);
+    let mut data = Image {
+        width,
+        height,
+        pixels: vec![[0; 4]; (width * height) as usize],
+    };
+    for x in 0..width {
+        for y in 0..height {
+            let c = [
+                last.get(x * 2, y * 2),
+                last.get(x * 2 + 1, y * 2),
+                last.get(x * 2, y * 2 + 1),
+                last.get(x * 2 + 1, y * 2 + 1),
+            ];
+            data.set(
+                x,
+                y,
+                if strategy == Strategy::DarkCutout {
+                    darkened_alpha_blend(c)
+                } else {
+                    mean_linear(c)
+                },
+            );
+        }
+    }
+    data
+}
+
+/// The alpha scale [`generate_native`] would give each level below the base of
+/// this whole animation sheet, measured once at install: vanilla mips the
+/// sheet's stacked frames (`SpriteContents.increaseMipLevel`), so every frame's
+/// level takes the scale of the sheet's level rather than its own. `sheet`
+/// stacks `frames` frames of `width` by `height`; one entry per level below the
+/// base, empty when the sheet has no cutout chain.
+pub fn sheet_scales(sheet: &Image, frames: usize, levels: u32, settings: Settings) -> Vec<f32> {
+    let strategy = strategy_of(settings);
+    let cutout = matches!(
+        strategy,
+        Strategy::Cutout | Strategy::StrictCutout | Strategy::DarkCutout
+    );
+    if !cutout
+        || frames == 0
+        || levels == 0
+        || sheet.width < 2
+        || sheet.height < 2
+        || sheet.height % frames as u32 != 0
+        || sheet.pixels.len() != (sheet.width * sheet.height) as usize
+    {
+        return Vec::new();
+    }
+    let mut last = sheet.clone();
+    if !settings.item {
+        match strategy {
+            Strategy::Cutout | Strategy::StrictCutout => solidify(&mut last),
+            Strategy::DarkCutout => fill_empty_dark(&mut last),
+            _ => {}
+        }
+    }
+    let alpha_ref = alpha_ref_of(strategy);
+    let coverage = alpha_test_coverage(&last, alpha_ref, 1.0);
+    let mut scales = Vec::new();
+    for _ in 1..=levels {
+        if last.width < 2 || last.height < 2 {
+            break;
+        }
+        last = reduce_level(&last, strategy);
+        scales.push(solve_alpha_scale(&last, coverage, alpha_ref));
+    }
+    scales
+}
+
+/// The levels below `base` for one displayed animation frame: the vanilla
+/// reduction with the sheet's scale for that level applied, which
+/// [`sheet_scales`] measured once at load. Vanilla interpolates each mip level
+/// of the two frames it samples; interpolating the base here and reducing it
+/// with the sheet's level alpha is the same picture for the cost of a box
+/// filter, when the alternative is five coverage bisections per level of every
+/// animated layer of every tick.
+///
+/// `base` must already be [`prepare_base`]d, as the frames of an animation
+/// sheet are once at install: preparing it here would solidify every frame of
+/// every tick again.
+pub fn animated_levels(
+    base: &Image,
+    levels: u32,
+    settings: Settings,
+    scales: &[f32],
+) -> Vec<Image> {
+    let strategy = strategy_of(settings);
+    let cutout = matches!(
+        strategy,
+        Strategy::Cutout | Strategy::StrictCutout | Strategy::DarkCutout
+    );
+    let mut last = base.clone();
+    let mut out = Vec::new();
+    for level in 1..=levels {
+        if last.width < 2 || last.height < 2 {
+            break;
+        }
+        let mut data = reduce_level(&last, strategy);
+        if let Some(&scale) = scales.get(level as usize - 1) {
+            let bias = settings.alpha_cutoff_bias;
+            for p in &mut data.pixels {
+                let alpha = (alpha_float(*p) * scale + bias + 0.025).clamp(0.0, 1.0);
+                p[3] = (alpha * 255.0).floor() as u8;
+            }
+        }
+        out.push(data.clone());
+        last = data;
+    }
+    if settings.dither_cutouts && cutout && base.width >= DITHERED_CUTOUT_SIZE {
+        let mut chain = Vec::with_capacity(out.len() + 1);
+        chain.push(base.clone());
+        chain.append(&mut out);
+        dither_cutout_levels(&mut chain);
+        out = chain.split_off(1);
+    }
+    out
+}
+
+fn strategy_of(settings: Settings) -> Strategy {
+    match settings.strategy {
+        Strategy::Auto if settings.has_transparent => Strategy::Cutout,
+        Strategy::Auto => Strategy::Mean,
+        s => s,
+    }
+}
+
+fn alpha_ref_of(strategy: Strategy) -> f32 {
+    if strategy == Strategy::StrictCutout {
+        0.3
+    } else {
+        0.5
+    }
+}
+
 fn generate_native(mut base: Image, levels: u32, settings: Settings) -> Vec<Image> {
     let Settings {
-        strategy,
         alpha_cutoff_bias,
-        has_transparent,
         item,
         ..
     } = settings;
-    let strategy = match strategy {
-        Strategy::Auto if has_transparent => Strategy::Cutout,
-        Strategy::Auto => Strategy::Mean,
-        s => s,
-    };
+    let strategy = strategy_of(settings);
     if !item {
         match strategy {
             Strategy::Cutout | Strategy::StrictCutout => solidify(&mut base),
@@ -322,11 +479,7 @@ fn generate_native(mut base: Image, levels: u32, settings: Settings) -> Vec<Imag
         strategy,
         Strategy::Cutout | Strategy::StrictCutout | Strategy::DarkCutout
     );
-    let alpha_ref = if strategy == Strategy::StrictCutout {
-        0.3
-    } else {
-        0.5
-    };
+    let alpha_ref = alpha_ref_of(strategy);
     let coverage = if cutout {
         alpha_test_coverage(&base, alpha_ref, 1.0)
     } else {
@@ -335,28 +488,7 @@ fn generate_native(mut base: Image, levels: u32, settings: Settings) -> Vec<Imag
     let mut out = vec![base];
     for _ in 1..=levels {
         let last = out.last().expect("the base level");
-        let (width, height) = (last.width >> 1, last.height >> 1);
-        let mut data = Image {
-            width,
-            height,
-            pixels: vec![[0; 4]; (width * height) as usize],
-        };
-        for x in 0..width {
-            for y in 0..height {
-                let c = [
-                    last.get(x * 2, y * 2),
-                    last.get(x * 2 + 1, y * 2),
-                    last.get(x * 2, y * 2 + 1),
-                    last.get(x * 2 + 1, y * 2 + 1),
-                ];
-                let p = if strategy == Strategy::DarkCutout {
-                    darkened_alpha_blend(c)
-                } else {
-                    mean_linear(c)
-                };
-                data.set(x, y, p);
-            }
-        }
+        let mut data = reduce_level(last, strategy);
         if cutout {
             scale_alpha_to_coverage(&mut data, coverage, alpha_ref, alpha_cutoff_bias);
         }

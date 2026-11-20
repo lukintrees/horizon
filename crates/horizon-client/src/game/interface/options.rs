@@ -20,6 +20,25 @@ pub(super) const CONTROL_HELP: &[&str] = &[
     "options-set KEY VALUE          set an option (enums by name, keys as key.keyboard.w, lists as JSON), apply and save it",
 ];
 
+/// Whether closing Options hands the pointer back to the game.
+///
+/// `Screen::Playing` is vanilla's null, and the game grabs the pointer only
+/// there. The title is kept beside the screen rather than as one, so leaving
+/// the title's own Options page lands on `Playing` too -- but nothing takes the
+/// pointer back from the title, and taking it there leaves a person with a
+/// grabbed mouse they cannot free (on Wine a window switch does not release it).
+/// A screen over the world (a book, a sign, a prompt) keeps the pointer for the
+/// same reason. So the grab happens only when a world is open, not the title,
+/// with nothing else on top.
+fn options_close_grabs(
+    back_is_playing: bool,
+    title_open: bool,
+    overlay_open: bool,
+    has_player: bool,
+) -> bool {
+    back_is_playing && !title_open && !overlay_open && has_player
+}
+
 impl Game<'_> {
     pub(super) fn save_title_options(&mut self) {
         if let Some(title) = &self.title
@@ -139,6 +158,16 @@ impl Game<'_> {
         ui.minecart_improvements = minecart_improvements;
         ui.languages = lang::available(&[&self.pack.source]);
         self.refresh_pack_lists();
+    }
+    /// Whether closing Options hands the pointer back to the game: see
+    /// [`options_close_grabs`].
+    fn options_close_grabs(&self, back: Screen) -> bool {
+        options_close_grabs(
+            back == Screen::Playing,
+            self.title.is_some(),
+            self.screen_over_playing(),
+            self.player.is_some(),
+        )
     }
     /// While the resource pack screen is open, `resourcepacks/` is looked at once a second
     /// and the list found again when its packs changed (`PackSelectionScreen.tick`'s
@@ -401,7 +430,6 @@ impl Game<'_> {
                 Event::Close if self.ui.options.resource_error.is_some() => {}
                 Event::Close => {
                     self.settings.save(&Self::options_path());
-                    let to_game = self.options_from_title;
                     let back = if let Some(screen) = self.panel.recipes_settings_return.take() {
                         screen
                     } else if std::mem::take(&mut self.options_to_world_options) {
@@ -412,7 +440,7 @@ impl Game<'_> {
                         Screen::Paused
                     };
                     self.set_screen(back);
-                    if to_game {
+                    if self.options_close_grabs(back) {
                         self.capture(true);
                     }
                     self.dragging = false;
@@ -1016,6 +1044,24 @@ mod fullbright_tests {
         assert!(fullbright_held(Some(false), false));
         // Replay Studio plays a recording, not a server.
         assert!(!fullbright_held(Some(false), true));
+    }
+}
+
+#[cfg(test)]
+mod pointer_grab_tests {
+    use super::options_close_grabs;
+
+    /// Leaving the title's Options page lands on `Playing` because the title is
+    /// not one of the `Screen` variants, and the game must not take the pointer
+    /// there: nothing hands it back to the title. Reported under Wine, where a
+    /// window switch does not free it either.
+    #[test]
+    fn closing_options_grabs_only_over_an_open_world() {
+        assert!(options_close_grabs(true, false, false, true));
+        assert!(!options_close_grabs(true, true, false, true), "title");
+        assert!(!options_close_grabs(true, false, true, true), "overlay");
+        assert!(!options_close_grabs(true, false, false, false), "no world");
+        assert!(!options_close_grabs(false, false, false, true), "pause menu");
     }
 }
 

@@ -245,6 +245,104 @@ unsafe extern "system" {
 fn failure(operation: &str) -> String {
     format!("{operation} failed: {}", std::io::Error::last_os_error())
 }
+
+const FLAG_DOUBLE_BUFFER: u32 = 0x0001;
+const FLAG_DRAW_TO_WINDOW: u32 = 0x0004;
+const FLAG_SUPPORT_OPENGL: u32 = 0x0020;
+const FLAG_GENERIC_FORMAT: u32 = 0x0040;
+
+/// The pixel format both the window and the readback contract want: double
+/// buffered, drawing to the window, hardware OpenGL, RGBA, at least 24 colour
+/// bits and 16 depth bits, and -- when the driver offers one -- an 8-bit
+/// destination alpha.
+///
+/// `ChoosePixelFormat` is asked for that format, but its answer is not trusted:
+/// Wine's NVIDIA ICD picks a format without destination alpha even when one is
+/// requested (`cAlphaBits` is a *hint* there), and the 32-bit driver under
+/// `prime-run` offers no alpha format at all. So the descriptors are enumerated
+/// and the best one is taken by rank: an alpha format first, then one without.
+/// A missing destination alpha costs the framebuffer's alpha, which only the
+/// screenshot readback reads; the window its own opaque alpha is fine for every
+/// blend the renderer does, so a driver without one still gets a picture instead
+/// of a "no suitable pixel format" refusal.
+fn choose_pixel_format(dc: Handle) -> Result<i32, String> {
+    let requested = PixelFormat {
+        size: size_of::<PixelFormat>() as u16,
+        version: 1,
+        flags: FLAG_DRAW_TO_WINDOW | FLAG_SUPPORT_OPENGL | FLAG_DOUBLE_BUFFER,
+        color_bits: 32,
+        // Destination alpha, as the EGL and GLX configs request. cRedBits,
+        // cRedShift, ... in that interleaved order; cAlphaBits is index 6.
+        channel_bits_and_shifts: [8, 16, 8, 8, 8, 0, 8, 24],
+        depth_bits: 24,
+        ..PixelFormat::default() // TYPE_RGBA, MAIN_PLANE
+    };
+    // SAFETY: `dc` is the live window's device context on this thread and every
+    // descriptor passed out is the function's own, correctly sized storage.
+    let describe = |format: i32, descriptor: &mut PixelFormat| unsafe {
+        DescribePixelFormat(dc, format, size_of::<PixelFormat>() as u32, descriptor) != 0
+    };
+    let chosen = unsafe { ChoosePixelFormat(dc, &requested) };
+    if chosen == 0 {
+        return Err(failure("ChoosePixelFormat"));
+    }
+    let mut best = PixelFormat::default();
+    describe(chosen, &mut best)
+        .then(|| score_format(&best))
+        .flatten()
+        .map_or_else(
+            || Err("driver has no suitable double-buffered RGBA/depth pixel format".into()),
+            |best_score| {
+                let mut better = best_score;
+                let mut better_format = chosen;
+                let count = unsafe { DescribePixelFormat(dc, 1, 0, std::ptr::null_mut()) };
+                for format in 1..=count.max(1) {
+                    let mut candidate = PixelFormat::default();
+                    if !describe(format, &mut candidate) {
+                        continue;
+                    }
+                    if let Some(score) = score_format(&candidate) {
+                        if score > better {
+                            better = score;
+                            better_format = format;
+                            if better == (1, 1, 32) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if better.1 == 0 {
+                    // The driver offers no destination alpha at all. Say so once, so a
+                    // player's report of "colours look right, my screenshot is opaque"
+                    // has its answer in the log.
+                    eprintln!(
+                        "Horizon: no OpenGL pixel format with destination alpha on this \
+                         driver; readbacks are opaque"
+                    );
+                }
+                Ok(better_format)
+            },
+        )
+}
+
+/// How far a pixel format is from what a window and the readback want, or `None`
+/// when it cannot host the renderer at all: `(colour >= 24 bits, alpha >= 8 bits,
+/// depth bits)`.
+fn score_format(format: &PixelFormat) -> Option<(u8, u8, u8)> {
+    let wanted = FLAG_DRAW_TO_WINDOW | FLAG_SUPPORT_OPENGL | FLAG_DOUBLE_BUFFER;
+    if format.flags & wanted != wanted
+        || format.flags & FLAG_GENERIC_FORMAT != 0
+        || format.pixel_type != 0
+        || format.depth_bits < 16
+    {
+        return None;
+    }
+    Some((
+        u8::from(format.color_bits >= 24),
+        u8::from(format.channel_bits_and_shifts[6] >= 8),
+        format.depth_bits,
+    ))
+}
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
 }
@@ -347,48 +445,15 @@ impl Context {
         // SAFETY: owned live window/DC; pixel format is selected exactly once,
         // then a legacy context is made current. Drop cleans every failure path.
         unsafe {
-            let requested = PixelFormat {
-                size: size_of::<PixelFormat>() as u16,
-                version: 1,
-                flags: 0x0004 | 0x0020 | 0x0001, // DRAW_TO_WINDOW | SUPPORT_OPENGL | DOUBLEBUFFER
-                color_bits: 32,
-                // Destination alpha, as the EGL and GLX configs request: without it
-                // the framebuffer reports alpha 255 everywhere, so a translucent
-                // overlay's `glReadPixels` is opaque. Blending to alpha is part of
-                // the contract, so the 32-bit color buffer carries an 8-bit alpha
-                // channel (32 = R8+G8+B8+A8), not merely 24 RGB bits.
-                // cRedBits, cRedShift, ... in that interleaved order; cAlphaBits
-                // is index 6 and is checked against what the driver reported.
-                channel_bits_and_shifts: [8, 16, 8, 8, 8, 0, 8, 24],
-                depth_bits: 24,
-                ..PixelFormat::default() // TYPE_RGBA, MAIN_PLANE
-            };
-            let format = ChoosePixelFormat(this.dc, &requested);
-            if format == 0 {
-                return Err(failure("ChoosePixelFormat"));
-            }
+            let format = choose_pixel_format(this.dc)?;
             let mut actual = PixelFormat::default();
-            if DescribePixelFormat(
-                this.dc,
-                format,
-                size_of::<PixelFormat>() as u32,
-                &mut actual,
-            ) == 0
+            if DescribePixelFormat(this.dc, format, size_of::<PixelFormat>() as u32, &mut actual) == 0
             {
                 return Err(failure("DescribePixelFormat"));
             }
-            if actual.flags & 0x0040 != 0 {
+            if actual.flags & FLAG_GENERIC_FORMAT != 0 {
                 // PFD_GENERIC_FORMAT: no full hardware ICD
                 return Err("generic GDI pixel format selected; install a matching 32-bit vendor OpenGL ICD for the x86 build".into());
-            }
-            if actual.flags & requested.flags != requested.flags
-                || actual.pixel_type != 0
-                || actual.depth_bits < 16
-                || actual.channel_bits_and_shifts[6] < 8 // cAlphaBits
-            {
-                return Err(
-                    "driver has no suitable double-buffered RGBA/depth pixel format".into(),
-                );
             }
             if SetPixelFormat(this.dc, format, &actual) == 0 {
                 return Err(failure("SetPixelFormat"));
