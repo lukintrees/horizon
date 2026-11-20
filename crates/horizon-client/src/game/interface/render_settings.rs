@@ -34,7 +34,7 @@ impl Game<'_> {
             self.options.offscreen,
             pack,
             gui,
-            self.renderer.as_ref(),
+            self.renderer.modern_ref(),
             None,
             self.settings.horizon.api,
             self.settings.horizon.translucent_batching,
@@ -42,7 +42,7 @@ impl Game<'_> {
             &self.settings.horizon,
             shader_packs::picked_pack_shape(&self.settings),
             self.renderer
-                .as_ref()
+                .modern_ref()
                 .map(|r| r.display_reading())
                 .unwrap_or_default(),
             (
@@ -78,14 +78,14 @@ impl Game<'_> {
         let request = shader_packs::picked_pack_shape(&self.settings).frame();
         let wanted = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|r| r.requested_frame(&self.settings.horizon, request));
         if !self.frame_attempted.changed((wanted, path, outcome)) {
             return;
         }
         if self
             .renderer
-            .as_ref()
+            .modern_ref()
             .is_none_or(|r| r.frame_follows(&self.settings.horizon, request))
         {
             return;
@@ -103,20 +103,20 @@ impl Game<'_> {
             return Ok(());
         };
         let started = std::time::Instant::now();
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.release_surface();
         }
         let mut renderer = match self.renderer_for(window, &self.pack, &self.gui) {
             Ok(renderer) => renderer,
             Err(error) => {
-                if let Some(renderer) = &mut self.renderer {
+                if let Some(renderer) = self.renderer.modern_mut() {
                     renderer.recreate_surface()?;
                 }
                 return Err(error);
             }
         };
         let mut world_kept = false;
-        if let Some(old) = &mut self.renderer {
+        if let Some(old) = self.renderer.modern_mut() {
             renderer.resize(old.config.width, old.config.height);
             renderer.screenshot = old.screenshot.take();
             renderer.screenshot_result = old.screenshot_result.take();
@@ -205,7 +205,7 @@ impl Game<'_> {
     /// LOD Distance as far terrain uses it (`graphics::lod_distance_capped`).
     pub(super) fn lod_distance(&self) -> u32 {
         let (distance, _) = self.far_terrain_choice();
-        match &self.renderer {
+        match self.renderer.modern_ref() {
             Some(renderer) => {
                 horizon_client::graphics::lod_distance_capped(distance, &renderer.info)
             }
@@ -256,7 +256,12 @@ impl Game<'_> {
         }
         // And has no wall for the world border.
         self.border_renderer.invalidate();
-        self.renderer = Some(renderer);
+        // Explicit modern publication: a native owner is refused instead of being
+        // silently replaced (only the modern path builds a renderer here today).
+        if let Err(error) = self.renderer.set_modern(renderer) {
+            log::warn!("Horizon: the rebuilt renderer was refused: {error}");
+            return;
+        }
         self.forget_atlas_slots();
         if !world_kept {
             self.clear_lod();
@@ -275,7 +280,7 @@ impl Game<'_> {
     pub(super) fn all_sections_changed(&mut self) {
         self.clear_lod();
         self.pending_uploads.clear();
-        if let Some(renderer) = self.renderer.as_mut() {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.clear_sections(self.world.layout());
         }
         self.streaming.reload_sections(&mut self.world);

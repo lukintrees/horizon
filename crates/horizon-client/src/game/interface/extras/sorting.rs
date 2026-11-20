@@ -86,13 +86,12 @@ impl Game<'_> {
     }
     /// A left press on a sort button sorts its slots (true).
     pub(in crate::game) fn sort_press(&mut self) -> bool {
-        let Some(r) = self.renderer.as_ref() else {
+        // The owner's frame, modern or native (a native GL2 window has no modern
+        // renderer, and its sort buttons were unreachable there).
+        let Some(size) = self.renderer.size() else {
             return false;
         };
-        let batch = HudBatch::new(
-            [r.config.width, r.config.height],
-            self.settings.gui_scale_inputs(),
-        );
+        let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
         let (ox, oy) = self.inventory_origin(&batch);
         let (cx, cy) = self.cursor;
         let hit = self.sort_buttons().into_iter().find(|((x, y), _)| {

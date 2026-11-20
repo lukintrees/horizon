@@ -52,7 +52,12 @@ unsafe extern "system" {
     fn GetClipCursor(rect: *mut Rect) -> i32;
     fn ClientToScreen(window: Handle, point: *mut Point) -> i32;
     fn GetForegroundWindow() -> Handle;
+    fn SetForegroundWindow(window: Handle) -> i32;
     fn SetCursor(cursor: Handle) -> Handle;
+}
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetLastError() -> u32;
 }
 const _: () = {
     assert!(size_of::<Header>() == if size_of::<usize>() == 4 { 16 } else { 24 });
@@ -71,8 +76,26 @@ pub(super) fn set(window: Handle, state: &State, relative: bool) -> Result<(), S
     }
     // SAFETY: owned thread-confined live window and correctly typed storage.
     unsafe {
-        if GetForegroundWindow() != window || state.size.get().contains(&0) {
-            return Err("native window cannot grab inactive/minimized pointer".into());
+        if state.size.get().contains(&0) {
+            return Err("native window cannot grab a minimized pointer".into());
+        }
+        // Already ours: nothing to do. Windows ignores a redundant `SetCapture`, but Wine
+        // delivers `WM_CAPTURECHANGED` for it, and the window procedure answers that by
+        // releasing, so re-issuing the grab would drop a capture we already held.
+        if state.relative.get() && GetCapture() == window {
+            return Ok(());
+        }
+        // A raw-mouse grab needs our window to be the foreground window: WM_INPUT
+        // only reaches a foreground window, and activating it is also what starts
+        // the mouse look for a person who just clicked the window. `wgl.rs` shows
+        // the window with SW_SHOWNOACTIVATE, so nothing else ever activates it and
+        // a grab requested now would be refused on every run. Only try when the
+        // pointer grab is asked for (in-world), never while the menus are up.
+        if GetForegroundWindow() != window {
+            SetForegroundWindow(window);
+            if GetForegroundWindow() != window {
+                return Err("native window cannot grab inactive pointer".into());
+            }
         }
         let mut rect = Rect {
             left: 0,
@@ -97,11 +120,27 @@ pub(super) fn set(window: Handle, state: &State, relative: bool) -> Result<(), S
         if RegisterRawInputDevices(&device, 1, size_of::<Device>() as u32) == 0 {
             return Err("RegisterRawInputDevices failed".into());
         }
-        SetCapture(window);
+        // A press the game has not grabbed yet already called `SetCapture` for itself
+        // (`wgl.rs`'s window procedure). Taking the capture again from the window that holds
+        // it is a redundant call: Windows ignores it, Wine answers with `WM_CAPTURECHANGED`,
+        // and answering that by releasing is what dropped a first grab mid-session.
+        if GetCapture() != window {
+            let previous = SetCapture(window);
+            if GetCapture() != window {
+                release(window, state);
+                return Err(format!(
+                    "native pointer capture failed (SetCapture returned {previous:?}, error {})",
+                    GetLastError()
+                ));
+            }
+        }
         state.relative.set(true);
-        if GetCapture() != window || ClipCursor(&rect) == 0 {
+        if ClipCursor(&rect) == 0 {
             release(window, state);
-            return Err("native pointer confinement failed".into());
+            return Err(format!(
+                "native pointer clip failed (error {})",
+                GetLastError()
+            ));
         }
         state
             .clip
@@ -147,7 +186,10 @@ pub(super) fn message(window: Handle, state: &State, message: u32, lparam: isize
     if message == 8 {
         release(window, state);
     }
-    if message == 0x215 {
+    if message == 0x215 && unsafe { GetCapture() } != window {
+        // A capture change that left the pointer to another window ends the grab. Wine
+        // also sends this while the capture is still ours (a redundant `SetCapture` on
+        // the same window), which is not a loss: releasing there would undo a live grab.
         release(window, state);
     }
     if !state.relative.get() {

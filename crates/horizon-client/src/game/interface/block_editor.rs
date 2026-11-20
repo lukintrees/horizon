@@ -4,6 +4,7 @@
 //! lays out its widgets, takes their presses and builds the packet for the
 //! server. The screens change the client's copy of the block entity as they
 //! are used, as vanilla's do, so the box preview follows them.
+use crate::game::input_event::KeyEvent;
 use super::{Game, Screen};
 use horizon_client::{
     containers::BlockEntity,
@@ -13,7 +14,7 @@ use horizon_client::{
 };
 use horizon_protocol::packets::play::Serverbound as S;
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 
@@ -439,10 +440,7 @@ impl Game<'_> {
     }
 
     pub(super) fn block_editor_click(&mut self) {
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let cursor = self.cursor;
         let shift = self.has_shift_down();
@@ -541,10 +539,7 @@ impl Game<'_> {
         let ctrl = self.has_control_down_with_quirk();
         let shift = self.has_shift_down();
         let types_text = self.types_text();
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         match key {
             KeyCode::Escape => {

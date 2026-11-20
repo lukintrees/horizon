@@ -169,7 +169,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1256,7 +1256,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1584,10 +1584,12 @@ dependencies = [
  "nix",
  "objc2-core-foundation",
  "objc2-io-kit",
+ "rusty-xinput",
  "uuid",
  "vec_map",
  "wasm-bindgen",
  "web-sys",
+ "winapi",
  "windows 0.62.2",
 ]
 
@@ -1902,6 +1904,7 @@ name = "horizon-client-input"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "clipboard-win",
  "horizon-client-core",
  "horizon-engine-slots",
  "horizon-mod-api-macros",
@@ -4228,7 +4231,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4763,7 +4766,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.5",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5089,7 +5092,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5158,6 +5161,17 @@ name = "rusty-opus"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46604e6809c06441da1cfdde1f0cc25a4f2bf42c7d005aa387c2875c02d78762"
+
+[[package]]
+name = "rusty-xinput"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3335c2b62e1e48dd927f6c8941705386e3697fa944aabcb10431bea7ee47ef3"
+dependencies = [
+ "lazy_static",
+ "log",
+ "winapi",
+]
 
 [[package]]
 name = "ruzstd"
@@ -5643,7 +5657,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6721,7 +6735,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6764,8 +6778,6 @@ dependencies = [
 [[package]]
 name = "windows-core"
 version = "0.54.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12661b9c89351d684a50a8a643ce5f608e20243b9fb84687800163429f161d65"
 dependencies = [
  "windows-result 0.1.2",
  "windows-targets 0.52.6",
@@ -6774,8 +6786,6 @@ dependencies = [
 [[package]]
 name = "windows-core"
 version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
 dependencies = [
  "windows-implement",
  "windows-interface",

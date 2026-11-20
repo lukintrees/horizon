@@ -1,6 +1,7 @@
 //! The keyboard drives a menu's focus: the arrow keys, Tab and Enter step and press the
 //! targets the screen registered, with the same focus the controller uses (a pure move out of
 //! `pad_menu.rs`, the keyboard-focus half; docs/controllers.md).
+use crate::game::input_event;
 use super::super::event_loop::EventLoopCtl;
 use super::super::{
     Game, Screen,
@@ -12,7 +13,7 @@ use horizon_client::{
     widgets::{self, Kind, Target},
 };
 use winit::{
-    event::{DeviceId, ElementState, MouseButton, WindowEvent},
+    event::{DeviceId, ElementState, MouseButton},
     keyboard::KeyCode,
 };
 
@@ -264,7 +265,7 @@ impl Game<'_> {
     pub(in crate::game) fn key_focus_mouse(
         &mut self,
         event_loop: &dyn EventLoopCtl,
-        event: &WindowEvent,
+        event: &input_event::Event,
     ) {
         if self.pad.menu.synthetic {
             return;
@@ -272,37 +273,37 @@ impl Game<'_> {
         let takeover = match event {
             // Not while the pad holds the radial menu open: as for raw mouse motion in play
             // (`device_event`), a cursor that moved is a bumped mouse.
-            WindowEvent::CursorMoved { position, .. } => {
+            input_event::Event::CursorMoved { position, .. } => {
                 self.pad.menu.real_pointer != Some(*position) && !self.pad_radial_captures()
             }
-            WindowEvent::KeyboardInput { event, .. } => event.state == ElementState::Pressed,
-            WindowEvent::MouseInput { state, .. } => *state == ElementState::Pressed,
-            WindowEvent::MouseWheel { .. } => true,
+            input_event::Event::KeyboardInput { event, .. } => event.state == ElementState::Pressed,
+            input_event::Event::MouseInput { state, .. } => *state == ElementState::Pressed,
+            input_event::Event::MouseWheel { .. } => true,
             _ => false,
         };
         if takeover {
             self.pad_yield_input(event_loop);
         }
         match event {
-            WindowEvent::CursorMoved { position, .. } => {
+            input_event::Event::CursorMoved { position, .. } => {
                 self.pad.menu.real_pointer = Some(*position);
             }
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 state: ElementState::Pressed,
                 ..
             } => self.key_focus_to_mouse(event_loop),
-            WindowEvent::MouseWheel { .. } => self.key_focus_to_mouse(event_loop),
+            input_event::Event::MouseWheel { .. } => self.key_focus_to_mouse(event_loop),
             _ => {}
         }
     }
 
     /// Only a press accepted by ScreenEvent.Pre may focus the widget under it.
-    pub(in crate::game) fn key_focus_mouse_press(&mut self, event: &WindowEvent) {
+    pub(in crate::game) fn key_focus_mouse_press(&mut self, event: &input_event::Event) {
         if !self.pad.menu.synthetic
             && self.key_focus_screen()
             && matches!(
                 event,
-                WindowEvent::MouseInput {
+                input_event::Event::MouseInput {
                     state: ElementState::Pressed,
                     button: MouseButton::Left,
                     ..
@@ -336,7 +337,7 @@ impl Game<'_> {
             self.pad_synthetic_event(
                 event_loop,
                 id,
-                WindowEvent::CursorMoved {
+                input_event::Event::CursorMoved {
                     device_id: DeviceId::dummy(),
                     position,
                 },

@@ -164,8 +164,20 @@ impl ClipVertex {
         )
     }
 }
-fn clip(poly: Vec<ClipVertex>, axis: usize, edge: f64, below: bool) -> Vec<ClipVertex> {
-    let mut output = Vec::new();
+/// A triangle clipped through four half-planes gains at most one vertex each.
+const CLIP_MAX: usize = 8;
+
+/// Sutherland-Hodgman against one half-plane, writing into a fixed buffer so a
+/// page's four clips allocate nothing. A convex polygon gains at most one vertex
+/// per plane, so [`CLIP_MAX`] holds the result of clipping a triangle.
+fn clip_into(
+    poly: &[ClipVertex],
+    axis: usize,
+    edge: f64,
+    below: bool,
+    out: &mut [ClipVertex; CLIP_MAX],
+) -> usize {
+    let mut n = 0;
     let inside = |v: ClipVertex| {
         if below {
             v.uv[axis] <= edge
@@ -177,15 +189,17 @@ fn clip(poly: Vec<ClipVertex>, axis: usize, edge: f64, below: bool) -> Vec<ClipV
         let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
         let (ia, ib) = (inside(a), inside(b));
         if ia {
-            output.push(a);
+            out[n] = a;
+            n += 1;
         }
         if ia != ib {
             let mut v = a.mix(b, (edge - a.uv[axis]) / (b.uv[axis] - a.uv[axis]));
             v.uv[axis] = edge;
-            output.push(v);
+            out[n] = v;
+            n += 1;
         }
     }
-    output
+    n
 }
 /// Clip in texture-pixel space using f64, interpolating position/depth/colour as
 /// well as UVs. Never reorder triangles by page, including alpha-blended quads.
@@ -284,6 +298,17 @@ fn split_vertices<V: AtlasVertex>(
     let mut output: Vec<Run<V>> = Vec::new();
     let mut total = 0usize;
     let mut visited = 0usize;
+    // A triangle clipped through four half-planes gains at most one vertex each.
+    const EMPTY: ClipVertex = ClipVertex {
+        pos: [0.; 3],
+        uv: [0.; 2],
+        light: [0.; 2],
+        color: [0.; 4],
+        extra: [0.; 10],
+    };
+    // Two ping-pong buffers for a page's four clips, so clipping allocates nothing.
+    let mut clip_a = [EMPTY; CLIP_MAX];
+    let mut clip_b = [EMPTY; CLIP_MAX];
     // A depth group can start with a degenerate material run. Keep its clear
     // pending until the first visible triangle, even across plain/foil splits.
     let mut pending_depth = false;
@@ -340,18 +365,42 @@ fn split_vertices<V: AtlasVertex>(
                         .ok_or(Error::VertexBudget)?;
                     let page = y as usize * layout.grid[0] as usize + x as usize;
                     let origin = layout.origin(page)?;
-                    let mut polygon = tri.to_vec();
-                    for (axis, &start) in origin.iter().enumerate() {
-                        polygon = clip(polygon, axis, f64::from(start), false);
-                        polygon = clip(
-                            polygon,
-                            axis,
-                            (u64::from(start) + u64::from(layout.span))
-                                .min(u64::from(layout.size[axis]))
-                                as f64,
-                            true,
-                        );
-                    }
+                    // A triangle inside one page's span is copied, not clipped:
+                    // that is nearly every triangle of a HUD or entity model, and
+                    // clipping each one through four planes was 14% of the legacy
+                    // backend's frame (`horizon-perf query hot`).
+                    let [ox, oy] = origin;
+                    let (hi_x, hi_y) = (
+                        (u64::from(ox) + u64::from(layout.span)).min(u64::from(layout.size[0]))
+                            as f64,
+                        (u64::from(oy) + u64::from(layout.span)).min(u64::from(layout.size[1]))
+                            as f64,
+                    );
+                    let inside = tri.iter().all(|v| {
+                        v.uv[0] >= f64::from(ox)
+                            && v.uv[0] <= hi_x
+                            && v.uv[1] >= f64::from(oy)
+                            && v.uv[1] <= hi_y
+                    });
+                    let polygon: &[ClipVertex] = if inside {
+                        &tri
+                    } else {
+                        clip_a[..3].copy_from_slice(&tri);
+                        let mut n = 3;
+                        for (axis, &start) in origin.iter().enumerate() {
+                            n = clip_into(&clip_a[..n], axis, f64::from(start), false, &mut clip_b);
+                            n = clip_into(
+                                &clip_b[..n],
+                                axis,
+                                (u64::from(start) + u64::from(layout.span))
+                                    .min(u64::from(layout.size[axis]))
+                                    as f64,
+                                true,
+                                &mut clip_a,
+                            );
+                        }
+                        &clip_a[..n]
+                    };
                     for n in 1..polygon.len().saturating_sub(1) {
                         let triangle = [polygon[0], polygon[n], polygon[n + 1]];
                         let [a, b, c] = triangle.map(|v| v.pos);
@@ -557,10 +606,28 @@ impl Cache {
                     return Err(RenderError::InvalidPixels);
                 }
                 if let Some(at) = self.resident.iter().position(|r| r.page == page) {
+                    // An edited page keeps its texture: one sub-rect upload costs the
+                    // driver no allocation, and a fresh `create_texture` here would
+                    // delete and rebuild a megabyte of texels for every animated page
+                    // of every frame.
+                    let r = self.resident.remove(at).unwrap();
                     backend
-                        .remove_texture(self.resident[at].texture)
+                        .update_texture(
+                            r.texture,
+                            [0; 2],
+                            Image {
+                                width: self.layout.side,
+                                height: self.layout.side,
+                                rgba: &pixels,
+                            },
+                        )
                         .map_err(RenderError::Backend)?;
-                    self.resident.remove(at);
+                    self.resident.push_back(Resident {
+                        page,
+                        texture: r.texture,
+                        dirty: false,
+                    });
+                    return Ok(r.texture);
                 }
                 if self.resident.len() >= self.capacity {
                     backend
@@ -640,9 +707,99 @@ impl Cache {
 mod tests {
     use super::*;
     use crate::{
-        Pass,
+        Frame, MeshId, Pass,
         gui::{Blend, Input},
     };
+
+    #[derive(Default)]
+    struct Counting {
+        next_texture: u64,
+        created: usize,
+        removed: usize,
+        updates: Vec<([u32; 2], [u32; 2])>,
+    }
+    impl RenderBackend for Counting {
+        type Error = &'static str;
+        fn create_texture(&mut self, _: Image<'_>) -> Result<TextureId, Self::Error> {
+            self.next_texture += 1;
+            self.created += 1;
+            Ok(TextureId(self.next_texture))
+        }
+        fn update_texture(
+            &mut self,
+            _: TextureId,
+            at: [u32; 2],
+            image: Image<'_>,
+        ) -> Result<(), Self::Error> {
+            self.updates.push((at, [image.width, image.height]));
+            Ok(())
+        }
+        fn remove_texture(&mut self, _: TextureId) -> Result<(), Self::Error> {
+            self.removed += 1;
+            Ok(())
+        }
+        fn create_mesh(&mut self, _: &[Vertex], _: &[u16]) -> Result<MeshId, Self::Error> {
+            Ok(MeshId(1))
+        }
+        fn create_entity_mesh(
+            &mut self,
+            _: &[crate::entity::LitVertex],
+            _: &[u16],
+        ) -> Result<MeshId, Self::Error> {
+            Ok(MeshId(1))
+        }
+        fn create_gui_mesh(
+            &mut self,
+            _: &[gui::GuiVertex],
+            _: &[u16],
+        ) -> Result<MeshId, Self::Error> {
+            Ok(MeshId(1))
+        }
+        fn remove_mesh(&mut self, _: MeshId) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn render(&mut self, _: &Frame<'_>) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn read_rgba(&mut self, _: [u32; 4]) -> Result<Vec<u8>, Self::Error> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// A page whose pixels changed is re-uploaded into its existing texture. Rebuilding
+    /// it would delete and allocate a whole page for every animated glyph each frame.
+    #[test]
+    fn an_edited_resident_page_is_updated_in_place_not_recreated() {
+        let layout = Layout::new([6, 6], 4, 9).unwrap();
+        let mut cache = Cache::new(layout, 4).unwrap();
+        let mut backend = Counting::default();
+        let side = [layout.side; 2];
+        let mut loads = 0usize;
+        let mut page = |_: usize| {
+            loads += 1;
+            Ok::<_, ()>(vec![loads as u8; layout.page_bytes()])
+        };
+        let first = cache.texture(&mut backend, 0, &mut page).unwrap();
+        assert_eq!((backend.created, backend.removed), (1, 0));
+        cache.invalidate(&[0]);
+        let again = cache.texture(&mut backend, 0, &mut page).unwrap();
+        assert_eq!(again, first);
+        assert_eq!((backend.created, backend.removed), (1, 0));
+        assert_eq!(backend.updates, [([0; 2], side)]);
+        // An unedited page is still served from residency without a load.
+        drop(page);
+        let loaded = loads;
+        assert_eq!(
+            cache
+                .texture(&mut backend, 0, &mut |_: usize| {
+                    Ok::<_, ()>(vec![0; layout.page_bytes()])
+                })
+                .unwrap(),
+            first
+        );
+        assert_eq!(loads, loaded);
+    }
+
     fn geometry() -> Vec<gui::Run> {
         let p = [[0., 0.], [60., 0.], [60., 60.], [0., 60.]];
         let uv = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]];

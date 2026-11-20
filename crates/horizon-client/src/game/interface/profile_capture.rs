@@ -690,7 +690,7 @@ impl Game<'_> {
 
     /// The pass timings the running capture asked for, as the renderer shows them now.
     fn gpu_readout(&self) -> Option<horizon_client::gfx::pack_timing::GpuReadout> {
-        gpu_readout(self.profile.gpu, self.renderer.as_ref())
+        gpu_readout(self.profile.gpu, self.renderer.modern_ref())
     }
 
     /// `/profiler start|stop|status|mark`: the requests of `horizon-ctl profile`, answered in chat.
@@ -983,7 +983,7 @@ impl Game<'_> {
         });
         let t = self.profile.perf.now();
         if self.profile.gpu != GpuSwitch::Off
-            && let Some(renderer) = self.renderer.as_mut()
+            && let Some(renderer) = self.renderer.modern_mut()
         {
             let frames = renderer.take_timed_frames();
             self.profile.perf.gpu_frames(t, cpu_ms, &frames);
@@ -993,7 +993,7 @@ impl Game<'_> {
             .as_ref()
             .and_then(|r| r.session.counters.lock().unwrap().clone());
         self.profile.perf.set_connection(connection);
-        let (wanted, renderer) = (self.profile.gpu, self.renderer.as_ref());
+        let (wanted, renderer) = (self.profile.gpu, self.renderer.modern_ref());
         let entities = self.perf_entity_count() as u32;
         self.profile.perf.frame_with_gpu(
             t,

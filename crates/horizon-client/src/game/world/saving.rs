@@ -290,7 +290,7 @@ impl Game<'_> {
             )
             .without_navigation()
         });
-        let Some(renderer) = &mut self.renderer else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return Ok(());
         };
         let mut hud = HudBatch::new(
@@ -343,7 +343,7 @@ impl Game<'_> {
         {
             return;
         }
-        let Some(renderer) = self.renderer.as_mut() else {
+        let Some(renderer) = self.renderer.modern_mut() else {
             return;
         };
         // countRenderedSections() > 10: a client that joined its server

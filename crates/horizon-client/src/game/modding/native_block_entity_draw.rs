@@ -784,7 +784,7 @@ impl Game<'_> {
                 self.pack_ids.is_some(),
                 !self.native_shaders.picked.is_empty(),
                 self.renderer
-                    .as_ref()
+                    .modern_ref()
                     .and_then(|renderer| renderer.prepared_generation()),
                 self.standalone_geometry.generation(),
             ),
@@ -889,7 +889,7 @@ impl Game<'_> {
     pub(super) fn prepared_copy_room(&self, already: u64, incoming: usize) -> Option<usize> {
         let room = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map(|renderer| renderer.prepared_instance_room(already, incoming));
         #[cfg(test)]
         let room = room.or_else(|| horizon_client::gfx::capped_prepared_room(already, incoming));

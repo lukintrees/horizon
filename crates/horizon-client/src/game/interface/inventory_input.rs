@@ -20,11 +20,7 @@ impl Game<'_> {
         let Some(key) = self.settings.keys.container_hotbar_key(code) else {
             return false;
         };
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return false;
         };
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
@@ -48,11 +44,7 @@ impl Game<'_> {
     pub(super) fn inventory_hotkey(&mut self, key: KeyCode) -> bool {
         use horizon_client::container_screen::{HotbarKey, hotbar_swap};
         use horizon_client::menu::Input;
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return false;
         };
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
@@ -87,11 +79,7 @@ impl Game<'_> {
         let menu = (self.screen == Screen::Inventory
             || (self.screen == Screen::Creative && !self.creative_screen.tab().search))
             && !self.dialog_open();
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return;
         };
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
@@ -269,13 +257,10 @@ impl Game<'_> {
         let Some((ty, slots)) = self.inv_drag.clone() else {
             return;
         };
-        let Some(r) = self.renderer.as_ref() else {
+        let Some(size) = self.renderer.size() else {
             return;
         };
-        let batch = HudBatch::new(
-            [r.config.width, r.config.height],
-            self.settings.gui_scale_inputs(),
-        );
+        let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
         if let Some(slot) = self.slot_at(&batch, self.cursor.0, self.cursor.1)
             && slot != 200
             && slot < Creative::DISPLAY
@@ -300,13 +285,15 @@ impl Game<'_> {
     }
     /// The hovered slot and whether the cursor is outside the window.
     pub(super) fn inventory_target(&self) -> (Option<usize>, bool) {
-        let Some(r) = self.renderer.as_ref() else {
-            return (None, false);
+        // The frame size is the owner's, modern or native: asking only the modern renderer
+        // left the native GL2 window with no slot under the pointer at all, so every press
+        // and release in a container did nothing (hover worked, because it uses the
+        // neutral `gui_size`).
+        let size = match self.renderer.size() {
+            Some(size) => size,
+            None => return (None, false),
         };
-        let batch = HudBatch::new(
-            [r.config.width, r.config.height],
-            self.settings.gui_scale_inputs(),
-        );
+        let batch = HudBatch::new(size, self.settings.gui_scale_inputs());
         (
             self.slot_at(&batch, self.cursor.0, self.cursor.1),
             self.clicked_outside(&batch),
@@ -459,8 +446,12 @@ impl Game<'_> {
                 self.inv_drag = None;
                 self.throw_click(right, input);
             }
-            (Release::Click(input), Target::Slot(slot)) if self.inv_drag.is_some() => {
-                // The drag never reached a slot: a plain click where it ends.
+            (Release::Click(input), Target::Slot(slot)) => {
+                // `mouseReleased` over a slot with a carried stack sends the PICKUP
+                // that puts it down, whether or not a drag ran in between. Sending it
+                // only when `inv_drag` was set left a plain press-move-release with
+                // the stack stuck on the cursor: a press picks up, and nothing ever
+                // drops it.
                 self.inv_drag = None;
                 if !self.click_open_inventory(Some(slot), i32::from(right), input) {
                     self.click_inventory(right);

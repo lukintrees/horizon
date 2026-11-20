@@ -1,0 +1,516 @@
+//! Owning storage for the Game renderer migration. No Deref: modern-only
+//! compatibility accesses are deliberately named, not a native fallback.
+use crate::{gfx, renderer_facade::RendererFacade};
+use horizon_render_api::render_contract::{Backend, FrameOptions, VisibleSections};
+
+#[cfg(feature = "legacy-gl")]
+mod native_streaming;
+#[cfg(feature = "legacy-gl")]
+pub use native_streaming::{NativeStream, UploadBudget as NativeUploadBudget};
+#[cfg(feature = "legacy-gl")]
+use native_streaming::fitted_radius;
+
+mod visibility;
+pub use visibility::SectionOrder;
+
+#[derive(Default)]
+pub struct RendererOwner {
+    inner: Owner,
+}
+
+/// The resident block entities of whichever owner is live: the modern renderer's store, or
+/// the native one's. One body of game code asks this for the chests, signs and pots to draw.
+#[derive(Clone, Copy)]
+pub enum BlockEntities<'a> {
+    Modern(&'a gfx::Renderer),
+    #[cfg(feature = "legacy-gl")]
+    Native(crate::legacy_gfx::NativeBlockEntities<'a>),
+}
+impl BlockEntities<'_> {
+    /// `Renderer::visible_block_entities_in_frustum`, as owned copies so the caller's
+    /// closures keep their own borrows (the game's cull closures read the block table).
+    pub fn visible_in_frustum<'b>(
+        &'b self,
+        fade_seconds: f32,
+        camera: glam::DVec3,
+        frustum: Option<gfx::JoinedFrusta>,
+        keep_section: impl Fn(u32) -> bool + 'b,
+        keep_long_range: impl Fn(u32) -> bool + 'b,
+    ) -> Box<dyn Iterator<Item = (([i32; 3], u32), bool)> + 'b> {
+        match self {
+            Self::Modern(r) => Box::new(
+                r.visible_block_entities_in_frustum(
+                    fade_seconds,
+                    camera,
+                    frustum,
+                    keep_section,
+                    keep_long_range,
+                )
+                .map(|(block, inside)| (*block, inside)),
+            ),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => Box::new(
+                r.visible_in_frustum(
+                    fade_seconds,
+                    camera,
+                    frustum,
+                    keep_section,
+                    keep_long_range,
+                )
+                .map(|(block, inside)| (*block, inside)),
+            ),
+        }
+    }
+    /// `Renderer::visible_block_entities`, as owned copies.
+    pub fn visible(&self, fade_seconds: f32) -> Box<dyn Iterator<Item = ([i32; 3], u32)> + '_> {
+        match self {
+            Self::Modern(r) => Box::new(r.visible_block_entities(fade_seconds).copied()),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => Box::new(r.visible(fade_seconds).copied()),
+        }
+    }
+    /// `Renderer::block_entity_revision`.
+    pub fn revision(&self) -> u64 {
+        match self {
+            Self::Modern(r) => r.block_entity_revision(),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => r.revision(),
+        }
+    }
+    /// `Renderer::block_entity_section_revision`.
+    pub fn section_revision(
+        &self,
+        section: [i32; 3],
+    ) -> Option<crate::block_entity_render::StaticSectionRevision> {
+        match self {
+            Self::Modern(r) => r.block_entity_section_revision(section),
+            #[cfg(feature = "legacy-gl")]
+            Self::Native(r) => r.section_revision(section),
+        }
+    }
+}
+
+/// What a native GL driver calls itself (`status.legacy`, the run report). Plain strings: the
+/// probe and the tests read them without a GL context.
+#[cfg(feature = "legacy-gl")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeInfo {
+    pub vendor: String,
+    pub renderer: String,
+    pub gl_version: String,
+    pub glsl_version: String,
+}
+#[derive(Default)]
+enum Owner {
+    #[default]
+    Empty,
+    Modern(Box<gfx::Renderer>),
+    #[cfg(feature = "legacy-gl")]
+    Legacy(Box<crate::legacy_gfx::TerrainHudRenderer>),
+}
+impl RendererOwner {
+    pub fn from_modern(renderer: gfx::Renderer) -> Self {
+        Self {
+            inner: Owner::Modern(Box::new(renderer)),
+        }
+    }
+    #[cfg(feature = "legacy-gl")]
+    pub fn from_legacy(renderer: crate::legacy_gfx::TerrainHudRenderer) -> Self {
+        Self {
+            inner: Owner::Legacy(Box::new(renderer)),
+        }
+    }
+    /// Actual Game's first native bootstrap: CPU assets only, static-menu SDR.
+    /// The white lightmap is deliberate for this menu-only route, not a claim
+    /// of live world lighting. World startup must supply/tick its own lightmap.
+    #[cfg(feature = "legacy-gl")]
+    pub fn legacy_menu_bootstrap(
+        kind: &str,
+        size: [u32; 2],
+        assets: &crate::assets::RenderAssets,
+        hud: &crate::hud::HudAtlas,
+        generation: horizon_render_api::render_contract::ResourceGeneration,
+    ) -> crate::Result<Self> {
+        let context = horizon_legacy_render::Context::new(kind, size)?;
+        Self::legacy_menu_with_context(context, assets, hud, generation)
+    }
+    /// Transfer the existing loading window/context. Boot GPU resources must
+    /// already have been dropped; never create a second native window/device.
+    #[cfg(feature = "legacy-gl")]
+    pub fn legacy_menu_with_context(
+        context: horizon_legacy_render::Context,
+        assets: &crate::assets::RenderAssets,
+        hud: &crate::hud::HudAtlas,
+        generation: horizon_render_api::render_contract::ResourceGeneration,
+    ) -> crate::Result<Self> {
+        log::info!("native GL2 Game menu factory: {}", context.description());
+        let renderer = crate::legacy_gfx::TerrainHudRenderer::stage_assets(
+            context,
+            assets,
+            hud,
+            generation,
+            &[255; 1024],
+            crate::legacy_gfx::Limits::default(),
+            crate::legacy_gfx::ResourceLimits::default(),
+        )?
+        .commit()?;
+        Ok(Self::from_legacy(renderer))
+    }
+    /// The GL driver behind a native owner, for `status` and the run report: which GL and
+    /// GLSL version answered, and who wrote the driver. Never invented for the modern one.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_info(&self) -> Option<NativeInfo> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        let identity = renderer.identity();
+        Some(NativeInfo {
+            vendor: identity.vendor.clone(),
+            renderer: identity.renderer.clone(),
+            gl_version: identity.version.clone(),
+            glsl_version: identity.glsl.clone(),
+        })
+    }
+    /// The largest view the native interest table can hold around a level of `sections`
+    /// vertical sections, in chunks, and the table's capacity: `None` for the modern owner,
+    /// whose interest is its own plan's.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_view_limit(&self, sections: usize) -> Option<(i32, usize)> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        let slots = renderer.stream_capacity().slots;
+        Some((fitted_radius(sections, slots), slots))
+    }
+    /// What the native owner's GPU budget holds and what is left of it, so a run can say how
+    /// close to the tracked payload limit it drew.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_usage(
+        &self,
+    ) -> Option<(
+        horizon_legacy_render::Stats,
+        horizon_legacy_render::Stats,
+        usize,
+    )> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        let (used, free) = renderer.gpu_usage();
+        Some((used, free, renderer.resident_sections()))
+    }
+    /// The native section interest table's own usage: how many residency tickets it holds,
+    /// how many completions wait for upload, and the bytes they retained.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_stream_usage(&self) -> Option<horizon_render_api::streaming::Usage> {
+        let Owner::Legacy(renderer) = &self.inner else {
+            return None;
+        };
+        renderer.stream_usage()
+    }
+    pub fn backend(&self) -> Option<Backend> {
+        match self.inner {
+            Owner::Empty => None,
+            Owner::Modern(_) => Some(Backend::Modern),
+            #[cfg(feature = "legacy-gl")]
+            Owner::Legacy(_) => Some(Backend::LegacyGl),
+        }
+    }
+    /// The frame size the world producer needs before it can cull or lay out a
+    /// frame. `None` while no device exists yet, as before the native route.
+    pub fn size(&self) -> Option<[u32; 2]> {
+        match &self.inner {
+            Owner::Empty => None,
+            Owner::Modern(renderer) => Some([renderer.config.width, renderer.config.height]),
+            #[cfg(feature = "legacy-gl")]
+            Owner::Legacy(renderer) => Some(renderer.size()),
+        }
+    }
+    /// Fill caller-owned CPU visibility from native residency, then release the
+    /// resident borrow before facade submission. Modern retains its own walk;
+    /// `None` is not an invented empty native scene or permission to fall back.
+    #[cfg(feature = "legacy-gl")]
+    pub fn native_visible_sections<'a>(
+        &self,
+        order: &'a mut SectionOrder,
+        camera: glam::DVec3,
+        radius: i32,
+        frustum: &gfx::Frustum,
+    ) -> crate::Result<Option<VisibleSections<'a>>> {
+        order.clear();
+        let Owner::Legacy(renderer) = &self.inner else {
+            return Ok(None);
+        };
+        order.update(
+            renderer.section_keys()?,
+            renderer.terrain_min_y(),
+            camera,
+            radius,
+            frustum,
+        )?;
+        Ok(Some(order.visible()))
+    }
+    /// Existing Game world Frame -> committed native residency -> common facade.
+    /// The caller retains/reuses visibility scratch. Never invent an empty world
+    /// before streaming has an identity, or manufacture a modern fallback.
+    #[cfg(feature = "legacy-gl")]
+    pub fn render_native_world(
+        &mut self,
+        source: &crate::gfx::Frame<'_>,
+        order: &mut SectionOrder,
+        radius: i32,
+        options: FrameOptions,
+    ) -> crate::Result<horizon_render_api::render_contract::FrameOutcome> {
+        use horizon_render_api::render_contract::FrameOutcome;
+        order.clear();
+        let result = (|| {
+            let Owner::Legacy(renderer) = &self.inner else {
+                return Err("native world submission requires a native owner".into());
+            };
+            if renderer.size().contains(&0) {
+                return Ok(FrameOutcome::Deferred);
+            }
+            if source.title {
+                return Err("native world submission cannot request a title panorama".into());
+            }
+            if renderer.stream_usage().is_none() {
+                return Err("native world submission requires initialized world streaming".into());
+            }
+            let generation = renderer
+                .resource_generation()
+                .ok_or("native world submission requires committed CPU assets")?;
+            let frustum = gfx::camera_frustum(
+                renderer.size(),
+                source.fov_degrees,
+                source.yaw,
+                source.pitch,
+                source.bob * source.spin,
+                source.depth_far,
+            );
+            let visible = self
+                .native_visible_sections(order, source.camera, radius, &frustum)?
+                .ok_or("native world visibility lost its owner")?;
+            let mut facade = self
+                .facade(visible, options)
+                .ok_or("missing native world facade")?;
+            // Reuse the published asset identity and Game's existing clock. CPU
+            // posing belongs to Game; GPU skin requests still fail explicitly.
+            facade.advance_animations(generation, source.ticks)?;
+            facade.render(source)
+        })();
+        if result.is_err() {
+            order.clear();
+        }
+        result
+    }
+    /// A native owner may not enter winit/wgpu initialization or recovery.
+    /// Empty is permitted: the default modern startup has not created a device yet.
+    pub fn allow_modern_startup(&self) -> Result<(), &'static str> {
+        if self.backend() == Some(Backend::LegacyGl) {
+            return Err("native GL2 owner cannot enter modern window/device startup");
+        }
+        Ok(())
+    }
+    /// Transitional leaf paths (shader packs, split composition, HDR, GPU
+    /// queries) remain explicitly modern. Native startup must never interpret
+    /// None from these as permission to create a modern replacement device.
+    pub fn modern_ref(&self) -> Option<&gfx::Renderer> {
+        match &self.inner {
+            Owner::Modern(r) => Some(r),
+            _ => None,
+        }
+    }
+    /// Which store holds the resident sections' block entities, for the game's one
+    /// producer body: the modern renderer's or the native owner's. Both answer the same
+    /// questions, so chests, signs and pots draw on either backend.
+    pub fn block_entities(&self) -> Option<BlockEntities<'_>> {
+        match &self.inner {
+            Owner::Empty => None,
+            Owner::Modern(r) => Some(BlockEntities::Modern(r)),
+            #[cfg(feature = "legacy-gl")]
+            Owner::Legacy(r) => Some(BlockEntities::Native(r.block_entities())),
+        }
+    }
+    pub fn modern_mut(&mut self) -> Option<&mut gfx::Renderer> {
+        match &mut self.inner {
+            Owner::Modern(r) => Some(r),
+            _ => None,
+        }
+    }
+    pub fn has_modern(&self) -> bool {
+        self.modern_ref().is_some()
+    }
+    /// Only transfers a modern owner. A native owner is preserved on refusal.
+    pub fn take_modern(&mut self) -> Option<gfx::Renderer> {
+        if !self.has_modern() {
+            return None;
+        }
+        match std::mem::take(&mut self.inner) {
+            Owner::Modern(r) => Some(*r),
+            _ => unreachable!(),
+        }
+    }
+    /// Explicit modern publication, not an automatic backend conversion.
+    pub fn set_modern(&mut self, renderer: gfx::Renderer) -> crate::Result<()> {
+        self.allow_modern_startup()?;
+        self.inner = Owner::Modern(Box::new(renderer));
+        Ok(())
+    }
+    /// Borrow the existing submission facade without exposing graphics handles.
+    /// Visibility/options are caller-owned CPU data; no invented native world.
+    pub fn facade<'a>(
+        &'a mut self,
+        visible: VisibleSections<'a>,
+        options: FrameOptions,
+    ) -> Option<RendererFacade<'a>> {
+        match &mut self.inner {
+            Owner::Empty => None,
+            Owner::Modern(r) => {
+                let _ = (visible, options);
+                Some(RendererFacade::modern(r))
+            }
+            #[cfg(feature = "legacy-gl")]
+            Owner::Legacy(r) => Some(RendererFacade::legacy(r, visible, options)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn empty_owner_does_not_create_a_backend_or_fabricate_a_modern_renderer() {
+        let mut owner = RendererOwner::default();
+        assert_eq!(owner.backend(), None);
+        assert!(!owner.has_modern());
+        assert!(owner.allow_modern_startup().is_ok());
+        assert!(owner.modern_ref().is_none());
+        assert!(owner.modern_mut().is_none());
+        assert!(owner.take_modern().is_none());
+        assert!(
+            owner
+                .facade(VisibleSections::default(), FrameOptions::default())
+                .is_none()
+        );
+    }
+    #[cfg(feature = "legacy-gl")]
+    #[test]
+    fn empty_world_owner_refuses_submission_without_initializing_a_device() {
+        let mut owner = RendererOwner::default();
+        let mut order = SectionOrder::default();
+        let hud = crate::hud::HudBatch::scratch([64; 2]);
+        let source = crate::legacy_gfx::frame::tests::source(&hud);
+        assert!(
+            owner
+                .render_native_world(&source, &mut order, 3, FrameOptions::default())
+                .unwrap_err()
+                .to_string()
+                .contains("requires a native owner")
+        );
+        assert_eq!(owner.backend(), None);
+        assert!(order.visible().solid.is_empty());
+    }
+    #[cfg(feature = "legacy-gl")]
+    #[test]
+    #[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
+    fn native_owner_survives_modern_take_and_dispatches_the_existing_facade() {
+        use crate::{
+            frame::MenuFrame,
+            hud::{HudAtlas, HudBatch},
+            legacy_gfx::{Limits, ResourceLimits, TerrainHudRenderer, test_assets},
+        };
+        use horizon_render_api::{
+            render_contract::{FrameOutcome, ResourceGeneration},
+            resource_contract::TerrainAtlasLimits,
+        };
+        let assets = test_assets();
+        let atlas = HudAtlas::boot();
+        let renderer = TerrainHudRenderer::stage_assets(
+            horizon_legacy_render::Context::new("osmesa", [64; 2]).unwrap(),
+            &assets,
+            &atlas,
+            ResourceGeneration(77),
+            &[255; 1024],
+            Limits::default(),
+            ResourceLimits {
+                terrain: TerrainAtlasLimits {
+                    page_size: 8,
+                    max_pages: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .commit()
+        .unwrap();
+        let mut owner = RendererOwner::from_legacy(renderer);
+        assert_eq!(owner.backend(), Some(Backend::LegacyGl));
+        assert!(owner.allow_modern_startup().is_err());
+        assert!(owner.modern_ref().is_none());
+        assert!(owner.modern_mut().is_none());
+        assert!(owner.take_modern().is_none());
+        assert_eq!(owner.backend(), Some(Backend::LegacyGl));
+        let mut facade = owner
+            .facade(VisibleSections::default(), FrameOptions::default())
+            .unwrap();
+        assert_eq!(facade.resource_generation(), Some(ResourceGeneration(77)));
+        facade.resize([32; 2]).unwrap();
+        assert_eq!(facade.size(), [32; 2]);
+        let mut hud = HudBatch::scratch([32; 2]);
+        hud.fill(&atlas, 0., 0., 32., 32., u32::MAX);
+        assert_eq!(
+            facade
+                .render_menu(&MenuFrame::static_color(&hud, [0., 0., 0., 1.]))
+                .unwrap(),
+            FrameOutcome::Offscreen
+        );
+        // This verifies ownership/submission only, not Game/native startup.
+        assert_eq!(owner.backend(), Some(Backend::LegacyGl));
+    }
+}
+
+#[cfg(all(test, feature = "legacy-gl"))]
+mod bootstrap_tests {
+    use super::*;
+    use horizon_render_api::render_contract::{FrameOutcome, ResourceGeneration};
+    #[test]
+    fn bad_bootstrap_surface_does_not_reset_the_cpu_font_or_load_a_driver() {
+        let assets = crate::legacy_gfx::test_assets();
+        let hud = crate::hud::HudAtlas::boot();
+        let epoch = hud.font.epoch();
+        assert!(
+            RendererOwner::legacy_menu_bootstrap(
+                "osmesa",
+                [0, 64],
+                &assets,
+                &hud,
+                ResourceGeneration(1)
+            )
+            .is_err()
+        );
+        assert_eq!(hud.font.epoch(), epoch);
+    }
+    #[test]
+    #[ignore = "requires OSMesa and explicit GL2 software-driver environment"]
+    fn game_bootstrap_factory_uses_cpu_assets_and_submits_real_hud_batches() {
+        let assets = crate::legacy_gfx::test_assets();
+        let hud = crate::hud::HudAtlas::boot();
+        let mut owner = RendererOwner::legacy_menu_bootstrap(
+            "osmesa",
+            [64; 2],
+            &assets,
+            &hud,
+            ResourceGeneration(1),
+        )
+        .unwrap();
+        assert_eq!(owner.backend(), Some(Backend::LegacyGl));
+        let mut batch = crate::hud::HudBatch::scratch([64; 2]);
+        batch.fill(&hud, 0., 0., 64., 64., u32::MAX);
+        let menu = crate::frame::MenuFrame::static_color(&batch, [0., 0., 0., 1.]);
+        let mut facade = owner
+            .facade(VisibleSections::default(), FrameOptions::default())
+            .unwrap();
+        assert_eq!(facade.resource_generation(), Some(ResourceGeneration(1)));
+        assert_eq!(facade.render_menu(&menu).unwrap(), FrameOutcome::Offscreen);
+    }
+}

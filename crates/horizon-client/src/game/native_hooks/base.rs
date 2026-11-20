@@ -4632,7 +4632,7 @@ impl Game<'_> {
     pub(in crate::game) fn mod_screen_open(&mut self, mod_id: &str) -> bool {
         // What `screen_hooks_open` would refuse over the world: the mod's
         // screen would be up with no hook to draw or click it.
-        let blocked = self.renderer.is_none() || self.mod_screen_blocked();
+        let blocked = !self.renderer.has_modern() || self.mod_screen_blocked();
         let owner = self.mod_screen();
         if let Some(open) = mod_screen_opens(self.screen, blocked, owner, mod_id) {
             return open;

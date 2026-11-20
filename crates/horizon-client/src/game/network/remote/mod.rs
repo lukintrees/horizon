@@ -1091,7 +1091,7 @@ impl Game<'_> {
         self.dim = Dim::Overworld;
         self.clear_lod();
         self.pending_uploads.clear();
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.clear_sections(self.world.layout());
         }
         self.apply_settings();
@@ -1354,7 +1354,7 @@ impl Game<'_> {
         self.dim = Dim::Overworld;
         self.clear_lod();
         self.pending_uploads.clear();
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.clear_sections(self.world.layout());
         }
         self.apply_settings();
@@ -1611,7 +1611,7 @@ impl Game<'_> {
         self.container = None;
         self.clear_lod();
         self.pending_uploads.clear();
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.clear_sections(self.world.layout());
         }
         let saves = std::env::current_dir()?.join("saves");
@@ -2402,7 +2402,7 @@ impl Game<'_> {
             }
             self.clear_lod();
             self.pending_uploads.clear();
-            if let Some(renderer) = self.renderer.as_mut() {
+            if let Some(renderer) = self.renderer.modern_mut() {
                 renderer.clear_sections(self.world.layout());
             }
             // The new ClientLevel is told before setLevel drops the old one.
@@ -2507,7 +2507,7 @@ impl Game<'_> {
                 lod.observe(chunk.clone(), self.res.facts());
             }
         }
-        if let Some(renderer) = self.renderer.as_mut() {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.remove_columns(gone.iter().copied());
         }
         horizon_client::chunk::free_columns(freed, gone.len());
@@ -9078,11 +9078,7 @@ impl Game<'_> {
     }
     /// A container click: the server answers with the authoritative slots.
     pub(super) fn remote_click(&mut self, right: bool) {
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return;
         };
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());

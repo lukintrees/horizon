@@ -548,7 +548,7 @@ fn client_gui_state_matches_screen_init_hook() {
                     .unwrap(),
             );
             game.options.offscreen = true;
-            game.renderer = Some(game.new_renderer(window).unwrap());
+            game.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(game.new_renderer(window).unwrap());
             game.screen = Screen::Playing;
             assert!(mod_api::prelude::ScreensClientHost::observed_screen_id(game).is_none());
             game.set_screen(Screen::Inventory);

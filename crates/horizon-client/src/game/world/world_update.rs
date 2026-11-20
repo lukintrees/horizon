@@ -16,13 +16,13 @@ impl Game<'_> {
         self.lod_blue_map = None;
         self.far_beacons.clear();
         self.lod_covered_at = None;
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.clear_lods();
         }
     }
     pub(super) fn prepare_lod(&mut self) {
         let enabled = self.far_terrain_choice().0 > 0
-            && self.renderer.is_some()
+            && self.renderer.has_modern()
             && self.player.is_some()
             && self.title.is_none();
         if !enabled {
@@ -151,7 +151,7 @@ impl Game<'_> {
         // or went) and dropped every section and far tile: meshed again, as for a new one.
         if self
             .renderer
-            .as_mut()
+            .modern_mut()
             .is_some_and(Renderer::take_dropped_sections)
         {
             self.clear_lod();
@@ -190,7 +190,7 @@ impl Game<'_> {
         // A headless game has nothing to draw sections with: like a server's, they aren't
         // meshed while it has no renderer.
         if self.options.headless {
-            self.streaming.mesh = self.renderer.is_some();
+            self.streaming.mesh = self.renderer.has_modern();
         }
         let areas = self.streaming.extra.len();
         let waiting = std::mem::take(&mut self.spawn_wait);
@@ -198,6 +198,44 @@ impl Game<'_> {
             .extra
             .extend(waiting.into_iter().map(|chunk| (chunk, 0)));
         self.streaming.upload_backlog = self.pending_uploads.len();
+        // The native owner's sections are uploaded by its own scheduler, nearest first within
+        // a per-frame budget: it consumes the meshes itself and returns no upload list, so the
+        // modern plan/commit below is the modern owner's alone.
+        #[cfg(feature = "legacy-gl")]
+        if self.renderer.backend() == Some(horizon_client::render_contract::Backend::LegacyGl) {
+            let native = horizon_client::spans::time("streaming", || {
+                let g = &self.settings.horizon;
+                let defaults = horizon_client::renderer_owner::NativeUploadBudget::default();
+                self.native_streaming.update(
+                    &mut self.renderer,
+                    &mut self.streaming,
+                    &mut self.world,
+                    horizon_client::renderer_owner::NativeUploadBudget {
+                        // The setting caps the burst; the time budget below is what keeps a
+                        // frame affordable. Unlimited (0) takes the default cap, not 64 at once.
+                        jobs: if g.chunk_updates == 0 {
+                            defaults.jobs
+                        } else {
+                            (g.chunk_updates as usize).min(64)
+                        },
+                        bytes: if g.upload_budget_kib == 0 {
+                            defaults.bytes
+                        } else {
+                            usize::try_from(u64::from(g.upload_budget_kib) * 1024)
+                                .unwrap_or(usize::MAX)
+                        },
+                        micros: defaults.micros,
+                    },
+                )
+            });
+            self.streaming.extra.truncate(areas);
+            if let Some(error) = native.error {
+                self.error = Some(error.into());
+            }
+            // A GPU error is not permission to skip this: unloaded modified columns still
+            // take the entity cleanup and save path every streaming update runs.
+            return self.finish_streaming_update(Vec::new(), native.unloaded);
+        }
         let plan = horizon_client::spans::time("streaming_plan", || {
             let mut step = self.streaming.begin_plan_update(&mut self.world);
             loop {
@@ -218,6 +256,17 @@ impl Game<'_> {
             self.streaming.complete_commit(&mut self.world, commit)
         });
         self.streaming.extra.truncate(areas);
+        self.finish_streaming_update(uploads, unloaded);
+    }
+
+    /// What every streaming update owes the world once its meshes and columns are in: the
+    /// viewed levels' meshing, the unloaded columns' entities, saves and far tiles. Both owners
+    /// reach it, with the native one handing in an empty upload list (its scheduler took them).
+    fn finish_streaming_update(
+        &mut self,
+        uploads: Vec<((i32, i32, i32), horizon_client::mesher::SectionMesh)>,
+        unloaded: Vec<std::sync::Arc<horizon_client::chunk::Chunk>>,
+    ) {
         // The viewed levels' meshing, queued after the player's level's (nothing while no view
         // names one).
         if self.streaming.mesh
@@ -315,7 +364,7 @@ impl Game<'_> {
             self.view_arrival.arriving(view, now, has) || self.remote_backlog() > 0
         };
         // Which far tiles a zoom magnifies (`lod::ZoomAim`), read before
-        // `self.renderer.as_mut()` below borrows self mutably for the rest of
+        // `self.renderer.modern_mut()` below borrows self mutably for the rest of
         // this function. Cheap: trigonometry on one angle, or None when the
         // view is not zoomed.
         let lod_aim = self
@@ -323,7 +372,7 @@ impl Game<'_> {
             .as_ref()
             .map(|p| [p.position.x, p.position.y, p.position.z])
             .and_then(|camera| self.lod_aim(camera));
-        if let Some(renderer) = self.renderer.as_mut() {
+        if let Some(renderer) = self.renderer.modern_mut() {
             let g = &self.settings.horizon;
             let budgeted = g.chunk_updates > 0 || g.upload_budget_kib > 0;
             // The meshes, once copied, are freed by a worker (`Streaming::free`).

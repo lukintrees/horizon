@@ -2,11 +2,17 @@
 
 #[path = "guest_stack_constants.rs"]
 mod constants;
-pub use constants::{GUEST_STACK_BYTES, HOST_HEADROOM};
+pub use constants::{GUEST_RESERVATION_BYTES, GUEST_STACK_BYTES, HOST_HEADROOM};
 
 /// Spawn guarantees the reservation even on platforms without a stack-size query.
 pub fn builder() -> std::thread::Builder {
-    std::thread::Builder::new().stack_size(GUEST_STACK_BYTES + HOST_HEADROOM)
+    std::thread::Builder::new().stack_size(GUEST_RESERVATION_BYTES)
+}
+
+/// The refusal message quotes no figure: this build reserves 136 MiB on a 64-bit process and
+/// 18 MiB on a 32-bit one, and the caller only needs to know the stack is too small.
+fn too_small() -> &'static str {
+    "GuestStackUnavailable: calling thread stack is too small"
 }
 
 /// Starts a thread that may enter a guest: guest-sized and named `name`, and in debug builds it
@@ -131,8 +137,8 @@ fn inspect_current() -> Result<(), &'static str> {
             let mut size = 0;
             let result = libc::pthread_attr_getstacksize(&attr, &mut size);
             libc::pthread_attr_destroy(&mut attr);
-            if result != 0 || size < GUEST_STACK_BYTES + HOST_HEADROOM {
-                return Err("GuestStackUnavailable: calling thread needs 136 MiB of stack");
+            if result != 0 || size < GUEST_RESERVATION_BYTES {
+                return Err(too_small());
             }
         }
     }
@@ -140,18 +146,16 @@ fn inspect_current() -> Result<(), &'static str> {
     {
         // SAFETY: pthread_self names the live calling thread.
         let size = unsafe { libc::pthread_get_stacksize_np(libc::pthread_self()) };
-        if size < GUEST_STACK_BYTES + HOST_HEADROOM {
-            return Err("GuestStackUnavailable: calling thread needs 136 MiB of stack");
+        if size < GUEST_RESERVATION_BYTES {
+            return Err(too_small());
         }
     }
     #[cfg(windows)]
     {
-        let mut low = 0;
-        let mut high = 0;
-        // SAFETY: both pointers refer to writable stack bounds.
-        unsafe { get_current_thread_stack_limits(&mut low, &mut high) };
-        if high - low < GUEST_STACK_BYTES + HOST_HEADROOM {
-            return Err("GuestStackUnavailable: calling thread needs 136 MiB of stack");
+        if let Some((low, high)) = stack_bounds() {
+            if high.saturating_sub(low) < GUEST_RESERVATION_BYTES {
+                return Err(too_small());
+            }
         }
     }
     #[cfg(not(any(target_os = "linux", target_vendor = "apple", windows)))]
@@ -160,11 +164,96 @@ fn inspect_current() -> Result<(), &'static str> {
     Ok(())
 }
 
+/// The calling thread's stack bounds, `(low, high)` in address order.
+///
+/// `GetCurrentThreadStackLimits` arrived in Windows 8, and a *static* import of it keeps the
+/// image from loading on Windows 7 at all: the loader reports "entry point
+/// GetCurrentThreadStackLimits not found in KERNEL32.dll" before `main`. So it is resolved at run
+/// time, and on Windows 7 the reservation is measured instead: every stack is one reserved
+/// allocation, and `VirtualQuery` walks its regions up to the allocation's top.
+#[cfg(windows)]
+fn stack_bounds() -> Option<(usize, usize)> {
+    type Limits = unsafe extern "system" fn(*mut usize, *mut usize);
+    // SAFETY: constant name strings, and the returned address is only called when non-null.
+    let module = unsafe { GetModuleHandleA(kernel32.as_ptr()) };
+    let limits = if module.is_null() {
+        None
+    } else {
+        // SAFETY: `module` is a live module handle and the name is NUL-terminated.
+        unsafe { GetProcAddress(module, stack_limits.as_ptr()) }
+    };
+    if let Some(address) = limits {
+        // SAFETY: kernel32 exports `GetCurrentThreadStackLimits` with exactly this signature.
+        let limits: Limits = unsafe { std::mem::transmute(address) };
+        let (mut low, mut high) = (0, 0);
+        // SAFETY: both pointers refer to writable stack bounds.
+        unsafe { limits(&mut low, &mut high) };
+        return Some((low, high));
+    }
+    reservation_bounds()
+}
+
+#[cfg(windows)]
+const kernel32: &[u8] = b"kernel32.dll\0";
+#[cfg(windows)]
+const stack_limits: &[u8] = b"GetCurrentThreadStackLimits\0";
+
+#[cfg(windows)]
+#[repr(C)]
+struct MemoryBasicInformation {
+    base_address: usize,
+    allocation_base: usize,
+    allocation_protect: u32,
+    partition_id: u16,
+    region_size: usize,
+    state: u32,
+    protect: u32,
+    kind: u32,
+}
+
 #[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    #[link_name = "GetCurrentThreadStackLimits"]
-    fn get_current_thread_stack_limits(low: *mut usize, high: *mut usize);
+    fn GetModuleHandleA(name: *const u8) -> *mut std::ffi::c_void;
+    fn GetProcAddress(module: *mut std::ffi::c_void, name: *const u8) -> Option<unsafe extern "system" fn()>;
+    fn VirtualQuery(
+        address: usize,
+        buffer: *mut MemoryBasicInformation,
+        length: usize,
+    ) -> usize;
+}
+
+/// The whole reserved stack allocation around a live local, low address first.
+#[cfg(windows)]
+fn reservation_bounds() -> Option<(usize, usize)> {
+    let size = std::mem::size_of::<MemoryBasicInformation>();
+    let mut info = std::mem::MaybeUninit::<MemoryBasicInformation>::uninit();
+    let marker = 0u8;
+    // SAFETY: `info` is writable for `size` bytes, `marker` is a live stack address, and
+    // `VirtualQuery` is a Windows XP-era export that every Windows 7 has.
+    let queried = unsafe { VirtualQuery((&marker as *const u8) as usize, info.as_mut_ptr(), size) };
+    if queried != size {
+        return None;
+    }
+    // SAFETY: VirtualQuery filled the whole structure.
+    let base = unsafe { info.assume_init() }.allocation_base;
+    let mut high = base;
+    // A stack's pages are one allocation: walk until the allocation changes or memory runs out.
+    for _ in 0..4096 {
+        let mut region = std::mem::MaybeUninit::<MemoryBasicInformation>::uninit();
+        // SAFETY: `region` is writable for `size` bytes; `high` is inside the allocation.
+        let queried = unsafe { VirtualQuery(high, region.as_mut_ptr(), size) };
+        if queried != size {
+            break;
+        }
+        // SAFETY: VirtualQuery filled the whole structure.
+        let region = unsafe { region.assume_init() };
+        if region.allocation_base != base || region.region_size == 0 {
+            break;
+        }
+        high = high.checked_add(region.region_size)?;
+    }
+    (high > base).then_some((base, high))
 }
 
 #[cfg(test)]

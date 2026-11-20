@@ -83,8 +83,9 @@ wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 
 [features]
 # The legacy desktop OpenGL 2.x backend (horizon-legacy-render) as a dependency.
-# Nothing in the game constructs it yet: the CPU-side bridges in `render_bridge`,
-# `entity_bridge`, `gui_bridge` and `paged_hud` are always built and name no wgpu.
+# The game constructs it behind `--renderer native-gl2`; the CPU-side bridges in
+# `render_bridge`, `entity_bridge`, `gui_bridge`, `paged_hud` and `legacy_gfx` are
+# always built and name no wgpu.
 legacy-gl = ["dep:horizon-legacy-render"]
 # Sound output: horizon-client's `audio` feature.
 audio = ["dep:cpal"]

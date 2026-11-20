@@ -58,7 +58,7 @@ impl Game<'_> {
         depth_far: f32,
     ) -> Option<horizon_client::gfx::JoinedFrusta> {
         let own_level = self.client_own_level();
-        let renderer = self.renderer.as_mut()?;
+        let renderer = self.renderer.modern_mut()?;
         renderer.set_world_view_own_level(own_level);
         Some(renderer.camera_frustum(camera, fov_degrees, yaw, pitch, bob, depth_far))
     }

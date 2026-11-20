@@ -53,7 +53,7 @@ impl Game<'_> {
         let Some(id) = overlay else {
             return self.screen_view_now();
         };
-        let renderer = self.renderer.as_ref()?;
+        let renderer = self.renderer.modern_ref()?;
         let batch = HudBatch::new(
             [renderer.config.width, renderer.config.height],
             self.settings.gui_scale_inputs(),
@@ -182,7 +182,7 @@ impl Game<'_> {
     /// `screen` as the screen hooks see it while it opens or closes: no
     /// renderer (a test, a window not yet up) leaves its rectangle empty.
     fn screen_change_view(&self, screen: Screen) -> ScreenView<'_> {
-        let rect = match &self.renderer {
+        let rect = match self.renderer.modern_ref() {
             Some(renderer) => self.screen_rect(
                 &HudBatch::new(
                     [renderer.config.width, renderer.config.height],
@@ -1018,7 +1018,7 @@ impl Game<'_> {
     /// dialog or a prompt drawn over gameplay), and no connect or world load
     /// is in progress. The one gate they all ask before they fire.
     pub(super) fn screen_hooks_open(&self) -> bool {
-        self.renderer.is_some()
+        self.renderer.has_modern()
             && !self.screen_over_playing()
             && !self.remote_loading()
             && (self.screen != Screen::Playing || self.title.is_some())
@@ -1033,7 +1033,7 @@ impl Game<'_> {
         if !self.screen_hooks_open() {
             return None;
         }
-        let renderer = self.renderer.as_ref()?;
+        let renderer = self.renderer.modern_ref()?;
         let batch = HudBatch::new(
             [renderer.config.width, renderer.config.height],
             self.settings.gui_scale_inputs(),
@@ -3128,7 +3128,7 @@ impl Game<'_> {
     /// data, for its press and tooltip hooks.
     fn native_screen_at(&self) -> Option<(String, Vec<i32>, [f32; 2])> {
         let s = self.shown_native_screen()?;
-        let r = self.renderer.as_ref()?;
+        let r = self.renderer.modern_ref()?;
         let batch = HudBatch::new(
             [r.config.width, r.config.height],
             self.settings.gui_scale_inputs(),
@@ -5452,7 +5452,7 @@ pub(super) mod particle_count_tests {
                 .unwrap(),
         );
         game.options.offscreen = true;
-        game.renderer = Some(game.new_renderer(window).unwrap());
+        game.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(game.new_renderer(window).unwrap());
         game.title = None;
         game.settings.extras.dynamic_lights = true;
         game.settings.horizon.particle_culling = horizon_client::graphics::ParticleCullingMode::Off;
@@ -5640,7 +5640,7 @@ color = [0.0, 1.0, 0.0]
             ])).unwrap();
             let report = horizon_shader_api::check(&pack).unwrap();
             game.renderer
-                .as_mut()
+                .modern_mut()
                 .unwrap()
                 .set_native_shader_pack(Some((
                     report,

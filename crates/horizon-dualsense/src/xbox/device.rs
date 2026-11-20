@@ -1,7 +1,7 @@
 //! The pad over hidapi and Windows.Gaming.Input, and the thread that writes to it: writes block
 //! (a Bluetooth report can take milliseconds), so the game only hands over what the pad should
 //! do.
-#[cfg(windows)]
+#[cfg(all(windows, not(target_vendor = "win7")))]
 use crate::xbox::wgi;
 use crate::xbox::{Motors, Target};
 #[cfg(not(target_os = "ios"))]
@@ -29,7 +29,7 @@ pub enum Error {
     /// hidapi refused the report: a pad that went away, an endpoint another process holds.
     Hid(HidError),
     /// Windows.Gaming.Input refused it.
-    #[cfg(windows)]
+    #[cfg(all(windows, not(target_vendor = "win7")))]
     Wgi(windows::core::Error),
 }
 
@@ -38,7 +38,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Hid(e) => write!(f, "{e}"),
-            #[cfg(windows)]
+            #[cfg(all(windows, not(target_vendor = "win7")))]
             Error::Wgi(e) => write!(f, "Windows.Gaming.Input: {e}"),
         }
     }
@@ -57,7 +57,7 @@ impl From<HidError> for Error {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, not(target_vendor = "win7")))]
 impl From<windows::core::Error> for Error {
     fn from(e: windows::core::Error) -> Self {
         Error::Wgi(e)
@@ -88,7 +88,7 @@ pub struct Xbox {
 #[cfg(not(target_os = "ios"))]
 enum Backend {
     Hid(HidDevice),
-    #[cfg(windows)]
+    #[cfg(all(windows, not(target_vendor = "win7")))]
     Wgi(wgi::Pad),
 }
 
@@ -127,7 +127,7 @@ impl Xbox {
         if skipped && !SKIPPED.swap(true, Ordering::Relaxed) {
             log::info!("Horizon: a wired Xbox pad has no output on this system");
         }
-        #[cfg(windows)]
+        #[cfg(all(windows, not(target_vendor = "win7")))]
         {
             match wgi::Pad::open(target) {
                 // A cable: WGI is the only way to its trigger motors.
@@ -188,7 +188,7 @@ impl Xbox {
                     Transport::Bluetooth => device.write(&bluetooth(motors))?,
                 };
             }
-            #[cfg(windows)]
+            #[cfg(all(windows, not(target_vendor = "win7")))]
             Backend::Wgi(pad) => pad.write(motors)?,
         };
         Ok(())

@@ -94,7 +94,10 @@ fn id_of(space: Space, name: &str, verify: bool) -> u16 {
         return 0;
     }
     let (names, key) = (&NAMES[space as usize], name.as_ptr() as usize);
-    let slot = (key >> 3).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (usize::BITS - 10);
+    // The golden-ratio constant truncated to the width of a pointer: a `usize` literal would be a
+    // hard error on 32-bit targets (and silently wrap there), and the cache only wants an odd
+    // multiplier, not this exact 64-bit value.
+    let slot = (key >> 3).wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as usize) >> (usize::BITS - 10);
     let hit = CACHE.with(|c| c[space as usize][slot].get());
     if hit.0 == key && hit.1 != 0 && (!verify || names.name(hit.1) == Some(name)) {
         return hit.1;

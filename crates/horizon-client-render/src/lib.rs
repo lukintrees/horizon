@@ -85,10 +85,25 @@ pub mod menu_style;
 pub mod mesher;
 pub mod minimap;
 pub mod mipmap;
+// The CPU frame contract both backends read (R01a); no wgpu type in it.
+pub mod frame;
+// The legacy coordinator, its facade and the owning renderer slot (MVP-2).
+#[cfg(feature = "legacy-gl")]
+pub mod legacy_gfx;
+// The boot screen on a shared native context: the legacy route's loading HUD.
+#[cfg(feature = "legacy-gl")]
+pub mod native_loading;
+pub mod renderer_facade;
+pub mod renderer_owner;
+// The contract vocabulary the owner, the facade and Game's native branches name
+// (`Backend`, `FrameOutcome`, `FrameOptions`, `PointerMode`): plain data, no
+// backend behind it.
+pub use horizon_render_api::{platform_contract, render_contract, resource_contract};
 // The CPU bridges to `horizon-render-api` (also `gui_bridge`, `paged_hud` and
 // `render_bridge`): plain data, no wgpu or GL object, always built, so the legacy
 // backend and tests reach them without a feature.
 pub mod entity_bridge;
+pub mod gui_bridge;
 pub mod mod_animations;
 pub mod mod_block_state_models;
 pub mod mod_browser;

@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["crates/horizon-telemetry-server", "launcher", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys", "tools/fixtures/paper-trace-mod"]
+exclude = ["crates/horizon-telemetry-server", "launcher", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys", "third_party/windows-core", "third_party/windows-core-0.54", "tools/fixtures/paper-trace-mod"]
 members = [
     "crates/horizon-guest-stack",
     "crates/horizon-render-api",
@@ -116,6 +116,14 @@ naga = { path = "third_party/naga" }
 # game died before main on CPUs without it (Core 2, #7264; THIRD_PARTY_NOTICES.md). Drop this and
 # the folder once a libmimalloc-sys release has microsoft/mimalloc#1291's fix.
 libmimalloc-sys = { path = "third_party/libmimalloc-sys" }
+# windows-core 0.62.2 with the Windows Runtime activation import dropped on the `win7` target: that
+# API set is absent from Windows 7, and the static import makes the loader refuse the image before
+# `main`. Nothing in that build activates a WinRT class (docs/design/opengl2-win7-x86.md §19.9,
+# THIRD_PARTY_NOTICES.md). Drop this and the folder once the crate gates the import itself.
+windows-core = { path = "third_party/windows-core" }
+# The same change in 0.54.0, which `cpal` 0.16 still brings in through `windows` 0.54; it is the
+# only other consumer of the WinRT activation import (THIRD_PARTY_NOTICES.md).
+"windows-core-v054" = { path = "third_party/windows-core-0.54", package = "windows-core" }
 
 # Line tables keep file:line in backtraces; full debug info made every
 # example and test binary hundreds of megabytes and slow to link.

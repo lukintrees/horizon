@@ -506,12 +506,12 @@ impl Split<'_> {
                 None,
             )
         })?;
-        guest.renderer = Some(build_renderer(
+        guest.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(build_renderer(
             window.clone(),
             true,
             &guest.pack,
             &guest.gui,
-            host.renderer.as_ref(),
+            host.renderer.modern_ref(),
             None,
             host.settings.horizon.api,
             host.settings.horizon.translucent_batching,
@@ -520,7 +520,7 @@ impl Split<'_> {
             // The pack its own game loads, from its profile.
             crate::game::shader_packs::picked_pack_shape(&guest.settings),
             host.renderer
-                .as_ref()
+                .modern_ref()
                 .map(|r| r.display_reading())
                 .unwrap_or_default(),
             (

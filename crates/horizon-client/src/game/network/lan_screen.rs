@@ -15,7 +15,8 @@ use horizon_client::{
     widgets::{self, Narratable, join_for_narration},
 };
 use horizon_protocol::packets::play::{self, Serverbound as S};
-use winit::{event::KeyEvent, keyboard::PhysicalKey};
+use crate::game::input_event::KeyEvent;
+use winit::keyboard::PhysicalKey;
 
 pub(super) struct WorldOptions {
     remote: bool,

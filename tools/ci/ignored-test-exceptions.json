@@ -1206,5 +1206,85 @@
     "path": "crates/horizon-legacy-render/src/renderer.rs",
     "reason": "requires Mesa OSMesa; explicitly run by the GL2 CI job",
     "rationale": "Needs a desktop GL context (OSMesa) to create real texture names, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists, or through the probe runner."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::tests::native_owner_survives_modern_take_and_dispatches_the_existing_facade",
+    "path": "crates/horizon-client-render/src/renderer_owner.rs",
+    "reason": "requires OSMesa and explicit GL2 software-driver environment",
+    "rationale": "Needs a desktop GL context: it builds a real OSMesa renderer and submits a HUD frame, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment (the same Mesa llvmpipe setup tools/legacy_gl_smoke.py uses)."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::bootstrap_tests::game_bootstrap_factory_uses_cpu_assets_and_submits_real_hud_batches",
+    "path": "crates/horizon-client-render/src/renderer_owner.rs",
+    "reason": "requires OSMesa and explicit GL2 software-driver environment",
+    "rationale": "Needs a desktop GL context: it boots the menu factory on a real OSMesa context and draws a HUD batch, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::visibility::gpu_tests::native_world_frame_uses_clock_live_lightmap_cpu_poses_and_rejects_bad_requests",
+    "path": "crates/horizon-client-render/src/renderer_owner/visibility.rs",
+    "reason": "requires OSMesa and explicit GL2 software-driver environment",
+    "rationale": "Needs a desktop GL context: it renders through a real OSMesa renderer and reads pixels back, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::visibility::gpu_tests::native_resident_order_draws_actual_frame_across_camera_unload_and_world_reset",
+    "path": "crates/horizon-client-render/src/renderer_owner/visibility.rs",
+    "reason": "requires OSMesa and explicit GL2 software-driver environment",
+    "rationale": "Needs a desktop GL context: it renders through a real OSMesa renderer and reads pixels back, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::native_streaming::gpu_tests::view_readmission_and_same_coordinate_column_replacement_never_reuse_residency",
+    "path": "crates/horizon-client-render/src/renderer_owner/native_streaming.rs",
+    "reason": "requires OSMesa and explicit GL2 environment",
+    "rationale": "Needs a desktop GL context: it creates a real OSMesa renderer and uploads streamed sections, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::native_streaming::gpu_tests::admission_retries_same_ticket_rejects_edits_and_revokes_pending_before_unload",
+    "path": "crates/horizon-client-render/src/renderer_owner/native_streaming.rs",
+    "reason": "requires OSMesa and explicit GL2 environment",
+    "rationale": "Needs a desktop GL context: it creates a real OSMesa renderer and uploads streamed sections, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::native_streaming::gpu_tests::consumer_scope_never_mints_off_view_forced_tickets_and_readmits_after_move",
+    "path": "crates/horizon-client-render/src/renderer_owner/native_streaming.rs",
+    "reason": "requires OSMesa and explicit GL2 environment",
+    "rationale": "Needs a desktop GL context: it creates a real OSMesa renderer and uploads streamed sections, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::native_streaming::gpu_tests::oversized_completion_is_a_reported_error_not_an_immortal_pending_head",
+    "path": "crates/horizon-client-render/src/renderer_owner/native_streaming.rs",
+    "reason": "requires OSMesa and explicit GL2 environment",
+    "rationale": "Needs a desktop GL context: it creates a real OSMesa renderer and uploads streamed sections, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::native_streaming::worker_tests::prepared_resources_real_mesher_rejects_inflight_replaced_columns",
+    "path": "crates/horizon-client-render/src/renderer_owner/native_streaming/worker_tests.rs",
+    "reason": "requires normal HORIZON_TEST_RESOURCES plus OSMesa; not run by fixture-only CI",
+    "rationale": "Needs both prepared vanilla resources (HORIZON_TEST_RESOURCES) and a desktop GL context, plus the real worker pool and mesher; the fixture-only daily runners supply neither. Run it by hand where libOSMesa exists with HORIZON_TEST_RESOURCES pointing at the prepared 26.3 data."
+  },
+  {
+    "package": "horizon-client-render",
+    "target": "lib",
+    "test": "renderer_owner::native_streaming::gpu_epoch_tests::backpressured_hook_payloads_survive_rollback_but_not_committed_resource_epochs",
+    "path": "crates/horizon-client-render/src/renderer_owner/native_streaming/gpu_epoch_tests.rs",
+    "reason": "requires OSMesa and explicit GL2 environment",
+    "rationale": "Needs a desktop GL context: it creates a real OSMesa renderer, reloads asset generations and reads pixels back, which neither verify nor the daily runners provide. Run it by hand where libOSMesa exists with the explicit GL2 environment."
   }
 ]

@@ -116,8 +116,20 @@ unsafe extern "system" fn window_proc(
             if let Some(result) = input::message(window, state, message, lparam) {
                 return result;
             }
+            // WM_CAPTURECHANGED that still names this window is not a loss: our own
+            // `SetCapture` (on a press, or the raw-mouse grab) caused it, and Wine sends it
+            // for a redundant call on the window that already holds the capture. Only a
+            // capture another window took ends ours; then the game must drop held buttons.
+            if message == 0x0215 && GetCapture() == window {
+                return 0;
+            }
             let result = state.message(message, wparam, lparam);
-            if matches!(message, 0x0201 | 0x0204 | 0x0207 | 0x020b) {
+            // A press takes the capture only when the raw-mouse grab is not already holding
+            // it. Wine answers a redundant `SetCapture` on the same window with
+            // `WM_CAPTURECHANGED` (twice, even), and the procedure releases the grab when that
+            // message arrives: re-issuing it on every press dropped a live pointer grab, so
+            // the second click of a session had no capture and no look.
+            if matches!(message, 0x0201 | 0x0204 | 0x0207 | 0x020b) && !state.relative.get() {
                 SetCapture(window);
             }
             if ((matches!(message, 0x0202 | 0x0205 | 0x0208 | 0x020c)
@@ -233,6 +245,104 @@ unsafe extern "system" {
 fn failure(operation: &str) -> String {
     format!("{operation} failed: {}", std::io::Error::last_os_error())
 }
+
+const FLAG_DOUBLE_BUFFER: u32 = 0x0001;
+const FLAG_DRAW_TO_WINDOW: u32 = 0x0004;
+const FLAG_SUPPORT_OPENGL: u32 = 0x0020;
+const FLAG_GENERIC_FORMAT: u32 = 0x0040;
+
+/// The pixel format both the window and the readback contract want: double
+/// buffered, drawing to the window, hardware OpenGL, RGBA, at least 24 colour
+/// bits and 16 depth bits, and -- when the driver offers one -- an 8-bit
+/// destination alpha.
+///
+/// `ChoosePixelFormat` is asked for that format, but its answer is not trusted:
+/// Wine's NVIDIA ICD picks a format without destination alpha even when one is
+/// requested (`cAlphaBits` is a *hint* there), and the 32-bit driver under
+/// `prime-run` offers no alpha format at all. So the descriptors are enumerated
+/// and the best one is taken by rank: an alpha format first, then one without.
+/// A missing destination alpha costs the framebuffer's alpha, which only the
+/// screenshot readback reads; the window its own opaque alpha is fine for every
+/// blend the renderer does, so a driver without one still gets a picture instead
+/// of a "no suitable pixel format" refusal.
+fn choose_pixel_format(dc: Handle) -> Result<i32, String> {
+    let requested = PixelFormat {
+        size: size_of::<PixelFormat>() as u16,
+        version: 1,
+        flags: FLAG_DRAW_TO_WINDOW | FLAG_SUPPORT_OPENGL | FLAG_DOUBLE_BUFFER,
+        color_bits: 32,
+        // Destination alpha, as the EGL and GLX configs request. cRedBits,
+        // cRedShift, ... in that interleaved order; cAlphaBits is index 6.
+        channel_bits_and_shifts: [8, 16, 8, 8, 8, 0, 8, 24],
+        depth_bits: 24,
+        ..PixelFormat::default() // TYPE_RGBA, MAIN_PLANE
+    };
+    // SAFETY: `dc` is the live window's device context on this thread and every
+    // descriptor passed out is the function's own, correctly sized storage.
+    let describe = |format: i32, descriptor: &mut PixelFormat| unsafe {
+        DescribePixelFormat(dc, format, size_of::<PixelFormat>() as u32, descriptor) != 0
+    };
+    let chosen = unsafe { ChoosePixelFormat(dc, &requested) };
+    if chosen == 0 {
+        return Err(failure("ChoosePixelFormat"));
+    }
+    let mut best = PixelFormat::default();
+    describe(chosen, &mut best)
+        .then(|| score_format(&best))
+        .flatten()
+        .map_or_else(
+            || Err("driver has no suitable double-buffered RGBA/depth pixel format".into()),
+            |best_score| {
+                let mut better = best_score;
+                let mut better_format = chosen;
+                let count = unsafe { DescribePixelFormat(dc, 1, 0, std::ptr::null_mut()) };
+                for format in 1..=count.max(1) {
+                    let mut candidate = PixelFormat::default();
+                    if !describe(format, &mut candidate) {
+                        continue;
+                    }
+                    if let Some(score) = score_format(&candidate) {
+                        if score > better {
+                            better = score;
+                            better_format = format;
+                            if better == (1, 1, 32) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if better.1 == 0 {
+                    // The driver offers no destination alpha at all. Say so once, so a
+                    // player's report of "colours look right, my screenshot is opaque"
+                    // has its answer in the log.
+                    eprintln!(
+                        "Horizon: no OpenGL pixel format with destination alpha on this \
+                         driver; readbacks are opaque"
+                    );
+                }
+                Ok(better_format)
+            },
+        )
+}
+
+/// How far a pixel format is from what a window and the readback want, or `None`
+/// when it cannot host the renderer at all: `(colour >= 24 bits, alpha >= 8 bits,
+/// depth bits)`.
+fn score_format(format: &PixelFormat) -> Option<(u8, u8, u8)> {
+    let wanted = FLAG_DRAW_TO_WINDOW | FLAG_SUPPORT_OPENGL | FLAG_DOUBLE_BUFFER;
+    if format.flags & wanted != wanted
+        || format.flags & FLAG_GENERIC_FORMAT != 0
+        || format.pixel_type != 0
+        || format.depth_bits < 16
+    {
+        return None;
+    }
+    Some((
+        u8::from(format.color_bits >= 24),
+        u8::from(format.channel_bits_and_shifts[6] >= 8),
+        format.depth_bits,
+    ))
+}
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
 }
@@ -251,7 +361,7 @@ pub struct Context {
 impl Context {
     fn create_window(size: [u32; 2]) -> Result<Self, String> {
         let serial = WINDOWS
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| "window ID exhausted")?;
         let mut this = Self {
             instance: ptr::null_mut(),
@@ -335,39 +445,15 @@ impl Context {
         // SAFETY: owned live window/DC; pixel format is selected exactly once,
         // then a legacy context is made current. Drop cleans every failure path.
         unsafe {
-            let requested = PixelFormat {
-                size: size_of::<PixelFormat>() as u16,
-                version: 1,
-                flags: 0x0004 | 0x0020 | 0x0001, // DRAW_TO_WINDOW | SUPPORT_OPENGL | DOUBLEBUFFER
-                color_bits: 24,
-                depth_bits: 24,
-                ..PixelFormat::default() // TYPE_RGBA, MAIN_PLANE
-            };
-            let format = ChoosePixelFormat(this.dc, &requested);
-            if format == 0 {
-                return Err(failure("ChoosePixelFormat"));
-            }
+            let format = choose_pixel_format(this.dc)?;
             let mut actual = PixelFormat::default();
-            if DescribePixelFormat(
-                this.dc,
-                format,
-                size_of::<PixelFormat>() as u32,
-                &mut actual,
-            ) == 0
+            if DescribePixelFormat(this.dc, format, size_of::<PixelFormat>() as u32, &mut actual) == 0
             {
                 return Err(failure("DescribePixelFormat"));
             }
-            if actual.flags & 0x0040 != 0 {
+            if actual.flags & FLAG_GENERIC_FORMAT != 0 {
                 // PFD_GENERIC_FORMAT: no full hardware ICD
                 return Err("generic GDI pixel format selected; install a matching 32-bit vendor OpenGL ICD for the x86 build".into());
-            }
-            if actual.flags & requested.flags != requested.flags
-                || actual.pixel_type != 0
-                || actual.depth_bits < 16
-            {
-                return Err(
-                    "driver has no suitable double-buffered RGBA/depth pixel format".into(),
-                );
             }
             if SetPixelFormat(this.dc, format, &actual) == 0 {
                 return Err(failure("SetPixelFormat"));
@@ -463,6 +549,18 @@ impl crate::ContextImpl for Context {
             self.state.programmatic_resize.set(previous);
             if result == 0 {
                 return Err(failure("SetWindowPos"));
+            }
+            // The window resize is not the drawable resize: Wine (the only WGL
+            // runtime this backend has been exercised on) rebuilds the GL drawable
+            // from the client rect only when the swap chain is presented. Without
+            // this, `resize` publishes the new size while GL keeps drawing into the
+            // old, smaller buffer, so the new area reads back as untouched zeros.
+            // Present once, after the window has its new size, so Wine rebuilds the
+            // drawable to match. Only after the context exists: the initial sizing
+            // in `create_window` runs before any context. Back buffer contents are
+            // unspecified after a resize anyway; the caller redraws the whole frame.
+            if !self.context.is_null() && SwapBuffers(self.dc) == 0 {
+                return Err(failure("SwapBuffers"));
             }
         }
         self.refresh_size()

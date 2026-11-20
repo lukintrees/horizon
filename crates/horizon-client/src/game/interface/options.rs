@@ -20,6 +20,25 @@ pub(super) const CONTROL_HELP: &[&str] = &[
     "options-set KEY VALUE          set an option (enums by name, keys as key.keyboard.w, lists as JSON), apply and save it",
 ];
 
+/// Whether closing Options hands the pointer back to the game.
+///
+/// `Screen::Playing` is vanilla's null, and the game grabs the pointer only
+/// there. The title is kept beside the screen rather than as one, so leaving
+/// the title's own Options page lands on `Playing` too -- but nothing takes the
+/// pointer back from the title, and taking it there leaves a person with a
+/// grabbed mouse they cannot free (on Wine a window switch does not release it).
+/// A screen over the world (a book, a sign, a prompt) keeps the pointer for the
+/// same reason. So the grab happens only when a world is open, not the title,
+/// with nothing else on top.
+fn options_close_grabs(
+    back_is_playing: bool,
+    title_open: bool,
+    overlay_open: bool,
+    has_player: bool,
+) -> bool {
+    back_is_playing && !title_open && !overlay_open && has_player
+}
+
 impl Game<'_> {
     pub(super) fn save_title_options(&mut self) {
         if let Some(title) = &self.title
@@ -110,11 +129,14 @@ impl Game<'_> {
     pub(super) fn shader_packs_dir() -> std::path::PathBuf {
         Self::game_dir().join(horizon_client::shader_pack_list::DIR)
     }
+    /// The frame's physical size, whichever owner draws it. A native GL2 frame is as real as
+    /// a modern one: reading only the modern renderer fell back to 1280x720 there, which
+    /// misplaces every widget under the pointer on the title, the pause menu and the options.
+    pub(crate) fn frame_size(&self) -> [u32; 2] {
+        self.renderer.size().unwrap_or([1280, 720])
+    }
     pub(super) fn gui_size(&self) -> (f32, f32) {
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([1280, 720], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         (b.width, b.height)
     }
@@ -136,6 +158,16 @@ impl Game<'_> {
         ui.minecart_improvements = minecart_improvements;
         ui.languages = lang::available(&[&self.pack.source]);
         self.refresh_pack_lists();
+    }
+    /// Whether closing Options hands the pointer back to the game: see
+    /// [`options_close_grabs`].
+    fn options_close_grabs(&self, back: Screen) -> bool {
+        options_close_grabs(
+            back == Screen::Playing,
+            self.title.is_some(),
+            self.screen_over_playing(),
+            self.player.is_some(),
+        )
     }
     /// While the resource pack screen is open, `resourcepacks/` is looked at once a second
     /// and the list found again when its packs changed (`PackSelectionScreen.tick`'s
@@ -184,13 +216,13 @@ impl Game<'_> {
         if self.ui.options.controller_open() {
             self.ui.options.set_controller_context(context);
         }
-        let pack = (self.renderer.as_ref()).and_then(|r| r.native_pack_name());
+        let pack = (self.renderer.modern_ref()).and_then(|r| r.native_pack_name());
         if self.settings.running_pack.as_deref() != pack {
             self.settings.running_pack = pack.map(str::to_owned);
         }
         let output = self
             .renderer
-            .as_ref()
+            .modern_ref()
             .map_or(Default::default(), |r| r.output());
         self.ui
             .options
@@ -226,7 +258,7 @@ impl Game<'_> {
         let picture = (self.screen == Screen::Options)
             .then(|| self.ui.options.calibration_picture(&self.gui.atlas, size))
             .flatten();
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.set_hdr_calibration(picture.map(|(step, nits, band)| {
                 horizon_client::gfx::HdrCalibration {
                     step: step.number(),
@@ -274,9 +306,7 @@ impl Game<'_> {
             self.dragging = true;
         }
         let size = self.gui_size();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         let mut ui = std::mem::take(&mut self.ui.options);
         ui.shift = self.modifiers.shift_key();
         let events = ui.click(
@@ -294,9 +324,7 @@ impl Game<'_> {
     }
     pub(super) fn options_drag(&mut self) -> Result<()> {
         let size = self.gui_size();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         let mut ui = std::mem::take(&mut self.ui.options);
         let events = ui.click(
             &mut self.settings,
@@ -314,9 +342,7 @@ impl Game<'_> {
     pub(super) fn options_key(&mut self, key: KeyCode, text: Option<&str>) -> Result<()> {
         let size = self.gui_size();
         let shift = self.has_shift_down();
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         self.ui.options.size = size;
         self.ui.options.framebuffer = framebuffer;
         let mut ui = std::mem::take(&mut self.ui.options);
@@ -342,9 +368,7 @@ impl Game<'_> {
                 .scroll_at(&self.settings, size, self.cursor, amount);
             return Ok(());
         }
-        let framebuffer = self.renderer.as_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let framebuffer = self.frame_size().map(|side| side as i32);
         if self.ui.options.video_open() && self.has_control_down() {
             // VideoSettingsScreen.mouseScrolled: Ctrl with the wheel steps the GUI scale.
             let mut ui = std::mem::take(&mut self.ui.options);
@@ -406,7 +430,6 @@ impl Game<'_> {
                 Event::Close if self.ui.options.resource_error.is_some() => {}
                 Event::Close => {
                     self.settings.save(&Self::options_path());
-                    let to_game = self.options_from_title;
                     let back = if let Some(screen) = self.panel.recipes_settings_return.take() {
                         screen
                     } else if std::mem::take(&mut self.options_to_world_options) {
@@ -417,7 +440,7 @@ impl Game<'_> {
                         Screen::Paused
                     };
                     self.set_screen(back);
-                    if to_game {
+                    if self.options_close_grabs(back) {
                         self.capture(true);
                     }
                     self.dragging = false;
@@ -597,7 +620,7 @@ impl Game<'_> {
         self.apply_fullscreen();
         // A failed HDR start that named no driver becomes the window's driver's, and another
         // driver's is dropped, so HDR output is tried again.
-        if let Some(driver) = self.renderer.as_ref().and_then(|r| r.hdr_driver())
+        if let Some(driver) = self.renderer.modern_ref().and_then(|r| r.hdr_driver())
             && self.settings.horizon.settle_failed_start(driver)
             && let Some(dir) = Self::options_path().parent()
         {
@@ -605,7 +628,7 @@ impl Game<'_> {
         }
         self.hold_fullbright();
         let s = &self.settings;
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.gamma = s.gamma;
             r.improved_transparency = s.improved_transparency;
             r.set_present_mode(s.vsync, s.horizon.present_mode);
@@ -679,12 +702,11 @@ impl Game<'_> {
         }
     }
     pub(super) fn resize_state_of(&self, size: winit::dpi::PhysicalSize<u32>) -> ResizeState {
+        // The owner's frame when it has one, the window's own size before it does.
         let viewport = self
             .renderer
-            .as_ref()
-            .map_or([size.width, size.height], |r| {
-                [r.config.width, r.config.height]
-            });
+            .size()
+            .unwrap_or([size.width, size.height]);
         ResizeState {
             size,
             gui_size: horizon_client::window::GuiSize::new(
@@ -828,7 +850,7 @@ impl Game<'_> {
             self.replay.playing(),
         );
         self.settings.fullbright_held = held;
-        if let Some(r) = self.renderer.as_mut() {
+        if let Some(r) = self.renderer.modern_mut() {
             r.fullbright = self.settings.extras.fullbright && !held;
         }
     }
@@ -940,8 +962,8 @@ mod resize_state_tests {
                 super::super::native_entity_refs::tests::with_client_game(|game| {
                     game.options.offscreen = true;
                     game.window = Some(window.clone());
-                    game.renderer = Some(game.new_renderer(window.clone()).unwrap());
-                    game.renderer.as_mut().unwrap().resize(960, 1080);
+                    game.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(game.new_renderer(window.clone()).unwrap());
+                    game.renderer.modern_mut().unwrap().resize(960, 1080);
                     game.settings.gui_scale = scale;
                     game.settings.force_unicode = false;
                     game.notify_window_resize();
@@ -951,7 +973,7 @@ mod resize_state_tests {
                         Some((1920, 1080, expected.0, expected.1))
                     );
                     assert!(events.lock().unwrap().is_empty());
-                    game.renderer.as_mut().unwrap().resize(1920, 1080);
+                    game.renderer.modern_mut().unwrap().resize(1920, 1080);
                     game.notify_window_resize();
                     let gui = horizon_client::window::GuiSize::new([1920, 1080], scale, false).size;
                     assert_eq!(
@@ -1022,6 +1044,24 @@ mod fullbright_tests {
         assert!(fullbright_held(Some(false), false));
         // Replay Studio plays a recording, not a server.
         assert!(!fullbright_held(Some(false), true));
+    }
+}
+
+#[cfg(test)]
+mod pointer_grab_tests {
+    use super::options_close_grabs;
+
+    /// Leaving the title's Options page lands on `Playing` because the title is
+    /// not one of the `Screen` variants, and the game must not take the pointer
+    /// there: nothing hands it back to the title. Reported under Wine, where a
+    /// window switch does not free it either.
+    #[test]
+    fn closing_options_grabs_only_over_an_open_world() {
+        assert!(options_close_grabs(true, false, false, true));
+        assert!(!options_close_grabs(true, true, false, true), "title");
+        assert!(!options_close_grabs(true, false, true, true), "overlay");
+        assert!(!options_close_grabs(true, false, false, false), "no world");
+        assert!(!options_close_grabs(false, false, false, true), "pause menu");
     }
 }
 

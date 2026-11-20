@@ -21,7 +21,11 @@ cpal = "0.16"
 
 # Windows.Gaming.Input drives the four motors of a wired Xbox One pad, whose HID endpoint takes
 # no output report, and shares the pad with other programs. The same version gilrs uses.
-[target.'cfg(target_os = "windows")'.dependencies]
+# Windows 7 has no Windows.Gaming.Input, and every `windows` crate on that target leaves a static
+# import of `RoGetActivationFactory` from `api-ms-win-core-winrt-l1-1-0.dll`, which the loader
+# refuses before `main` (docs/design/opengl2-win7-x86.md §19.9): the Win7 build takes the pad over
+# hidapi only, and a wired pad has no trigger output there.
+[target.'cfg(all(target_os = "windows", not(target_vendor = "win7")))'.dependencies]
 windows = { version = "0.62", features = ["Gaming_Input", "Foundation_Collections"] }
 
 [lints]

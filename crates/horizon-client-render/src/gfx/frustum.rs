@@ -168,6 +168,96 @@ impl Cull for ShadowCull {
         self.casters.is_none()
     }
 }
+/// Whether a section's block entities may be drawn yet, and how far into its fade-in it is
+/// (`LevelExtractor.extractVisibleBlockEntities`: `getVisibility(now, fade) >= 0.3`).
+/// Shared by both owners' residency: the modern `Renderer` and the native GL2 one hold the
+/// same per-section membership, so the same sections wait for the same fade there.
+pub(crate) fn section_visible_block_entities(
+    uploaded: &FxHashMap<SectionKey, std::time::Instant>,
+    newest_upload: Option<std::time::Instant>,
+    fade_ms: u64,
+    now: std::time::Instant,
+    key: SectionKey,
+) -> bool {
+    if !(fade_ms > 0 && newest_upload.is_some_and(|t| (now.saturating_duration_since(t).as_millis() as u64) < fade_ms))
+    {
+        return true;
+    }
+    let elapsed = uploaded.get(&key).map_or(u64::MAX, |t| {
+        now.saturating_duration_since(*t).as_millis() as u64
+    });
+    super::section_fade::chunk_visibility(elapsed, fade_ms)
+        >= super::section_fade::CHUNK_VISIBILITY_THRESHOLD
+}
+/// Block entities in resident sections, optionally culled by the camera frustum
+/// (`Renderer::visible_block_entities_in_frustum` and the native owner's copy of it, which
+/// is why it takes the membership rather than a `Renderer`).
+/// The section bounds include the same one-block margin as the per-block check in the game.
+/// Sections wholly inside the frustum skip that finer check; sections outside it are kept
+/// only when a renderer needs to draw geometry extending beyond its block (beacon beams,
+/// gateways, outlines).
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn visible_block_entities_in_frustum<'a>(
+    block_entities: &'a FxHashMap<SectionKey, Vec<([i32; 3], u32)>>,
+    uploaded: &'a FxHashMap<SectionKey, std::time::Instant>,
+    newest_upload: Option<std::time::Instant>,
+    fade_seconds: f32,
+    now: std::time::Instant,
+    min_y: i32,
+    camera: DVec3,
+    frustum: Option<JoinedFrusta>,
+    keep_section: impl Fn(u32) -> bool + 'a,
+    keep_long_range: impl Fn(u32) -> bool + 'a,
+) -> impl Iterator<Item = (&'a ([i32; 3], u32), bool)> + 'a {
+    let fade_ms = super::section_fade::fade_millis(fade_seconds);
+    block_entities
+        .iter()
+        .filter(move |(key, _)| {
+            section_visible_block_entities(uploaded, newest_upload, fade_ms, now, **key)
+        })
+        .filter_map(move |(key, blocks)| {
+            let origin = DVec3::new(
+                f64::from(key.0 * 16 - 1),
+                f64::from(min_y + key.1 * 16 - 1),
+                f64::from(key.2 * 16 - 1),
+            ) - camera;
+            let min = origin.as_vec3();
+            // The last block's expanded bound ends at section_origin + 17.
+            let max = min + Vec3::splat(18.0);
+            let distance_squared = Vec3::ZERO.max(min).min(max).length_squared();
+            let in_range = distance_squared <= 64.0 * 64.0
+                || (distance_squared <= 256.0 * 256.0
+                    && blocks.iter().any(|(_, state)| keep_long_range(*state)));
+            if !in_range {
+                return None;
+            }
+            let (intersects, fully_inside) = frustum.map_or((true, true), |view| {
+                let fully_inside = view.contains(min, max);
+                (fully_inside || view.intersects(min, max), fully_inside)
+            });
+            (intersects || blocks.iter().any(|(_, state)| keep_section(*state)))
+                .then_some((blocks, fully_inside))
+        })
+        .flat_map(|(blocks, fully_inside)| {
+            blocks.iter().map(move |block| (block, fully_inside))
+        })
+}
+/// `Renderer::visible_block_entities`: the same membership, filtered only by the fade-in.
+pub(crate) fn visible_block_entities<'a>(
+    block_entities: &'a FxHashMap<SectionKey, Vec<([i32; 3], u32)>>,
+    uploaded: &'a FxHashMap<SectionKey, std::time::Instant>,
+    newest_upload: Option<std::time::Instant>,
+    fade_seconds: f32,
+    now: std::time::Instant,
+) -> impl Iterator<Item = &'a ([i32; 3], u32)> + 'a {
+    let fade_ms = super::section_fade::fade_millis(fade_seconds);
+    block_entities
+        .iter()
+        .filter(move |(key, _)| {
+            section_visible_block_entities(uploaded, newest_upload, fade_ms, now, **key)
+        })
+        .flat_map(|(_, blocks)| blocks)
+}
 /// The block entities of `sections` whose box, a block wider on every side, comes within the
 /// 64 blocks block entities are drawn to (`Renderer::visible_block_entities_in_frustum`).
 pub(super) fn block_entities_within_reach<'a>(

@@ -37,6 +37,10 @@ struct Texture {
     name: u32,
     size: [u32; 2],
     bytes: usize,
+    /// The minification filter a mipmapped texture needs: sampling through the
+    /// chain is the whole point of uploading it, and a draw that reset the
+    /// sampler to NEAREST would put the shimmer back.
+    level_filter: Option<i32>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MeshLayout {
@@ -58,7 +62,7 @@ impl MeshLayout {
         match pass {
             Pass::Entity(_) => Self::Entity,
             Pass::Gui(_) => Self::Gui,
-            Pass::Stroke => Self::Stroke,
+            Pass::Stroke | Pass::StrokeDepth | Pass::StrokeOverlay => Self::Stroke,
             _ => Self::Basic,
         }
     }
@@ -100,6 +104,18 @@ pub struct Renderer<'a> {
     object_limits: [usize; 2],
     stats: Stats,
     max_texture: u32,
+    identity: std::rc::Rc<Identity>,
+}
+
+/// The driver's own words about the context, read once when it was qualified:
+/// what `horizon-ctl status` reports for `status.legacy` and what the crash
+/// report names, so neither has to re-enter GL to ask.
+#[derive(Clone, Debug, Default)]
+pub struct Identity {
+    pub vendor: String,
+    pub renderer: String,
+    pub version: String,
+    pub glsl: String,
 }
 static IDS: AtomicU64 = AtomicU64::new(1);
 fn reserved_capacity(free: Stats, reserve: Stats) -> Result<Stats, String> {
@@ -172,24 +188,41 @@ impl<'a> Renderer<'a> {
     pub fn context(&self) -> &Context {
         &self.gl.context
     }
+    /// The driver's own words about this context (`GL_VENDOR`, `GL_RENDERER`,
+    /// `GL_VERSION`, `GL_SHADING_LANGUAGE_VERSION`), read once at creation.
+    pub fn identity(&self) -> &Identity {
+        &self.identity
+    }
     fn from_context(context: ContextHandle<'a>, budget: Budget) -> Result<Self, String> {
         context.make_current()?;
         // Qualify GL1 identity before requesting GL2 function pointers.
         // SAFETY: fixed GL1 ABI and live current context; strings are borrowed until copied.
-        unsafe {
+        let identity = unsafe {
             let get = std::mem::transmute::<
                 *const c_void,
                 unsafe extern "system" fn(u32) -> *const u8,
             >(context.address(c"glGetString")?);
-            let (version, renderer) = (get(0x1F02), get(0x1F01));
+            let (version, renderer, vendor, glsl) =
+                (get(0x1F02), get(0x1F01), get(0x1F00), get(0x8B8C));
             if version.is_null() || renderer.is_null() {
                 return Err("null GL identity".into());
             }
-            Context::qualify(
-                &CStr::from_ptr(version.cast()).to_string_lossy(),
-                &CStr::from_ptr(renderer.cast()).to_string_lossy(),
-            )?;
-        }
+            let read = |p: *const u8| {
+                if p.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(p.cast()).to_string_lossy().into_owned()
+                }
+            };
+            let (version, renderer) = (read(version), read(renderer));
+            Context::qualify(&version, &renderer)?;
+            Identity {
+                vendor: read(vendor),
+                renderer,
+                version,
+                glsl: read(glsl),
+            }
+        };
         let gl = Gl::load(context)?;
         // SAFETY: valid GL2 integer queries with writable outputs.
         let (max_texture, attributes, units) = unsafe {
@@ -232,6 +265,7 @@ impl<'a> Renderer<'a> {
             object_limits: [4096, 65536],
             stats: Stats::default(),
             max_texture: max_texture as u32,
+            identity: std::rc::Rc::new(identity),
         };
         // SAFETY: live linked program, NUL-terminated names, scalar uniform writes.
         unsafe {
@@ -546,11 +580,158 @@ impl RenderBackend for Renderer<'_> {
                 name,
                 size: [image.width, image.height],
                 bytes,
+                level_filter: None,
             },
         );
         self.stats.texture_bytes += bytes;
         self.stats.textures += 1;
         Ok(id)
+    }
+    fn create_textured(
+        &mut self,
+        image: Image<'_>,
+        mips: &[Image<'_>],
+    ) -> Result<TextureId, String> {
+        let mut total = bytes(&image)?;
+        let mut side = [image.width, image.height];
+        for mip in mips {
+            total = total
+                .checked_add(bytes(mip)?)
+                .ok_or("texture byte size overflow")?;
+            side = [side[0] / 2, side[1] / 2];
+            if [mip.width, mip.height] != side {
+                return Err("a mip level must halve the level above it".into());
+            }
+        }
+        if self.stats.textures >= self.object_limits[0] {
+            return Err("texture object limit exceeded".into());
+        }
+        if [image.width, image.height]
+            .iter()
+            .any(|&n| n > self.max_texture)
+        {
+            return Err("texture exceeds driver size limit".into());
+        }
+        charge(self.stats.texture_bytes, total, self.budget.texture_bytes)?;
+        let id = TextureId(id()?);
+        self.gl.context.make_current()?;
+        let mut name = 0;
+        // SAFETY: sizes validated; every level's RGBA8 storage matches its slice.
+        // The producer made the chain, so sampling minifies through it instead of
+        // picking one texel of the base level: the shimmer of a distant sprite.
+        unsafe {
+            (self.gl.gen_textures)(1, &mut name);
+            (self.gl.active_texture)(0x84C0);
+            (self.gl.bind_texture)(0x0DE1, name);
+            (self.gl.pixel_store)(0x0CF5, 1); // UNPACK_ALIGNMENT
+            for (parameter, value) in [
+                (0x2800, 0x2600), // MAG_FILTER: NEAREST, so a texel up close stays sharp
+                (
+                    0x2801,
+                    // NEAREST_MIPMAP_LINEAR: pick the level a texel covers, blend the two
+                    // neighbouring levels, so a distant sprite neither shimmers between
+                    // texels nor pops when the level under it changes.
+                    if mips.is_empty() { 0x2600 } else { 0x2702 },
+                ),
+                (0x2802, 0x812F), // WRAP_S: CLAMP_TO_EDGE
+                (0x2803, 0x812F), // WRAP_T
+                (0x813D, mips.len() as i32), // TEXTURE_MAX_LEVEL
+            ] {
+                (self.gl.tex_parameter)(0x0DE1, parameter, value);
+            }
+            for (level, pixels) in std::iter::once(&image).chain(mips).enumerate() {
+                (self.gl.tex_image)(
+                    0x0DE1,
+                    level as i32,
+                    0x8058,
+                    pixels.width as i32,
+                    pixels.height as i32,
+                    0,
+                    0x1908,
+                    0x1401,
+                    pixels.rgba.as_ptr().cast(),
+                );
+            }
+        }
+        if let Err(error) = self.check().and_then(|_| {
+            if name == 0 {
+                Err("GL texture allocation failed".into())
+            } else {
+                Ok(())
+            }
+        }) {
+            // SAFETY: generated name (zero is ignored); current context.
+            unsafe { (self.gl.delete_textures)(1, &name) };
+            return Err(error);
+        }
+        self.textures.insert(
+            id,
+            Texture {
+                name,
+                size: [image.width, image.height],
+                bytes: total,
+                level_filter: (!mips.is_empty()).then_some(0x2702),
+            },
+        );
+        self.stats.texture_bytes += total;
+        self.stats.textures += 1;
+        Ok(id)
+    }
+    fn update_texture_levels(
+        &mut self,
+        id: TextureId,
+        at: [u32; 2],
+        image: Image<'_>,
+        levels: &[([u32; 2], Image<'_>)],
+    ) -> Result<(), String> {
+        bytes(&image)?;
+        let texture = self.textures.get(&id).ok_or("unknown texture ID")?;
+        if !rect_valid([at[0], at[1], image.width, image.height], texture.size) {
+            return Err("texture update out of bounds".into());
+        }
+        for (level, (at, mip)) in levels.iter().enumerate() {
+            bytes(mip)?;
+            let side = [
+                texture.size[0] >> (level + 1),
+                texture.size[1] >> (level + 1),
+            ];
+            if !rect_valid([at[0], at[1], mip.width, mip.height], side) {
+                return Err("mip level update out of bounds".into());
+            }
+        }
+        self.gl.context.make_current()?;
+        // SAFETY: validated live texture and subrectangles on every level; each
+        // slice contains all RGBA8 pixels of its rectangle.
+        unsafe {
+            (self.gl.active_texture)(0x84C0);
+            (self.gl.bind_texture)(0x0DE1, texture.name);
+            (self.gl.pixel_store)(0x0CF5, 1);
+            (self.gl.tex_update)(
+                0x0DE1,
+                0,
+                at[0] as i32,
+                at[1] as i32,
+                image.width as i32,
+                image.height as i32,
+                0x1908,
+                0x1401,
+                image.rgba.as_ptr().cast(),
+            );
+            for (level, (at, mip)) in levels.iter().enumerate() {
+                (self.gl.tex_update)(
+                    0x0DE1,
+                    level as i32 + 1,
+                    at[0] as i32,
+                    at[1] as i32,
+                    mip.width as i32,
+                    mip.height as i32,
+                    0x1908,
+                    0x1401,
+                    mip.rgba.as_ptr().cast(),
+                );
+            }
+        }
+        self.check()
     }
     fn update_texture(
         &mut self,
@@ -690,10 +871,7 @@ impl RenderBackend for Renderer<'_> {
             (self.gl.uniform_matrix)(self.uniforms.matrix, 1, 0, frame.view_projection.as_ptr());
             for draw in frame.draws {
                 let pass = draw.pass.pipeline();
-                (self.gl.uniform1f)(
-                    self.uniforms.stroke,
-                    if pass == Pass::Stroke { 1. } else { 0. },
-                );
+                (self.gl.uniform1f)(self.uniforms.stroke, if pass.is_stroke() { 1. } else { 0. });
                 let screen = match draw.pass {
                     Pass::Screen(material) => Some(material),
                     _ => None,
@@ -820,7 +998,13 @@ impl RenderBackend for Renderer<'_> {
                     overlay[3],
                 );
                 (self.gl.front_face)(0x0901);
-                if entity.is_some_and(|m| m.cull) {
+                // Terrain is wound front-face-out like the modern pipelines' `cull_mode: Back`,
+                // so the same back-face culling applies: a spectator inside a block then sees
+                // through the faces around them instead of their inner sides. Entities keep
+                // their material's own rule.
+                if matches!(pass, Pass::Opaque | Pass::Cutout | Pass::Translucent)
+                    || entity.is_some_and(|m| m.cull)
+                {
                     (self.gl.enable)(0x0B44);
                     (self.gl.cull_face)(0x0405);
                 } else {
@@ -837,6 +1021,7 @@ impl RenderBackend for Renderer<'_> {
                 );
                 if matches!(pass, Pass::Sky { .. })
                     || (pass.is_overlay() && pass != Pass::OverlayDepth)
+                    || pass == Pass::StrokeOverlay
                     || entity
                         .is_some_and(|m| matches!(m.kind, Kind::SeeThrough | Kind::SkyCelestial))
                 {
@@ -845,14 +1030,19 @@ impl RenderBackend for Renderer<'_> {
                     (self.gl.enable)(0x0B71);
                 }
                 (self.gl.depth_func)(
-                    if matches!(pass, Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_)) {
+                    if matches!(
+                        pass,
+                        Pass::OverlayDepth | Pass::Stroke | Pass::StrokeDepth | Pass::Entity(_)
+                    ) {
                         0x0203
                     } else {
                         0x0201
                     },
                 );
-                let depth_write = matches!(pass, Pass::Opaque | Pass::Cutout | Pass::OverlayDepth)
-                    || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::Crumbling | Kind::SkyCelestial));
+                let depth_write = matches!(
+                    pass,
+                    Pass::Opaque | Pass::Cutout | Pass::OverlayDepth | Pass::StrokeDepth
+                ) || matches!(pass, Pass::Entity(m) if !matches!(m.kind, Kind::Particle | Kind::Shadow | Kind::SeeThrough | Kind::Additive | Kind::Weather | Kind::Crumbling | Kind::SkyCelestial));
                 (self.gl.depth_mask)(u8::from(depth_write));
                 let factors = match pass {
                     Pass::Entity(m) if m.kind == Kind::Crumbling => Some((0x0306, 0x0300, 1, 0)),
@@ -871,9 +1061,12 @@ impl RenderBackend for Renderer<'_> {
                     {
                         Some((0x0302, 1, 0x0302, 1))
                     }
-                    Pass::Overlay | Pass::OverlayDepth | Pass::Stroke | Pass::Entity(_) => {
-                        Some((0x0302, 0x0303, 1, 0x0303))
-                    }
+                    Pass::Overlay
+                    | Pass::OverlayDepth
+                    | Pass::Stroke
+                    | Pass::StrokeDepth
+                    | Pass::StrokeOverlay
+                    | Pass::Entity(_) => Some((0x0302, 0x0303, 1, 0x0303)),
                     Pass::Translucent => Some((0x0302, 0x0303, 0x0302, 0x0303)),
                     _ => None,
                 };
@@ -892,6 +1085,7 @@ impl RenderBackend for Renderer<'_> {
                 for (unit, id) in [(0x84C0, draw.texture), (0x84C1, draw.lightmap)] {
                     (self.gl.active_texture)(unit);
                     (self.gl.bind_texture)(0x0DE1, self.textures[&id].name);
+                    let level_filter = self.textures[&id].level_filter;
                     // Screen's shader does not read lightmap. Do not change its
                     // sampler here: it may legally alias the image texture.
                     if unit == 0x84C1 && screen.is_some() {
@@ -909,7 +1103,10 @@ impl RenderBackend for Renderer<'_> {
                         && screen.map_or(pass == Pass::OverlayVignette, |m| m.linear);
                     let filter = if linear { 0x2601 } else { 0x2600 };
                     (self.gl.tex_parameter)(0x0DE1, 0x2800, filter);
-                    (self.gl.tex_parameter)(0x0DE1, 0x2801, filter);
+                    // A mipmapped atlas minifies through its chain, whatever this draw
+                    // would otherwise ask for; a screen's own sprite has one level.
+                    let min = if linear { filter } else { level_filter.unwrap_or(filter) };
+                    (self.gl.tex_parameter)(0x0DE1, 0x2801, min);
                 }
                 (self.gl.bind_buffer)(0x8892, mesh.buffers[0]);
                 (self.gl.bind_buffer)(0x8893, mesh.buffers[1]);

@@ -18,6 +18,7 @@
 #[path = "pad_menu/keys.rs"]
 mod keys;
 
+use crate::game::input_event;
 use super::event_loop::EventLoopCtl;
 use super::{Game, Screen, key_focus};
 use horizon_client::actions::Action;
@@ -35,7 +36,7 @@ use horizon_client_input::snap;
 use std::time::Instant;
 use winit::{
     dpi::PhysicalPosition,
-    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
+    event::{DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase},
     keyboard::KeyCode,
     window::WindowId,
 };
@@ -352,12 +353,10 @@ impl Game<'_> {
     }
 
     pub(super) fn gui_batch(&self) -> Option<HudBatch> {
-        self.renderer.as_ref().map(|r| {
-            HudBatch::new(
-                [r.config.width, r.config.height],
-                self.settings.gui_scale_inputs(),
-            )
-        })
+        Some(HudBatch::new(
+            self.frame_size(),
+            self.settings.gui_scale_inputs(),
+        ))
     }
 
     /// Focus drives the open screen: every menu but inventories and
@@ -584,7 +583,7 @@ impl Game<'_> {
         self.pad_synthetic_event(
             event_loop,
             id,
-            WindowEvent::CursorMoved {
+            input_event::Event::CursorMoved {
                 device_id: DeviceId::dummy(),
                 position,
             },
@@ -611,7 +610,7 @@ impl Game<'_> {
         self.pad_synthetic_event(
             event_loop,
             id,
-            WindowEvent::MouseInput {
+            input_event::Event::MouseInput {
                 device_id: DeviceId::dummy(),
                 state,
                 button,
@@ -626,7 +625,7 @@ impl Game<'_> {
         &mut self,
         event_loop: &dyn EventLoopCtl,
         id: WindowId,
-        event: WindowEvent,
+        event: input_event::Event,
     ) {
         let was = std::mem::replace(&mut self.pad.menu.synthetic, true);
         self.handle_window_event(event_loop, id, event, super::input_trace::InputOrigin::Game);
@@ -701,7 +700,7 @@ impl Game<'_> {
         self.pad_synthetic_event(
             event_loop,
             id,
-            WindowEvent::MouseWheel {
+            input_event::Event::MouseWheel {
                 device_id: DeviceId::dummy(),
                 delta: MouseScrollDelta::LineDelta(x, y),
                 phase: TouchPhase::Moved,

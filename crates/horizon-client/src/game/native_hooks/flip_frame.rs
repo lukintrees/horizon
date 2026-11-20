@@ -63,7 +63,7 @@ mod tests {
                 frame(game, true, &["pre", "post", "flip"]);
 
                 // A minimized window: the frame is prepared, never drawn.
-                game.renderer.as_mut().unwrap().suspended = true;
+                game.renderer.modern_mut().unwrap().suspended = true;
                 frame(game, false, &["pre", "post"]);
                 game.title = None;
                 frame(game, false, &["pre", "post"]);

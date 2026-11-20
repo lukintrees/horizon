@@ -82,6 +82,60 @@ pub(crate) struct Options {
     pub(super) session_file: Option<String>,
     /// `--session-stdin`: the session file's JSON comes on standard input instead.
     pub(super) session_stdin: bool,
+    /// `--renderer modern|native-gl2`: which backend draws the window.
+    pub(super) renderer: Renderer,
+}
+
+/// `--renderer`: the backend that draws the window. `NativeGl2` is the desktop
+/// OpenGL 2 backend behind `--features legacy-gl`, not wgpu's own GL API.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Renderer {
+    #[default]
+    Modern,
+    NativeGl2,
+}
+
+impl Renderer {
+    /// The value `--renderer` takes, or why this build has no such backend.
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "modern" => Ok(Self::Modern),
+            "native-gl2" => {
+                // A build without the backend cannot fall back: the whole point of asking
+                // is a machine whose drivers the modern path can't use.
+                if !legacy_gl_built() {
+                    return Err("this build has no native GL2 backend: build with --features legacy-gl (there is no wgpu fallback)".into());
+                }
+                Ok(Self::NativeGl2)
+            }
+            _ => Err("renderer must be modern or native-gl2".into()),
+        }
+    }
+    /// Whether the window is drawn by the desktop OpenGL 2 backend.
+    pub(super) fn is_native(self) -> bool {
+        self == Self::NativeGl2
+    }
+    /// The menu background the backend can draw: the native one has no panorama
+    /// yet, so its menus are an explicit flat colour rather than a silent swap.
+    pub(super) fn menu_background(self) -> horizon_client::renderer_facade::MenuBackground {
+        match self {
+            Self::Modern => horizon_client::renderer_facade::MenuBackground::Panorama,
+            Self::NativeGl2 => {
+                horizon_client::renderer_facade::MenuBackground::Static([0.025, 0.025, 0.025, 1.])
+            }
+        }
+    }
+}
+
+/// Whether this crate has the `legacy-gl` backend compiled in. The feature lives
+/// on `horizon-client-render`; `horizon-client` names it so the flag can refuse
+/// rather than start and fail later.
+#[allow(
+    unexpected_cfgs,
+    reason = "the feature is the render crate's, enabled through it; this crate only asks"
+)]
+const fn legacy_gl_built() -> bool {
+    cfg!(feature = "legacy-gl")
 }
 
 impl Options {
@@ -239,13 +293,14 @@ impl Options {
             quick_play: None,
             session_file: std::env::var("HORIZON_SESSION_FILE").ok(),
             session_stdin: false,
+            renderer: Renderer::default(),
         };
         for argument in rest {
             match argument {
                 Argument::Switch(arg) => match arg.as_str() {
                     "--help" | "-h" => {
                         println!(
-                            "Horizon — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --game-tests            Enable test-only mod content (or HORIZON_GAME_TESTS=1/true)\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain, travel, ab:SWITCH), write its report to benchmarks/ and quit\n  --profile               With --benchmark: also write a performance capture that embeds the report\n  --benchmark-set S=V     With --benchmark travel: set gpu-culling, section-cull, section-sides or section-draws\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
+                            "Horizon — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --game-tests            Enable test-only mod content (or HORIZON_GAME_TESTS=1/true)\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain, travel, ab:SWITCH), write its report to benchmarks/ and quit\n  --profile               With --benchmark: also write a performance capture that embeds the report\n  --benchmark-set S=V     With --benchmark travel: set gpu-culling, section-cull, section-sides or section-draws\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --renderer VALUE        modern (default), or native-gl2 for the desktop OpenGL 2 backend (--features legacy-gl)\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
                             horizon_core::VANILLA_VERSION
                         );
                         return Ok(None);
@@ -366,6 +421,7 @@ impl Options {
                                     value.split_once(',').ok_or("--look takes YAW,PITCH")?;
                                 o.look = Some((y.parse()?, p.parse()?));
                             }
+                            "--renderer" => o.renderer = Renderer::parse(&value)?,
                             _ => return Err("unknown option".into()),
                         }
                         Ok(())
@@ -412,6 +468,49 @@ mod tests {
         assert_eq!(
             limit(&["--frames", "10", "--timeout-seconds", "30"]),
             secs(30)
+        );
+    }
+
+    fn renderer(args: &[&str]) -> Result<Option<Options>> {
+        Options::parse(args.iter().map(|arg| arg.to_string()))
+    }
+
+    /// `--renderer` is modern unless asked otherwise, takes exactly two values, and a build
+    /// without the backend refuses `native-gl2` rather than starting the modern one anyway.
+    #[test]
+    fn renderer_option_defaults_to_modern_and_refuses_an_unknown_value() {
+        assert_eq!(
+            renderer(&[]).unwrap().unwrap().renderer,
+            Renderer::Modern,
+            "no flag: the modern path"
+        );
+        assert_eq!(
+            renderer(&["--renderer", "modern"]).unwrap().unwrap().renderer,
+            Renderer::Modern
+        );
+        assert!(renderer(&["--renderer", "gl2"]).is_err(), "only the two names");
+        let native = renderer(&["--renderer", "native-gl2"]);
+        if legacy_gl_built() {
+            assert_eq!(native.unwrap().unwrap().renderer, Renderer::NativeGl2);
+        } else {
+            let error = native.err().expect("a build without the backend refuses it");
+            assert!(
+                error.to_string().contains("legacy-gl") && error.to_string().contains("fallback"),
+                "the error says which build has it and that there is no fallback: {error}"
+            );
+        }
+    }
+
+    /// The native backend has no panorama: its menu is the flat colour it declares.
+    #[test]
+    fn native_renderer_menu_is_the_static_colour() {
+        assert_eq!(
+            Renderer::Modern.menu_background(),
+            horizon_client::renderer_facade::MenuBackground::Panorama
+        );
+        assert_eq!(
+            Renderer::NativeGl2.menu_background(),
+            horizon_client::renderer_facade::MenuBackground::Static([0.025, 0.025, 0.025, 1.])
         );
     }
 }

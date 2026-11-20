@@ -1,4 +1,5 @@
 //! Commands from the control socket (`horizon-ctl`), run on the game thread.
+use crate::game::input_event;
 use super::event_loop::EventLoopCtl;
 use super::{Game, Screen};
 use horizon_client::gfx::pack_timing;
@@ -155,10 +156,10 @@ impl Game<'_> {
     /// pack's while they are timed.
     fn summary_with_passes(&self) -> Value {
         let mut summary = self.frame_stats.summary();
-        if let Some(r) = self.renderer.as_ref() {
+        if let Some(r) = self.renderer.modern_ref() {
             add_pass_times(&mut summary, r.own_pass_times(), r.shader_pass_times());
         }
-        if let Some(r) = self.renderer.as_ref().filter(|r| r.pass_detail())
+        if let Some(r) = self.renderer.modern_ref().filter(|r| r.pass_detail())
             && let Some(support) = r.pass_detail_support()
             && let Value::Object(detail) =
                 pack_timing::detail_json(&r.own_pass_parts(), &r.own_pass_counters(), support)
@@ -460,7 +461,7 @@ impl Game<'_> {
                 .collect::<Vec<_>>() }))),
             "setblock" | "fill" | "particle" | "signedit" => self.render_command(&words),
             "section-draws" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("flat") => r.set_flat_draws(true)?,
@@ -470,7 +471,7 @@ impl Game<'_> {
                 Ok(Some(json!({ "ok": true, "flat": r.flat_draws() })))
             }
             "section-layout" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 let compact = match words.get(1).copied() {
                     Some("compact") => r.set_packed_layout(true),
                     Some("wide") => r.set_packed_layout(false),
@@ -479,7 +480,7 @@ impl Game<'_> {
                 Ok(Some(json!({ "ok": true, "compact": compact })))
             }
             "section-cull" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("on") => r.set_section_cull(true)?,
@@ -493,7 +494,7 @@ impl Game<'_> {
                     words.get(1).copied(),
                     (self.gpu_passes, self.gpu_pass_detail),
                 )?;
-                let support = self.renderer.as_ref().and_then(|r| r.pass_detail_support());
+                let support = self.renderer.modern_ref().and_then(|r| r.pass_detail_support());
                 Ok(Some(gpu_passes_reply(
                     self.gpu_passes,
                     self.gpu_pass_detail,
@@ -502,13 +503,13 @@ impl Game<'_> {
             }
             "render-capture" => match words.get(1).copied() {
                 None => {
-                    let r = self.renderer.as_ref().ok_or("no renderer")?;
+                    let r = self.renderer.modern_ref().ok_or("no renderer")?;
                     Ok(Some(
                         json!({ "ok": true, "keeping": r.keeps_capture_copies() }),
                     ))
                 }
                 Some("on") => {
-                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    let r = self.renderer.modern_mut().ok_or("no renderer")?;
                     if !r.keeps_capture_copies() {
                         r.keep_capture_copies(true);
                         // The copies start empty: every section and far tile is meshed
@@ -519,7 +520,7 @@ impl Game<'_> {
                     Ok(Some(json!({ "ok": true, "keeping": true })))
                 }
                 Some("off") => {
-                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    let r = self.renderer.modern_mut().ok_or("no renderer")?;
                     r.keep_capture_copies(false);
                     Ok(Some(json!({ "ok": true, "keeping": false })))
                 }
@@ -533,7 +534,7 @@ impl Game<'_> {
                         .strip_prefix("render-capture")
                         .unwrap_or("");
                     let settings = self.render_capture_settings();
-                    let r = self.renderer.as_mut().ok_or("no renderer")?;
+                    let r = self.renderer.modern_mut().ok_or("no renderer")?;
                     if !r.keeps_capture_copies() {
                         return Err("no mesh copies kept: run render-capture on (or start with \
                             HORIZON_RENDER_CAPTURE=1) and let the terrain settle first"
@@ -548,7 +549,7 @@ impl Game<'_> {
                 }
             },
             "section-sides" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some("on") => r.set_section_sides(true),
@@ -578,7 +579,7 @@ impl Game<'_> {
                 ))
             }
             "gpu-culling" => {
-                let r = self.renderer.as_mut().ok_or("no renderer")?;
+                let r = self.renderer.modern_mut().ok_or("no renderer")?;
                 match words.get(1).copied() {
                     None => {}
                     Some(mode @ ("on" | "off" | "auto")) => {
@@ -687,7 +688,7 @@ impl Game<'_> {
                 self.handle_window_event(
                     event_loop,
                     id,
-                    winit::event::WindowEvent::Focused(focused),
+                    input_event::Event::Focused(focused),
                     super::input_trace::InputOrigin::Agent,
                 );
                 ok()
@@ -1106,19 +1107,41 @@ impl Game<'_> {
                 ok()
             }
             "screenshot" => {
-                let renderer = self.renderer.as_mut().ok_or("no renderer yet")?;
+                if self.renderer.modern_ref().is_none()
+                    && self.renderer.backend()
+                        != Some(horizon_client::render_contract::Backend::LegacyGl)
+                {
+                    return Err("no renderer yet".into());
+                }
                 if self.pending_screenshot.is_some() {
                     return Err("a screenshot is already pending".into());
                 }
                 arg(1)?;
                 // The rest of the line: a path may hold spaces.
                 let path = line.trim_start().strip_prefix("screenshot").unwrap_or("");
-                renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
-                    path: path.trim().into(),
-                    size: None,
-                    scaled: false,
-                    background: false,
-                });
+                let path = path.trim().into();
+                match self.renderer.modern_mut() {
+                    Some(renderer) => {
+                        renderer.screenshot = Some(horizon_client::gfx::ScreenshotRequest {
+                            path,
+                            size: None,
+                            scaled: false,
+                            background: false,
+                        });
+                    }
+                    // The native adapter keeps the request and reads the pixels back after
+                    // its next present: the same command, a different backend.
+                    None => {
+                        self.renderer
+                            .facade(Default::default(), Default::default())
+                            .ok_or("no renderer yet")?
+                            .request_screenshot(horizon_client::render_contract::ScreenshotRequest {
+                                path,
+                                size: None,
+                                scaled: false,
+                            })?;
+                    }
+                }
                 self.pending_screenshot = Some(reply.clone());
                 Ok(None)
             }
@@ -1533,7 +1556,7 @@ impl Game<'_> {
             let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
             json!({ "pos": hit.pos, "block": &*self.res.facts().get(state).name })
         });
-        let renderer = self.renderer.as_ref().map(|r| {
+        let renderer = self.renderer.modern_ref().map(|r| {
             let [arena_bytes, section_vertex_bytes] = r.section_vertex_bytes();
             // Device memory by the backend's allocator (Vulkan; absent elsewhere).
             let memory = r.device.generate_allocator_report();
@@ -1595,8 +1618,8 @@ impl Game<'_> {
             "active_tiles": self.lod.as_ref().map_or(0, |lod| lod.stats().0),
             "cached_tiles": self.lod.as_ref().map_or(0, |lod| lod.stats().1),
             "far_detail": self.settings.horizon.far_detail.name(),
-            "resident_quads": self.renderer.as_ref().map_or(0, |r| r.lod_quads()),
-            "levels": self.renderer.as_ref().map_or_else(Vec::new, |r| r.lod_levels()),
+            "resident_quads": self.renderer.modern_ref().map_or(0, |r| r.lod_quads()),
+            "levels": self.renderer.modern_ref().map_or_else(Vec::new, |r| r.lod_levels()),
             "pending_observations": self.lod_observe.len(),
             "refined_samples": self.lod.as_ref().map_or(0, |lod| lod.refined_samples()),
         });
@@ -1606,6 +1629,22 @@ impl Game<'_> {
             .iter()
             .map(|(id, (pos, stage, _))| json!({ "id": id, "pos": pos, "stage": stage }))
             .collect();
+        // Built outside the big `json!`: nesting one inside it exhausts the macro's recursion
+        // limit on 32-bit builds.
+        let display = self
+            .window
+            .as_deref()
+            .and_then(horizon_client::monitor::of)
+            .map(|m| {
+                json!({
+                    "width": m.size().width,
+                    "height": m.size().height,
+                    "scale": m.scale_factor(),
+                    "refresh_hz": m.refresh_rate_millihertz().map(|r| r.div_ceil(1000)),
+                })
+            });
+        // Three objects merged rather than one: `serde_json`'s `json!` expands one nested macro
+        // per key, and the whole status in one literal passes the default recursion limit.
         let mut status = json!({
             "screen": self.screen_name(),
             "debug": {
@@ -1622,11 +1661,19 @@ impl Game<'_> {
             "player": player,
             "yaw": self.yaw,
             "pitch": self.pitch,
+            // Whether the game holds the pointer and whether the window has the focus: a
+            // native window's grab is the backend's, so a run that cannot see the cursor
+            // moving needs to say whether the game ever believed it had the pointer.
+            "captured": self.captured,
+            "focused": self.focused,
+            "cursor": [self.cursor.0, self.cursor.1],
             "target": target,
             "selected": self.selected + 1,
             "held": self.held().map(|s| json!({ "item": &*s.item, "count": s.count })),
             "offhand": self.offhand.as_ref().map(|s| json!({ "item": &*s.item, "count": s.count, "damage": s.damage })),
             "keys": self.keys.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>(),
+        });
+        let world = json!({
             // The keyboard as the OS reports it (Shift and Ctrl in screens).
             "fps": self.fps,
             "frames": self.frames,
@@ -1647,18 +1694,15 @@ impl Game<'_> {
             "chunks": self.world.chunks.len(),
             "mobs": self.mobs.len(),
             "block_entities": self.world.block_entities.len(),
+        });
+        let streaming = json!({
             "pending_chunks": self.streaming.pending() + self.pending_uploads.len() + self.remote_backlog(),
             "generated_chunks": self.streaming.generated_total,
             "meshed_sections": self.streaming.meshed_total,
             "streaming": self.streaming.stages().into_iter().map(|(k, v)| (k.to_string(), v.into())).collect::<serde_json::Map<_, _>>(),
             "dirty_light": self.world.dirty_light.len(),
             "renderer": renderer,
-            "display": self.window.as_deref().and_then(horizon_client::monitor::of).map(|m| json!({
-                "width": m.size().width,
-                "height": m.size().height,
-                "scale": m.scale_factor(),
-                "refresh_hz": m.refresh_rate_millihertz().map(|r| r.div_ceil(1000)),
-            })),
+            "display": display,
             "uptime_seconds": self.started.elapsed().as_secs_f64(),
             "server": self.remote_status(),
             // The names the name tags show now, seen from the eyes.
@@ -1666,6 +1710,10 @@ impl Game<'_> {
                 .eye_position()
                 .map(|e| self.shown_name_tags(glam::DVec3::from_array(e))),
         });
+        for part in [world, streaming] {
+            let part = part.as_object().cloned().unwrap_or_default();
+            status.as_object_mut().expect("a status object").extend(part);
+        }
         status["lod"] = lod;
         // Parallel Tick: the setting, whether the next tick shares its work, and Auto's state.
         let (setting, on, auto) = horizon_client::parallel::status();
@@ -1682,6 +1730,70 @@ impl Game<'_> {
             .map_or((0, 0), |lod| lod.detail_progress());
         status["lod"]["detail_target_columns"] = wanted.into();
         status["lod"]["refined_target_columns"] = refined.into();
+        // The native GL2 backend's own identity: `horizon-ctl status` reads it to confirm the
+        // window is really the desktop GL one, and on which driver it runs. The modern owner
+        // says nothing here rather than a borrowed identity.
+        #[cfg(feature = "legacy-gl")]
+        {
+            let info = self.renderer.native_info();
+            status["legacy"] = match &info {
+                Some(info) if self.renderer.backend()
+                    == Some(horizon_client::render_contract::Backend::LegacyGl) =>
+                {
+                    // The tracked GPU payload and object counts, so a run says how much of the
+                    // native budget it drew with instead of leaving it to guesswork.
+                    let (used, free, sections) = self
+                        .renderer
+                        .native_usage()
+                        .map_or((Default::default(), Default::default(), 0), |u| u);
+                    // The interest table's own usage: resident tickets, queued completions,
+                    // retained payload bytes. A view that keeps meshing forever shows here.
+                    let stream = self.renderer.native_stream_usage();
+                    json!({
+                        "confirmed": true,
+                        "backend": "legacy-gl",
+                        "gl_version": info.gl_version,
+                        "glsl_version": info.glsl_version,
+                        "vendor": info.vendor,
+                        "renderer": info.renderer,
+                        "gpu": {
+                            "texture_bytes": used.texture_bytes,
+                            "mesh_bytes": used.mesh_bytes,
+                            "textures": used.textures,
+                            "meshes": used.meshes,
+                            "free_texture_bytes": free.texture_bytes,
+                            "free_mesh_bytes": free.mesh_bytes,
+                            "resident_sections": sections,
+                        },
+                        "stream": stream.map(|u| json!({
+                            "slots": u.slots,
+                            "pending": u.pending,
+                            "bytes": u.bytes,
+                            "removals": u.removals,
+                        })),
+                    })
+                }
+                _ => json!({
+                    "confirmed": false,
+                    "backend": null,
+                    "gl_version": null,
+                    "glsl_version": null,
+                    "vendor": null,
+                    "renderer": null,
+                }),
+            };
+        }
+        #[cfg(not(feature = "legacy-gl"))]
+        {
+            status["legacy"] = json!({
+                "confirmed": false,
+                "backend": null,
+                "gl_version": null,
+                "glsl_version": null,
+                "vendor": null,
+                "renderer": null,
+            });
+        }
         status["pending_uploads"] = self.pending_uploads.len().into();
         status["destroying"] = json!(destroying);
         status["physical_keys"] = json!(physical_keys);

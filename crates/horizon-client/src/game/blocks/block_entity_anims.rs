@@ -356,7 +356,7 @@ impl Game<'_> {
                 .play("minecraft:block.bell.resonate", Some(centre), 1.0, 1.0);
         }
         if let Some((particles, glow)) = tick.ended {
-            for (p, color) in particles.into_iter().filter(|_| self.renderer.is_some()) {
+            for (p, color) in particles.into_iter().filter(|_| self.renderer.has_modern()) {
                 // ColorParticleOption.create(ENTITY_EFFECT, color): ARGB.
                 let c = color as u32;
                 let channel = |shift: u32| ((c >> shift) & 255) as f32 / 255.0;
@@ -386,7 +386,7 @@ impl Game<'_> {
             self.tick_conduit_servers();
             self.tick_bell_servers();
         }
-        let Some(r) = &self.renderer else {
+        let Some(r) = self.renderer.modern_ref() else {
             return;
         };
         // Sorted by position: the order they tick in, and a quick lookup.

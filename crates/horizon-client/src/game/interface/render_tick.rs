@@ -148,10 +148,7 @@ impl Game<'_> {
     }
     /// `Camera.getNearPlane` at the FOV option, as `getFluidInCamera` asks for it.
     pub(super) fn near_plane(&self) -> NearPlane {
-        let [width, height] = self
-            .renderer
-            .as_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let [width, height] = self.frame_size();
         self.view.near_plane(
             self.settings.fov as i32 as f32,
             width as f32,
@@ -826,7 +823,7 @@ impl Game<'_> {
                 }
             }
         }
-        if let Some(r) = &self.renderer {
+        if let Some(r) = self.renderer.modern_ref() {
             campfire_particles(
                 self.res.animate(),
                 &mut self.particles,
@@ -984,7 +981,7 @@ impl Game<'_> {
             std::mem::discriminant(&self.screen).hash(&mut hasher);
             hasher.finish()
         });
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.set_animation_inputs(day_time, [rain, thunder], Some(&frame), screen);
         }
     }

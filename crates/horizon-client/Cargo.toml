@@ -89,8 +89,6 @@ horizon-telemetry = { path = "../horizon-telemetry", default-features = false }
 horizon-bench = { path = "../horizon-bench" }
 crc32fast = "1"
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
-# Controllers (evdev + libudev on Linux, IOKit on macOS, Windows.Gaming.Input); the `controllers` feature.
-gilrs = { version = "0.11", optional = true }
 # The DualSense's rumble, adaptive triggers and lights, and an Xbox One pad's impulse triggers,
 # over HID (gilrs only reads them).
 horizon-dualsense = { path = "../horizon-dualsense", optional = true }
@@ -102,6 +100,19 @@ fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 # Mod file roots are descriptor-bound: no symlink race can leave a mod's area.
 cap-std = "3"
 cap-fs-ext = "3"
+
+# Controllers (evdev + libudev on Linux, IOKit on macOS, Windows.Gaming.Input); the `controllers` feature.
+# The Win7 build takes gilrs' XInput backend instead of `wgi` for the same reason horizon-dualsense
+# drops Windows.Gaming.Input there (docs/design/opengl2-win7-x86.md §19.9): `wgi` imports
+# `RoGetActivationFactory`, which Windows 7's loader refuses before `main`. XInput is the same gilrs
+# API — pads, force feedback, the SDL mappings — and `rusty-xinput` loads `xinput9_1_0.dll` (shipped
+# with Win7 SP1) at runtime, so nothing is imported statically. The two backends are mutually
+# exclusive, hence the split rather than one declaration.
+[target.'cfg(not(target_vendor = "win7"))'.dependencies]
+gilrs = { version = "0.11", optional = true }
+
+[target.'cfg(target_vendor = "win7")'.dependencies]
+gilrs = { version = "0.11", optional = true, default-features = false, features = ["xinput"] }
 
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).
@@ -163,6 +174,10 @@ alloc-census = ["horizon-threads/alloc-census"]
 windows-mimalloc = []
 # Opt-in Windows heap experiment; see docs/windows-allocators.md.
 windows-segment-heap = []
+# The legacy desktop OpenGL 2.x backend (`--renderer native-gl2`), for GPUs without
+# Vulkan or D3D12. Not wgpu's GL API: a second, SDR-only renderer behind the same
+# CPU frame contract (docs/design/opengl2-win7-x86.md).
+legacy-gl = ["horizon-client-render/legacy-gl"]
 
 [[test]]
 name = "it"

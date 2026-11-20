@@ -8,6 +8,10 @@ struct Backend {
     textures: std::rc::Rc<std::cell::RefCell<HashSet<TextureId>>>,
     fail_texture: Option<u64>,
     updates: Vec<([u32; 2], [u32; 2], Vec<u8>)>,
+    /// Every mip level of every `create_textured`, base first, by size.
+    textured: Vec<Vec<[u32; 2]>>,
+    /// Every level of every `update_texture_levels`, level 1 first, by size.
+    level_updates: Vec<Vec<[u32; 2]>>,
     fail_update: bool,
     meshes: HashSet<MeshId>,
     fail_remove: bool,
@@ -24,6 +28,19 @@ impl RenderBackend for Backend {
         self.textures.borrow_mut().insert(id);
         Ok(id)
     }
+    fn create_textured(
+        &mut self,
+        image: Image<'_>,
+        mips: &[Image<'_>],
+    ) -> Result<TextureId, Self::Error> {
+        let size = [image.width, image.height];
+        let id = self.create_texture(image)?;
+        let sizes = std::iter::once(size)
+            .chain(mips.iter().map(|mip| [mip.width, mip.height]))
+            .collect();
+        self.textured.push(sizes);
+        Ok(id)
+    }
     fn update_texture(
         &mut self,
         _: TextureId,
@@ -35,6 +52,22 @@ impl RenderBackend for Backend {
         }
         self.updates
             .push((at, [image.width, image.height], image.rgba.to_vec()));
+        Ok(())
+    }
+    fn update_texture_levels(
+        &mut self,
+        id: TextureId,
+        at: [u32; 2],
+        image: Image<'_>,
+        levels: &[([u32; 2], Image<'_>)],
+    ) -> Result<(), Self::Error> {
+        self.update_texture(id, at, image)?;
+        self.level_updates.push(
+            levels
+                .iter()
+                .map(|(_, mip)| [mip.width, mip.height])
+                .collect(),
+        );
         Ok(())
     }
     fn remove_texture(&mut self, id: TextureId) -> Result<(), Self::Error> {
@@ -333,4 +366,111 @@ fn paged_checkpoints_do_not_skip_pages_or_publish_before_lightmap() {
     assert_eq!(textures.borrow().len(), 4); // three terrain pages + final lightmap
     drop(scene);
     assert!(textures.borrow().is_empty());
+}
+
+#[test]
+fn a_mipped_page_uploads_its_whole_chain_and_a_sprite_update_keeps_every_level_in_step() {
+    // One 8x8 sprite in a 16 px page: three levels below it (4x4, 2x2, 1x1),
+    // the last of which still has content and must reach the page.
+    let atlas = crate::atlas::pack_atlas(
+        &[crate::atlas::SpriteSize {
+            width: 8,
+            height: 8,
+        }],
+        16,
+        1,
+        1,
+    )
+    .unwrap();
+    let mut scene = WorldScene::new_paged_mipped(
+        Backend::default(),
+        atlas,
+        &[255; 1024],
+        4,
+        |_| {
+            Ok(MippedPage {
+                rgba: vec![9; 1024],
+                mips: vec![vec![7; 256], vec![3; 64], vec![4; 16]],
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(scene.mip_levels(), 3);
+    let uploaded = scene.backend_mut().textured.remove(0);
+    assert_eq!(uploaded, [[16, 16], [8, 8], [4, 4], [2, 2]]);
+    // The sprite's own chain, halved level by level, updates every level of the
+    // page in the same call as level zero.
+    scene
+        .update_sprite_mipped(0, &[1; 256], &[&[5; 64], &[6; 16], &[8; 4]], 1024)
+        .unwrap();
+    assert_eq!(scene.backend_mut().updates[0].0, [0, 0]);
+    assert_eq!(scene.backend_mut().updates[0].1, [10, 10]);
+    assert_eq!(scene.backend_mut().level_updates[0], [[5, 5], [2, 2], [1, 1]]);
+    // A level count that isn't the page's is refused rather than half-updated.
+    assert!(
+        scene
+            .update_sprite_mipped(0, &[1; 256], &[&[5; 64]], 1024)
+            .is_err()
+    );
+    // And a level whose pixels aren't that level's size is refused too.
+    assert!(
+        scene
+            .update_sprite_mipped(0, &[1; 256], &[&[5; 64], &[6; 16], &[8; 8]], 1024)
+            .is_err()
+    );
+}
+
+#[test]
+fn a_page_without_levels_stays_a_single_level_texture() {
+    let atlas = crate::atlas::pack_atlas(
+        &[crate::atlas::SpriteSize {
+            width: 1,
+            height: 1,
+        }],
+        4,
+        1,
+        1,
+    )
+    .unwrap();
+    let scene = WorldScene::new_paged_mipped(
+        Backend::default(),
+        atlas,
+        &[255; 1024],
+        1,
+        |_| Ok(MippedPage {
+            rgba: vec![255; 64],
+            mips: Vec::new(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(scene.mip_levels(), 0);
+}
+
+#[test]
+fn pages_of_different_chain_depths_are_refused_rather_than_half_patched() {
+    use crate::atlas::{SpriteSize, pack_atlas};
+    let atlas = pack_atlas(
+        &[SpriteSize {
+            width: 4,
+            height: 4,
+        }; 2],
+        8,
+        1,
+        2,
+    )
+    .unwrap();
+    assert_eq!(atlas.page_count(), 2);
+    let mut prepared = 0;
+    let result = WorldScene::new_paged_mipped(Backend::default(), atlas, &[255; 1024], 4, |_| {
+        prepared += 1;
+        Ok(MippedPage {
+            rgba: vec![9; 8 * 8 * 4],
+            mips: if prepared == 1 {
+                vec![vec![7; 4 * 4 * 4]]
+            } else {
+                Vec::new()
+            },
+        })
+    });
+    assert!(matches!(result, Err(SceneError::InvalidLayout)));
 }

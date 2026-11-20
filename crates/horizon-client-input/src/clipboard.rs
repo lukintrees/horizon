@@ -125,10 +125,15 @@ pub trait Clipboard {
 /// without it. When no system clipboard can be reached, text copied in the
 /// game can still be pasted in the game.
 ///
+/// On Windows the clipboard is `clipboard-win`'s, not arboard's: arboard's
+/// backend imports a Windows 8 API for its file-drop support that the game
+/// never uses, which would stop the game loading on Windows 7
+/// (docs/design/opengl2-win7-x86.md §19.5).
+///
 /// It reads and writes through `&self`, as a mod's `ClientHost` reaches it.
 #[derive(Default)]
 pub struct SystemClipboard {
-    system: RefCell<Option<arboard::Clipboard>>,
+    system: RefCell<Option<system::System>>,
     /// The text Horizon last copied (`horizon-ctl status`).
     copied: RefCell<Option<String>>,
 }
@@ -139,10 +144,10 @@ impl SystemClipboard {
         self.copied.borrow().clone()
     }
     /// The system clipboard, connected on first use.
-    fn system(&self) -> RefMut<'_, Option<arboard::Clipboard>> {
+    fn system(&self) -> RefMut<'_, Option<system::System>> {
         let mut system = self.system.borrow_mut();
         if system.is_none() {
-            *system = arboard::Clipboard::new().ok();
+            *system = system::System::open();
         }
         system
     }
@@ -152,10 +157,9 @@ impl SystemClipboard {
         let Some(board) = system.as_mut() else {
             return self.copied().unwrap_or_default();
         };
-        match board.get_text() {
-            Ok(text) => text,
-            Err(arboard::Error::ContentNotAvailable) => String::new(),
-            Err(_) => {
+        match board.text() {
+            Some(text) => text,
+            None => {
                 // A lost connection (a restarted compositor): reconnect next time.
                 *system = None;
                 String::new()
@@ -170,9 +174,59 @@ impl SystemClipboard {
         *self.copied.borrow_mut() = Some(text.to_owned());
         let mut system = self.system();
         if let Some(board) = system.as_mut()
-            && board.set_text(text.to_owned()).is_err()
+            && !board.write(text)
         {
             *system = None;
+        }
+    }
+}
+
+/// The system clipboard of this platform.
+#[cfg(not(windows))]
+mod system {
+    /// arboard's clipboard: Wayland's data-control protocol, X11 and macOS.
+    pub struct System(arboard::Clipboard);
+
+    impl System {
+        pub fn open() -> Option<Self> {
+            arboard::Clipboard::new().ok().map(Self)
+        }
+        /// The clipboard's text; `None` when the connection is gone (a restarted
+        /// compositor), which the caller drops and reopens next time.
+        pub fn text(&mut self) -> Option<String> {
+            match self.0.get_text() {
+                Ok(text) => Some(text),
+                // An empty clipboard is not an error.
+                Err(arboard::Error::ContentNotAvailable) => Some(String::new()),
+                Err(_) => None,
+            }
+        }
+        /// False when the connection is gone.
+        pub fn write(&mut self, text: &str) -> bool {
+            self.0.set_text(text.to_owned()).is_ok()
+        }
+    }
+}
+
+/// The system clipboard of this platform.
+#[cfg(windows)]
+mod system {
+    /// Win32's own clipboard, through `clipboard-win`: text only, as the game
+    /// only ever copies and pastes text. Windows 7 has every call it makes.
+    pub struct System;
+
+    impl System {
+        pub fn open() -> Option<Self> {
+            Some(Self)
+        }
+        /// The clipboard's text; no clipboard holds no text.
+        pub fn text(&mut self) -> Option<String> {
+            Some(clipboard_win::get_clipboard_string().unwrap_or_default())
+        }
+        /// False when the clipboard stayed locked by another program through
+        /// `clipboard-win`'s retries.
+        pub fn write(&mut self, text: &str) -> bool {
+            clipboard_win::set_clipboard_string(text).is_ok()
         }
     }
 }

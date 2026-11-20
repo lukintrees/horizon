@@ -2,6 +2,7 @@
 //! tick (`execute`, `executeChain`), `BaseCommandBlock.performCommand`
 //! through the command system with the block's output, and
 //! `CommandBlockEditScreen` with what `handleSetCommandBlock` does with it.
+use crate::game::input_event::KeyEvent;
 use super::{Game, Screen, commands::execute::Source};
 use horizon_client::{
     chat::{ChatScreen, Commands},
@@ -16,7 +17,7 @@ use horizon_client::{
 use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C, Serverbound as S};
 use winit::{
-    event::{ElementState, KeyEvent},
+    event::ElementState,
     keyboard::{KeyCode, PhysicalKey},
 };
 use {
@@ -831,10 +832,7 @@ impl Game<'_> {
                 return;
             }
         }
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([1, 1], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         let b = HudBatch::new(size, self.settings.gui_scale_inputs());
         let fallback;
         let buttons = match self.built_command_block(b.width, b.height) {

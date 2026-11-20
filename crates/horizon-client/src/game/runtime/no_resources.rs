@@ -4,7 +4,7 @@
 //! crash report: nothing went wrong in the game.
 use super::*;
 use horizon_client::no_resources::{Action, NoResources};
-use winit::event::MouseButton;
+use winit::event::{MouseButton, WindowEvent};
 
 struct Missing {
     window: Option<Arc<Window>>,

@@ -2,6 +2,8 @@
 //! takes over (`App`), and the checks a start makes first: missing or damaged prepared files,
 //! an unclean last exit, a fullscreen the window system could not show.
 use super::*;
+use crate::game::input_event;
+use winit::event::WindowEvent;
 
 /// The window system ended the event loop with a failure (on Linux, a compositor dropping the
 /// connection after a protocol error) while fullscreen was on: the next start opens windowed, so a
@@ -192,11 +194,12 @@ impl Loading {
         &mut self,
         event_loop: &ActiveEventLoop,
         id: WindowId,
-        mut event: WindowEvent,
+        event: WindowEvent,
     ) {
         if self.window.as_ref().is_none_or(|w| w.id() != id) {
             return;
         }
+        let mut event: input_event::Event = event.into();
         follow_keymap(&mut event);
         if let Err(error) = self.menu_event(event_loop, event) {
             self.error = Some(error);
@@ -399,7 +402,7 @@ impl Loading {
         };
         drop(game_step);
         let game_ms = game_at.elapsed().as_millis();
-        game.renderer = Some(renderer);
+        game.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(renderer);
         game.resize_state = Some(game.resize_state_of(window.inner_size()));
         game.window = Some(window);
         game.world_renderer_ready = true;

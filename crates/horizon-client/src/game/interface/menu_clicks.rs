@@ -783,11 +783,7 @@ impl Game<'_> {
         if self.remote.is_some() {
             return self.remote_click(right);
         }
-        let Some(size) = self
-            .renderer
-            .as_ref()
-            .map(|r| [r.config.width, r.config.height])
-        else {
+        let Some(size) = self.renderer.size() else {
             return;
         };
         let batch = HudBatch::new(size, self.settings.gui_scale_inputs());

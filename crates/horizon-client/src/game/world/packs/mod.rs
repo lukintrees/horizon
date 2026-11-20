@@ -489,7 +489,7 @@ impl Game<'_> {
         let standalone_geometry =
             super::native_block_entity_draw::StandaloneGeometry::new(&pack, &gui);
         // Keep the working GPU resources, and hand its window surface over.
-        if let Some(renderer) = &mut self.renderer {
+        if let Some(renderer) = self.renderer.modern_mut() {
             renderer.release_surface();
         }
         let renderer = match self
@@ -501,7 +501,7 @@ impl Game<'_> {
                     self.options.offscreen,
                     &pack,
                     &gui,
-                    self.renderer.as_ref(),
+                    self.renderer.modern_ref(),
                     Some(textures),
                     self.settings.horizon.api,
                     self.settings.horizon.translucent_batching,
@@ -509,7 +509,7 @@ impl Game<'_> {
                     &self.settings.horizon,
                     super::shader_packs::picked_pack_shape(&self.settings),
                     self.renderer
-                        .as_ref()
+                        .modern_ref()
                         .map(|r| r.display_reading())
                         .unwrap_or_default(),
                     (
@@ -522,7 +522,7 @@ impl Game<'_> {
         {
             Ok(renderer) => renderer,
             Err(error) => {
-                if let Some(renderer) = &mut self.renderer {
+                if let Some(renderer) = self.renderer.modern_mut() {
                     renderer.recreate_surface().map_err(|restore| {
                         format!(
                             "{error}; could not restore the previous rendering surface: {restore}"
@@ -640,10 +640,10 @@ impl Game<'_> {
         if let Some(mut renderer) = renderer {
             // The old one's size: a splitscreen player's view is smaller than the window the new
             // one was sized from (it drew a window-sized frame into the view, cut off).
-            if let Some(old) = &self.renderer {
+            if let Some(old) = self.renderer.modern_ref() {
                 renderer.resize(old.config.width, old.config.height);
             }
-            self.renderer = Some(renderer);
+            self.renderer = horizon_client::renderer_owner::RendererOwner::from_modern(renderer);
             self.apply_ui_settings();
         }
         // Horizon's own shader pack is built again: its sprite tags name the old atlas's

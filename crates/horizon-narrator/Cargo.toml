@@ -10,7 +10,10 @@ description = "The narrator: vanilla's text-to-speech (GameNarrator, com.mojang.
 log = "0.4"
 
 # NarratorWindows: SAPI's SpVoice over COM, the voice the Windows narrator settings pick.
-[target.'cfg(windows)'.dependencies]
+# Not on Windows 7: SAPI is fine there, but every `windows` crate on the `win7` target leaves a
+# static import of `RoGetActivationFactory` (WinRT, absent on Win7) that the loader refuses before
+# `main` (docs/design/opengl2-win7-x86.md §19.9). The Win7 build has no narrator.
+[target.'cfg(all(windows, not(target_vendor = "win7")))'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Media_Speech", "Win32_System_Com"] }
 
 # NarratorLinux: flite and its cmu_us_kal16 voice, opened at run time as JNA does.

@@ -11,7 +11,8 @@ use horizon_client::{
     text::Text,
     ui::{self, EditBox, Scroll},
 };
-use winit::event::{ElementState, KeyEvent};
+use crate::game::input_event::KeyEvent;
+use winit::event::ElementState;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// `HeaderAndFooterLayout(this, 61, 33)`.
@@ -185,9 +186,9 @@ impl Game<'_> {
     /// `ClampingLazyMaxIntRange(-1, window.calculateScale(0, unicode))` as a
     /// CycleButton: the next value, or the previous one with Shift.
     fn cycle_debug_gui_scale(&mut self, back: bool) {
-        let size = self.renderer.as_ref().map_or([1280, 720], |r| {
-            [r.config.width as i32, r.config.height as i32]
-        });
+        let size = self
+            .frame_size()
+            .map(|side| side as i32);
         let max = horizon_client::window::calculate_scale(size, 0, self.settings.force_unicode);
         let current = self.settings.file.int("debugGuiScale").clamp(-1, max);
         let next = match (back, current) {
@@ -207,10 +208,7 @@ impl Game<'_> {
         };
         let (w, h) = (batch.width, batch.height);
         // extractBlurredBackground: the debug overlay goes under the screen.
-        let size = self
-            .renderer
-            .as_ref()
-            .map_or([w as u32, h as u32], |r| [r.config.width, r.config.height]);
+        let size = self.frame_size();
         self.draw_debug_overlay_under(batch, size);
         let atlas = &self.gui.atlas;
         let in_world = self.player.is_some();
@@ -672,7 +670,7 @@ mod tests {
         use horizon_client::debug_keys::KeyAction;
         let mut resources = None;
         let mut game = title_game(&mut resources);
-        assert!(game.player.is_none() && game.renderer.is_none() && game.integrated.is_none());
+        assert!(game.player.is_none() && game.renderer.modern_ref().is_none() && game.integrated.is_none());
         game.debug_key(KeyCode::F3, KeyAction::Press);
         game.debug_key(KeyCode::F3, KeyAction::Release);
         assert!(
@@ -725,7 +723,7 @@ mod tests {
             game.shows_panorama(),
             "the level-less options retain the panorama"
         );
-        assert!(game.player.is_none() && game.renderer.is_none() && game.integrated.is_none());
+        assert!(game.player.is_none() && game.renderer.modern_ref().is_none() && game.integrated.is_none());
         let frame = game.hud([1280, 720]);
         assert!(
             !frame.vertices.is_empty(),
