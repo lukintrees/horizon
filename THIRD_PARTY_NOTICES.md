@@ -94,6 +94,23 @@ not refused. Its GL backend copies depth and stencil textures with a framebuffer
 Apache-2.0; both licenses are in that folder
 (`LICENSE.MIT`, `LICENSE.APACHE`).
 
+## windows-core
+
+`third_party/windows-core` is [windows-core](https://github.com/microsoft/windows-rs) 0.62.2 by
+Microsoft, under MIT or Apache-2.0; both licenses are in that folder (`license-mit`,
+`license-apache-2.0`). One change: on the `win7` target the static import of
+`RoGetActivationFactory` from `api-ms-win-core-winrt-l1-1-0.dll` is dropped, and `load_factory`
+reports the class as not registered instead of activating it. Windows 7 has no Windows Runtime, so
+that API set is not there to import, and a static import of it makes the loader refuse the image
+before `main` (`docs/design/opengl2-win7-x86.md` §19.9). Nothing in the Windows 7 build activates a
+WinRT class — the wgpu features it enables are `Win32_*` only — while in every other build the
+crate is unchanged. Drop this and the folder once the crate gates the import itself.
+
+`third_party/windows-core-0.54` is the same crate at 0.54.0, which `cpal` 0.16 still reaches
+through `windows` 0.54, with the same one change (`factory()` in `imp/factory_cache.rs` reports
+`REGDB_E_CLASSNOTREG` there). Both are patched in `[patch.crates-io]` under distinct keys, since a
+patch entry replaces one version of a package at a time.
+
 ## X11 physical keyboard ABI reference
 
 The minimal XKB C ABI declarations in `crates/horizon-legacy-render/src/glx/keyboard.rs`

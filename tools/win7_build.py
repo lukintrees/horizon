@@ -58,6 +58,14 @@ PROFILES = ("dev", "fast", "release")
 # or below this one loads on Windows 7, a higher one refuses it.
 WINDOWS_7_VERSION = (6, 1)
 
+# `windows-result`'s `windows_slim_errors` policy (its own documented `--cfg`, read from
+# the crate: `ErrorInfo` becomes a no-op) drops its `IErrorInfo` support, and with it the
+# static import of `RoOriginateErrorW` from `api-ms-win-core-winrt-error-l1-1-0.dll`.
+# Windows 7 has no WinRT at all, so the loader would refuse the image before `main`
+# (docs/design/opengl2-win7-x86.md §19.5, §19.9). It must be a whole-graph policy, which
+# is why it is a `--cfg` and not a Cargo feature: it changes the size of `Error`.
+WIN7_RUSTFLAGS = ["--cfg=windows_slim_errors"]
+
 
 def toolchain_default() -> str:
     return os.environ.get("RUSTUP_TOOLCHAIN") or "nightly"
@@ -102,6 +110,13 @@ def build_env(triple: str, prefix: str, toolchain: str) -> dict[str, str]:
     # for a target it does not know, then runs `windres` from PATH, which is not
     # there on a Linux box. WINDRES is its documented override.
     env["WINDRES"] = f"{prefix}-windres"
+    # The target's own rustflags: `windows_slim_errors` (see WIN7_RUSTFLAGS). Set
+    # through CARGO_TARGET_<triple>_RUSTFLAGS so it applies to every crate of the
+    # graph without clobbering a RUSTFLAGS the caller set for the whole build.
+    flags = WIN7_RUSTFLAGS
+    if existing := env.get(f"CARGO_TARGET_{key.upper()}_RUSTFLAGS"):
+        flags = [existing, *flags]
+    env[f"CARGO_TARGET_{key.upper()}_RUSTFLAGS"] = " ".join(flags)
     return env
 
 
@@ -154,22 +169,53 @@ def pe_subsystem(path: Path) -> tuple[tuple[int, int], int] | None:
     return (major, minor), subsystem
 
 
-def report_executables(directory: Path) -> None:
+def report_executables(directory: Path) -> bool:
+    """Print each `.exe`'s PE subsystem and whether Windows 7 would load it.
+
+    The subsystem version is a claim the linker writes; the import table is what
+    the loader acts on (`docs/design/opengl2-win7-x86.md` §19.5). A Win8+ API set
+    or WinRT DLL in it refuses the image before `main`, whatever the header says,
+    so this runs `check_imports.py --windows7` too and returns False if either
+    check fails.
+    """
     exes = sorted(directory.glob("*.exe"))
     if not exes:
         print(f"no .exe in {directory} (crate libraries only)")
-        return
+        return True
+    ok = True
     for exe in exes:
         header = pe_subsystem(exe)
         if header is None:
             print(f"{exe}: not a readable PE image")
+            ok = False
             continue
         (major, minor), subsystem = header
         kind = {2: "GUI", 3: "console"}.get(subsystem, f"subsystem {subsystem}")
         # The field is the *minimum* subsystem the loader must provide, so a value
         # at or below Windows 7 is fine and anything above it would refuse Win7.
         verdict = "" if (major, minor) <= WINDOWS_7_VERSION else "  (needs a newer Windows than 7)"
+        if verdict:
+            ok = False
         print(f"{exe}: PE subsystem {major}.{minor} ({kind}){verdict}")
+        ok = check_imports_for_windows7(exe) and ok
+    return ok
+
+
+def check_imports_for_windows7(exe: Path) -> bool:
+    """Whether Windows 7 would load `exe`: `tools/check_imports.py --windows7`."""
+    result = subprocess.run(
+        [sys.executable, "-I", str(ROOT / "tools" / "check_imports.py"), "--windows7", str(exe)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout.strip():
+        print(result.stdout.rstrip())
+    if result.returncode == 0:
+        return True
+    for line in result.stderr.rstrip().splitlines():
+        print(line)
+    return False
 
 
 def build_target(args: argparse.Namespace, name: str) -> bool:
@@ -194,8 +240,7 @@ def build_target(args: argparse.Namespace, name: str) -> bool:
     if args.check:
         return True
     out = ROOT / "target" / triple / ("debug" if args.profile == "dev" else args.profile)
-    report_executables(out)
-    return True
+    return report_executables(out)
 
 
 def main() -> int:

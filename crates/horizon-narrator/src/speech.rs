@@ -8,7 +8,12 @@ mod linux;
 mod linux_split;
 #[cfg(target_os = "macos")]
 mod mac;
-#[cfg(windows)]
+// On Windows 7 there is no narrator: SAPI's voice still needs `windows`, and every `windows`
+// crate on that target leaves a static import of `RoGetActivationFactory` from
+// `api-ms-win-core-winrt-l1-1-0.dll`, which the loader refuses before `main`
+// (docs/design/opengl2-win7-x86.md §19.9). `open()` then returns the same "no narrator" error
+// the narrator options already show for a platform that has none.
+#[cfg(all(windows, not(target_vendor = "win7")))]
 mod windows;
 
 /// A platform's speech (`NarratorWindows`, `NarratorMac`, `NarratorLinux`),
@@ -26,7 +31,7 @@ pub trait Speech {
 /// `Narrator.getNarrator`: the platform's speech, or why there is none
 /// (`Narrator.EMPTY`).
 fn open() -> Result<Box<dyn Speech>, String> {
-    #[cfg(windows)]
+    #[cfg(all(windows, not(target_vendor = "win7")))]
     return windows::Sapi::open().map(|s| Box::new(s) as Box<dyn Speech>);
     #[cfg(target_os = "macos")]
     return mac::Synthesizer::open().map(|s| Box::new(s) as Box<dyn Speech>);

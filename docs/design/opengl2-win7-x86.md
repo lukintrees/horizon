@@ -1124,17 +1124,34 @@ vcredist; на голой системе его нет.
 - `python3 tools/check_imports.py <exe>` проходит (`exit 0`), но его allowlist —
   это Windows 10/11 (`tools/check_imports.py:18`), где `api-ms-win-*` есть, и
   **не** доказательство Win7-совместимости;
+- для Win7 у него теперь есть `--windows7`: он отвергает WinRT
+  (`api-ms-win-core-winrt*`), `PathCch*` (`api-ms-win-core-path`) и `xinput1_4.dll`
+  как отсутствующие на Win7, а `api-ms-win-crt-*` печатает как требующие
+  KB2999226 — это предупреждение, а не провал проверки, потому что UCRT
+  устанавливается, а WinRT — нет. На собранном exe это измеряемо в CI, без самой
+  Win7: `python3 tools/check_imports.py --windows7 <exe>`; `tools/win7_build.py`
+  запускает его сам после каждой сборки и валит сборку только на первом списке;
+  тесты — `tests/test_check_imports.py`.
 - честный статус CRT на сегодня — **не проверено**; на целевой машине нужен
   либо KB2999226, либо mingw-сборка на `msvcrt.dll`.
 
 У игры есть **вторая, независимая** проблема того же рода. Её `horizon-client.exe`
-статически импортирует три API-set DLL, которых нет ни в одном probe:
+статически импортировал три API-set DLL, которых нет ни в одном probe:
 
-| DLL | импортируемый символ | откуда |
-| --- | --- | --- |
-| `api-ms-win-core-path-l1-1-0.dll` | `PathCchStripPrefix` | `arboard` 3.7 → `windows-sys` 0.59 (`horizon-client-input`, буфер обмена) |
-| `api-ms-win-core-winrt-l1-1-0.dll` | `RoGetActivationFactory` | `windows` 0.62 / `windows-core` 0.62 (`horizon-dualsense`, `horizon-narrator`) |
-| `api-ms-win-core-winrt-error-l1-1-0.dll` | `RoOriginateErrorW` | там же |
+| DLL | импортируемый символ | откуда | статус |
+| --- | --- | --- | --- |
+| `api-ms-win-core-path-l1-1-0.dll` | `PathCchStripPrefix` | `arboard` 3.7 → `windows-sys` 0.59 (`horizon-client-input`, буфер обмена) | **убрано**: на Windows текст берётся через `clipboard-win` (§19.9) |
+| `api-ms-win-core-winrt-l1-1-0.dll` | `RoGetActivationFactory` | `windows` 0.62 / `windows-core` 0.62: `gilrs`, `horizon-dualsense`, `horizon-narrator`, затем `wgpu` (`wgpu-hal`, `gpu-allocator`) | **убрано**: три `#[cfg]` на `target_vendor = "win7"` плюс вендоренный `windows-core` (§19.9) |
+| `api-ms-win-core-winrt-error-l1-1-0.dll` | `RoOriginateErrorW` | `windows-result` 0.4.1 (`windows-core` 0.62) | **убрано**: `--cfg=windows_slim_errors` (§19.9) |
+
+Первая строка таблицы — уже измерение, а не вывод: сборка после замены буфера
+обмена печатает таблицу импорта без `api-ms-win-core-path` вовсе
+(`i686-w64-mingw32-objdump -p`), а два WinRT-импорта на тот момент ещё стояли.
+`api-ms-win-winrt-error` снимает `windows_slim_errors`, который
+`tools/win7_build.py` ставит через `CARGO_TARGET_<triple>_RUSTFLAGS`; в
+`windows-result` 0.1.2 (её тянет только `cpal` 0.16) такой ручки нет — это
+единственное, что удерживает этот импорт, и закрывается оно bump'ом `cpal`,
+который отложен по другой причине (смена API, §19.9).
 
 Delay-import directory во всех четырёх exe пуст (`objdump -p` печатает
 `Entry d 00000000 00000000 Delay Import Directory`), то есть это статические
@@ -1202,7 +1219,7 @@ Windows-PE-процессе, на 32 и 64 битах.
 | subsystem ≤ 6.1 гарантирует запуск на Win7 | **нет**: CRT — это UCRT (§19.5) |
 | WGL-контекст и кадр под Wine, 64-bit | **да**, §19.6 |
 | WGL-контекст и кадр под Wine, 32-bit | **да**, §19.6 |
-| игра загрузится на Win7 с установленным UCRT | **не проверено**: в exe есть статические импорты WinRT/`api-ms-win-core-path` (§19.5) |
+| игра загрузится на Win7 с установленным UCRT | **вероятно, да**: таблица импорта больше не содержит WinRT и `PathCch*` (проверено `check_imports.py --windows7`), остаются только `api-ms-win-crt-*` за KB2999226 (§19.5); на настоящей Win7 не запускалось |
 | запуск на настоящем железе Win7 / X1650 | **не проверялось никогда** |
 
 ### 19.8. Что нужно на реальной Win7
@@ -1218,14 +1235,130 @@ Windows-PE-процессе, на 32 и 64 битах.
   `WGL_ARB_create_context`/core profile — проверено чтением кода, ни одного
   `CreateContextAttribs` в крейте нет. Это ровно то, что даёт драйвер Win7-эпохи.
 - `KB2999226` (Universal C Runtime) — иначе не загрузятся `api-ms-win-crt-*`
-  импорты Rust-std (§19.5). Это минимум для probe.
-- Полной игре этого мало: до старта загрузчик ищет ещё
-  `api-ms-win-core-path-l1-1-0.dll`, `api-ms-win-core-winrt-l1-1-0.dll` и
-  `api-ms-win-core-winrt-error-l1-1-0.dll`, которых на Win7 нет (§19.5). Пока
-  они в таблице импорта, установка KB2999226 не поможет. Убрать их — работа по
-  коду (обновить `arboard`/`windows-sys`, сделать WinRT-путь `dualsense`/
-  `narrator` ленивым или под `#[cfg]` по версии ОС), а не по документации; здесь
-  она только записана.
+  импорты Rust-std (§19.5). Это минимум и для probe, и для игры.
+- WinRT-импортов и `PathCch*` в таблице импорта игры больше нет: `clipboard-win`
+  вместо `arboard`, три `#[cfg]` на `target_vendor = "win7"` и два вендоренных
+  `windows-core` (§19.9). Проверяется без самой Win7:
+  `python3 tools/check_imports.py --windows7 <exe>`; `tools/win7_build.py`
+  запускает эту проверку сам после каждой сборки (§19.5).
 
 Запуск игры на таком железе — отдельный gate T02/O02; успешный Wine-прогон его
 не закрывает.
+
+### 19.9. Убирание трёх импортов: что проверено на опыте
+
+Всё ниже измерено на этой машине (`mingw-w64` 2.47, nightly + `-Zbuild-std`) на
+маленьких программах, повторяющих зависимость игры, а не по документации.
+
+**`api-ms-win-core-path-l1-1-0.dll` (`PathCchStripPrefix`) — убран.** Импорт
+приходил целиком из `arboard`: он нужен только для `set_files` (список файлов
+для drag-and-drop), а игра читает и пишет только текст. `arboard` 3.6.1 и 3.7.0
+(последняя на crates.io) обе импортируют его, и `default-features = false` не
+помогает: символ линкуется, даже когда до `set_files` нет вызовов — линкер
+тянет весь объектный файл `platform/windows.rs`. Замена на Windows —
+`clipboard-win` (та же зависимость, что уже стоит под `arboard`): программа,
+которая вызывает только `get_clipboard_string`/`set_clipboard_string`, не имеет
+этого импорта вовсе (проверено `objdump -p`). Так `clipboard.rs` и разделён:
+`arboard` на `cfg(not(windows))`, `clipboard-win` на `cfg(windows)`.
+
+**Обход через подмену IAT-слота не работает.** Идея — определить в своей
+программе `__imp_RoGetActivationFactory` и тем не дать линкеру взять импорт из
+`raw-dylib`. Проверено на настоящем `gilrs` (backend `wgi`): линковка падает с
+`multiple definition of '_imp_RoGetActivationFactory'` — `windows-core` сам
+определяет этот слот в объектнике `api-ms-win-core-winrt-l1-1-0.dlls00000.o`, и
+ld не разрешает перекрыть его определением из другого объекта. Так что этот
+путь закрыт; WinRT-импорты убираются только правкой зависимостей.
+
+**`windows_slim_errors` убирает `RoOriginateErrorW`, но не
+`RoGetActivationFactory`.** `windows-result` 0.4.1 под этим `--cfg` (документирован
+в самом крейте) выбрасывает код `IErrorInfo`, и импорт
+`api-ms-win-core-winrt-error-l1-1-0.dll` из программы исчезает — проверено.
+`RoGetActivationFactory` остаётся: его тянет `windows-core`'s `FactoryCache`, а он
+собирается всегда, как только в графе есть `windows-*`, даже если ни одна
+WinRT-фабрика не запрашивается (программа, которая только читает `GUID`, всё равно
+получает этот импорт).
+
+**Остаток — WinRT через `windows-core`/`windows`.** Сейчас его тянут
+`gilrs` (backend `wgi`, `windows` 0.62), `cpal` WASAPI (`windows` 0.54) и
+`horizon-dualsense` (`windows` 0.62). У `gilrs` есть второй backend на XInput:
+`gilrs = { default-features = false, features = ["xinput"] }` собирается под тот же
+таргет и **не** импортирует `api-ms-win-core-winrt-*` (проверено). `cpal` 0.16
+(текущая версия в дереве) использует только `Win32::Media::Audio` и WinRT-классов
+не активирует, но `windows-core` 0.54 всё равно оставляет импорт
+`RoGetActivationFactory`. **`cpal` 0.18 снимает это**: она на `windows` 0.62, и
+программа, которая только открывает устройство вывода, оставляет ровно один
+WinRT-импорт — `api-ms-win-core-winrt-error-l1-1-0.dll`, — а он уходит под
+`windows_slim_errors` (проверено: `NONE`).
+
+`tools/win7_build.py` ставит `--cfg=windows_slim_errors` через
+`CARGO_TARGET_<triple>_RUSTFLAGS`, так что он применяется ко всем крейтам графа.
+Это снимает `RoOriginateErrorW` без правки зависимостей.
+
+**Что сделано с `RoGetActivationFactory`: два `#[cfg]`, по одному на
+потребителя.** Оба используют `target_vendor = "win7"` — свойство самого
+Rust-таргета `*-win7-windows-gnu`, поэтому обычные Windows-сборки не меняются
+(проверено: Cargo действительно исключает зависимость под
+`cfg(not(target_vendor = "win7"))` на хосте и включает под win7-таргетом).
+
+- `gilrs` в `horizon-client` и `horizon-client-lib` объявлен дважды: обычный
+  Windows/macOS/Linux — backend по умолчанию (`wgi` на Windows), а под
+  `cfg(target_vendor = "win7")` — `default-features = false, features = ["xinput"]`.
+  Backend'ы взаимоисключающие (`compile_error!` в `gilrs-core`, если включены
+  оба), поэтому это две декларации, а не одна с фичами. Публичный API `gilrs`
+  от backend'а не зависит — ни одна строка игры не меняется: `hardware.rs`
+  называет `gilrs::Gilrs`, `gilrs::Gamepad`, `gilrs::ff::Effect` одинаково на
+  обоих. `rusty-xinput` грузит `xinput1_4/1_3/1_2/1_1/9_1_0.dll` через
+  `LoadLibraryW` в рантайме (статического импорта нет), а `xinput9_1_0.dll`
+  есть в Windows 7 SP1. XInput видит пады Xbox 360 и Xbox One; что теряется —
+  пады, которые видит только Windows.Gaming.Input (часть DualShock/DualSense
+  через WGI), и всё, что Win7 и так не умеет.
+- `horizon-dualsense`: модуль `xbox::wgi` и зависимость `windows` объявлены под
+  `cfg(all(target_os = "windows", not(target_vendor = "win7")))`. На Win7
+  Windows.Gaming.Input нет вообще, так что это мёртвый код: там пад берётся
+  только через hidapi, и у проводного Xbox-пада импульсных курков не будет
+  (`output_supported` уже это и говорит). Вариант `Error::Wgi` тоже под тем же
+  `cfg`.
+
+**Вендоренный `windows-core`: последний `RoGetActivationFactory` приходит из `wgpu`.**
+После двух `#[cfg]` в exe оставался ровно один WinRT-импорт, и он не из
+`gilrs`/`dualsense`/`narrator`: `cargo tree -i windows@0.62.2` на win7-таргете
+показывает только `wgpu-hal` и `gpu-allocator`, а оба приходят из `wgpu`.
+`windows-core` 0.62.2 линкует `api-ms-win-core-winrt-l1-1-0.dll` **безусловно**
+(`src/imp/bindings.rs`), а `pub fn load_factory` в `src/imp/factory_cache.rs` —
+единственный, кто её вызывает; поэтому удаление мёртвого кода её не снимает.
+Никакой набор фич `wgpu` этого не обходит: `dx12`, `gles` и `vulkan` на Windows
+все тянут `windows` 0.62 (включены только `Win32_*`-фичи, ни одного WinRT-
+namespace, но импорт всё равно линкуется).
+
+Поэтому `third_party/windows-core` — вендор 0.62.2 с одним изменением: под
+`cfg(target_vendor = "win7")` строка `RoGetActivationFactory` в
+`src/imp/bindings.rs` не объявлена, а `load_factory` возвращает
+`REGDB_E_CLASSNOTREG` (Win7 и не умеет активировать WinRT-класс; ничего в
+Win7-сборке его не активирует). Крейт подменён в `[patch.crates-io]`, вне
+`members` и с записью в `THIRD_PARTY_NOTICES.md`, как `wgpu-hal` и `naga`.
+Проверено: `nm` вендоренного rlib под `i686-win7-windows-gnu` не содержит
+`RoGetActivationFactory` (остаётся только `UuidCreate` из `rpcrt4.dll`, которая
+на Win7 есть), а импорт-таблица собранного exe — см. §19.8.
+
+Но 0.62.2 — не единственная копия крейта в графе: `cpal` 0.16 идёт через
+`windows` 0.54 → `windows-core` 0.54.0, у которого та же безусловная строка
+(в `src/imp/bindings.rs`, `factory()` вместо `load_factory`). Поэтому
+`third_party/windows-core-0.54` — вендор 0.54.0 с тем же изменением, и в
+`[patch.crates-io]` он стоит отдельным ключом (`windows-core-v054`): запись
+`[patch]` подменяет одну версию пакета за раз, поэтому две версии — два ключа.
+Альтернатива, bump `cpal` до 0.18, сняла бы 0.54-линию целиком, но это смена
+API (§ниже), отложенная до появления звукового устройства для проверки.
+
+**`cpal` 0.18 отложен, не потому что не работает.** Проверено, что 0.18
+снимает WinRT-импорт, но это не подъём версии, а смена API: `build_output_stream`
+берёт `StreamConfig` по значению и возвращает `cpal::Error` вместо
+`BuildStreamError`, `Device::name()` заменён на `description() -> DeviceDescription`,
+`StreamError` стал `Error`, `SampleRate` — простой `u32` вместо newtype.
+`audio.rs` держит на этом API восстановление умершего ALSA-стрима
+(`StreamErrors`, POLLERR, повторное открытие с удлинённым буфером), и проверить
+это без звукового устройства нельзя — это отдельная работа, а не правка ради
+импорта. Пока WinRT убирают три `#[cfg]` на `target_vendor = "win7"` и два
+вендоренных `windows-core` выше.
+
+
+

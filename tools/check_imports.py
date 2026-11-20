@@ -27,7 +27,7 @@ WINDOWS_SYSTEM = {
     "ole32.dll", "oleaut32.dll", "opengl32.dll", "propsys.dll", "secur32.dll", "setupapi.dll",
     "shcore.dll", "shell32.dll", "shlwapi.dll", "ucrtbase.dll", "user32.dll", "userenv.dll",
     "uiautomationcore.dll", "uxtheme.dll", "version.dll", "winmm.dll", "ws2_32.dll",
-    "xinput1_4.dll",
+    "xinput1_4.dll", "xinput9_1_0.dll",
 }
 LINUX_LOADER = "/lib64/ld-linux-x86-64.so.2"
 LINUX_SYSTEM = {
@@ -39,10 +39,41 @@ MUSL_SYSTEM = {"libc.musl-x86_64.so.1", "libgcc_s.so.1", "libasound.so.2", "libu
 # The game's sound (cpal) and controllers (gilrs): a desktop has them, a server image may not.
 LINUX_DESKTOP_ONLY = {"libasound.so.2", "libudev.so.1"}
 
+# `--windows7`: API-set DLLs the Windows 7 loader refuses. The default profile allows every
+# `api-ms-win-*` set because Windows 10 and 11 resolve them all; Windows 7 resolves only the
+# UCRT's `api-ms-win-crt-*` (once KB2999226 is installed) and a handful of core sets. WinRT is
+# absent from Windows 7 entirely, and `PathCch*` arrived in Windows 8, so a static import of
+# either refuses the image before `main` (docs/design/opengl2-win7-x86.md §19.5, §19.9).
+WINDOWS7_ABSENT_PREFIXES = ("api-ms-win-core-winrt", "api-ms-win-core-path")
+WINDOWS7_ABSENT = {"xinput1_4.dll", "d3d12.dll", "dcomp.dll", "dwrite.dll", "shcore.dll"}
+# Needs KB2999226 (the Universal C Runtime update) — installable, unlike WinRT.
+WINDOWS7_UCRT_PREFIX = "api-ms-win-crt-"
+
 
 def windows_allowed(name):
     name = name.lower()
     return name in WINDOWS_SYSTEM or name.startswith(("api-ms-win-", "ext-ms-win-"))
+
+
+def windows7_problem(name):
+    """Why Windows 7 would refuse a static import of `name`, or None if it loads.
+
+    Only what cannot be installed counts: WinRT is absent from Windows 7 with no way to add it,
+    and `PathCch*` arrived in Windows 8. The UCRT is a prerequisite that KB2999226 provides, so it
+    is reported separately (`windows7_prerequisite`) rather than failing the check.
+    """
+    name = name.lower()
+    if name in WINDOWS7_ABSENT or name.startswith(WINDOWS7_ABSENT_PREFIXES):
+        return f"imports {name}, which Windows 7 does not have"
+    return None
+
+
+def windows7_prerequisite(name):
+    """The update Windows 7 needs for `name`, or None if it loads as shipped."""
+    name = name.lower()
+    if name.startswith(WINDOWS7_UCRT_PREFIX) or name == "ucrtbase.dll":
+        return name
+    return None
 
 
 def pe_imports(data):
@@ -119,7 +150,7 @@ def elf_needs(data):
     return interpreter, needed, runpath
 
 
-def check(path, server=False, musl=False):
+def check(path, server=False, musl=False, windows7=False):
     data = Path(path).read_bytes()
     problems = []
     if data[:2] == b"MZ":
@@ -127,6 +158,14 @@ def check(path, server=False, musl=False):
             problems.append("expected a musl ELF binary, got a Windows executable")
         names = pe_imports(data)
         problems += [f"imports {n}, which Windows does not ship" for n in names if not windows_allowed(n)]
+        if windows7:
+            problems += [p for p in map(windows7_problem, names) if p]
+            prerequisites = sorted({p for p in map(windows7_prerequisite, names) if p})
+            if prerequisites:
+                print(f"  {path}: needs KB2999226 (the Universal C Runtime) for "
+                      f"{len(prerequisites)} api-ms-win-crt-* imports")
+        # One line per distinct DLL: a DLL can appear in several import descriptors.
+        problems = list(dict.fromkeys(problems))
         summary = ", ".join(sorted(set(n.lower() for n in names)))
     else:
         interpreter, needed, runpath = elf_needs(data)
@@ -152,8 +191,11 @@ def main():
     parser.add_argument("--server", action="store_true",
                         help="a server build: not even ALSA or udev (the game's sound and controllers)")
     parser.add_argument("--musl", action="store_true", help="require dynamic musl instead of glibc")
+    parser.add_argument("--windows7", action="store_true",
+                        help="the binary must load on Windows 7 SP1: no WinRT, no PathCch (UCRT "
+                             "imports are reported as needing KB2999226)")
     args = parser.parse_args()
-    ok = all([check(path, args.server, args.musl) for path in args.binaries])
+    ok = all([check(path, args.server, args.musl, args.windows7) for path in args.binaries])
     sys.exit(0 if ok else 1)
 
 

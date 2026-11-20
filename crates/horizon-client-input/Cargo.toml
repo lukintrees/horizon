@@ -13,7 +13,18 @@ horizon-client-core = { path = "../horizon-client-core" }
 winit = "0.30.13"
 log = "0.4"
 png = "0.18"
+
+# The system clipboard. Only text is read and written, and on Windows the text-only
+# `clipboard-win` is used instead of `arboard`: `arboard`'s Windows backend imports
+# `PathCchStripPrefix` from `api-ms-win-core-path-l1-1-0.dll` for its file-drop support,
+# an API that arrived in Windows 8 and stops the game loading on Windows 7
+# (docs/design/opengl2-win7-x86.md §19.5). `clipboard-win` is already in the tree as
+# `arboard`'s own Windows backend.
+[target.'cfg(not(windows))'.dependencies]
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5"
 
 [dev-dependencies]
 # The window icon test decodes Horizon's icon.

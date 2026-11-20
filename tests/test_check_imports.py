@@ -66,3 +66,67 @@ class LinuxImportsTests(unittest.TestCase):
                 for lib in ("libasound.so.2", "libudev.so.1"):
                     self.assertFalse(self.check_binary(loader, [lib], musl=musl, server=True))
                 self.assertFalse(self.check_binary(loader, [], musl=musl, runpath="/nix/store/libs"))
+
+
+def pe(dlls):
+    """A minimal PE32 image whose import directory names `dlls`, one descriptor each."""
+    data = bytearray(0x800)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x40)
+    data[0x40:0x44] = b"PE\0\0"
+    # COFF: one section; optional header 96 (PE32 fixed part) + 16 data directories of 8 bytes.
+    struct.pack_into("<H", data, 0x44 + 2, 1)
+    struct.pack_into("<H", data, 0x44 + 16, 96 + 128)
+    optional = 0x40 + 24
+    struct.pack_into("<H", data, optional, 0x10B)
+    directories = optional + 96
+    # One section: RVA 0x1000 is file offset 0x200, and it covers the rest of the file.
+    struct.pack_into("<8xIIII", data, optional + 96 + 128, 0x600, 0x1000, 0x600, 0x200)
+
+    def at(rva):
+        return rva - 0x1000 + 0x200
+
+    for i, dll in enumerate(dlls):
+        raw = dll.encode() + b"\0"
+        name_rva = 0x1200 + i * 0x40
+        data[at(name_rva):at(name_rva) + len(raw)] = raw
+        # Name RVA at +12 of each 20-byte IMAGE_IMPORT_DESCRIPTOR.
+        struct.pack_into("<I", data, at(0x1100) + 20 * i + 12, name_rva)
+    # The descriptors are zero-terminated; those bytes are already zero.
+    struct.pack_into("<I", data, directories + 8, 0x1100)
+    return data
+
+
+class WindowsImportsTests(unittest.TestCase):
+    def check_dlls(self, dlls, **options):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "program.exe"
+            path.write_bytes(pe(dlls))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return check_imports.check(path, **options)
+
+    def output_for(self, dlls, **options):
+        """The check's verdict and what it printed on stdout."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "program.exe"
+            path.write_bytes(pe(dlls))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                return check_imports.check(path, **options), output.getvalue()
+
+    def test_default_profile_allows_api_sets(self):
+        self.assertTrue(self.check_dlls(["kernel32.dll", "api-ms-win-core-winrt-l1-1-0.dll"]))
+
+    def test_windows7_refuses_winrt_and_pathcch(self):
+        for dll in ("api-ms-win-core-winrt-l1-1-0.dll", "api-ms-win-core-winrt-error-l1-1-0.dll",
+                    "api-ms-win-core-path-l1-1-0.dll", "xinput1_4.dll"):
+            with self.subTest(dll=dll):
+                self.assertFalse(self.check_dlls(["kernel32.dll", dll], windows7=True))
+
+    def test_windows7_reports_ucrt_as_installable_and_accepts_a_clean_image(self):
+        # The UCRT needs KB2999226, which is a prerequisite to install, not a reason to refuse the
+        # image: it is reported but does not fail the check.
+        ok, output = self.output_for(["kernel32.dll", "api-ms-win-crt-heap-l1-1-0.dll"], windows7=True)
+        self.assertTrue(ok)
+        self.assertIn("KB2999226", output)
+        self.assertTrue(self.check_dlls(["kernel32.dll", "opengl32.dll", "xinput9_1_0.dll"], windows7=True))

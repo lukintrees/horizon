@@ -9,7 +9,11 @@
 //! trigger motors (SDL's `ControllerHasTriggerRumble`): on third-party Xbox pads they buzz.
 //! On iOS the crate builds without hidapi, which has no backend there: [`Link`] never opens.
 pub mod device;
-#[cfg(windows)]
+/// Windows.Gaming.Input: only on Windows with it, which Windows 7 does not have
+/// (`docs/design/opengl2-win7-x86.md` §19.9). The `win7` vendor is the Rust target for the
+/// Windows 7 build: there a wired pad has no trigger output at all, rather than a WGI import
+/// the loader would refuse before `main`.
+#[cfg(all(windows, not(target_vendor = "win7")))]
 mod wgi;
 
 #[cfg(not(target_os = "ios"))]
